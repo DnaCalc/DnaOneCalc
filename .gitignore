@@ -1,0 +1,8 @@
+.beads/*.db-shm
+.beads/*.db-wal
+.beads/daemon.*
+target/
+dist/
+node_modules/
+.DS_Store
+Thumbs.db
