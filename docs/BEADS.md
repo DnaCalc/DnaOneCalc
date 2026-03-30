@@ -6,7 +6,7 @@ This file is the complete local beads story for `DnaOneCalc`.
 It covers:
 1. local execution method,
 2. `br` and `bv` usage,
-3. the serialized mutation rule,
+3. the mutation rule,
 4. bead quality expectations,
 5. the workset -> epic -> bead rollout pattern,
 6. a compact rollout template,
@@ -21,6 +21,10 @@ Execution in this repo runs through:
 Worksets are the high-level planning and scope-partition unit.
 Epics are the main execution lanes under a chosen workset lineage.
 Beads are the unit of executable progress.
+
+`docs/WORKSET_REGISTER.md` and `.beads/` are the planning surfaces for
+implementation work.
+They are not a prompt to roll out one local document per work item.
 
 Interpretation rule:
 1. worksets do not carry ready/in-progress/blocked/closed execution status in the
@@ -66,21 +70,18 @@ Agent rule:
 ## 4. Mutation Rule
 Do not edit `.beads/` files directly.
 
-Serialize all `br` mutations through:
-- `scripts/invoke-br-serialized.ps1`
-
 Examples:
 
 ```powershell
-./scripts/invoke-br-serialized.ps1 create --title "Roll out WS-05 child beads" --type task --priority 2
-./scripts/invoke-br-serialized.ps1 update dno-1 --status in_progress
-./scripts/invoke-br-serialized.ps1 close dno-1 --reason "Completed"
+br create --title "Roll out WS-05 child beads" --type task --priority 2
+br update dno-1 --status in_progress
+br close dno-1 --reason "Completed"
 ```
 
 ## 5. Bead Quality Bar
 Every executable bead should state:
-1. one reviewable outcome,
-2. completion evidence,
+1. one reviewable implementation outcome,
+2. completion evidence that proves the claimed behavior,
 3. its parent epic,
 4. any real dependency relationship,
 5. canonical evidence or truth surfaces touched where that matters.
@@ -89,7 +90,9 @@ Bad beads:
 1. vague activity,
 2. ongoing theme,
 3. mini-worksets disguised as one issue,
-4. hidden follow-up work left only in chat or commit messages.
+4. hidden follow-up work left only in chat or commit messages,
+5. local-document-only output unless the bead is making a narrow spec correction,
+   upstream seam handoff, or reference note for behavior that now exists in code.
 
 ## 6. Rollout Rule
 Any workset chosen for execution should be rolled out into one or more epics.
@@ -97,10 +100,11 @@ Any workset chosen for execution should be rolled out into one or more epics.
 Each epic should normally begin with a rollout bead when the child path still needs to be created or refreshed.
 
 Rollout pattern rule:
-1. some epics may be expanded into child beads immediately during initial rollout,
+1. some epics should be expanded into child beads immediately during initial rollout,
 2. some epics should begin with a rollout bead whose job is to create or refresh the
    next child beads once enough context exists,
-3. both patterns are normal as long as the bead graph stays explicit and reviewable.
+3. early or well-understood implementation work should default to direct child beads,
+4. both patterns are normal as long as the bead graph stays explicit and reviewable.
 
 A rollout bead is complete only when:
 1. the epic has a believable ready path,
@@ -115,7 +119,23 @@ A bead closes only when:
 
 Do not close a bead because “enough progress” happened.
 
-## 8. Compact Rollout Template
+Capability-bearing beads must normally close on meaningful implementation code plus
+verification.
+Stub commands, placeholder artifacts, and descriptive notes are not sufficient
+closure evidence.
+
+## 8. Documentation Rule
+After planning is in place, default bead outputs should be:
+1. implementation code,
+2. test code,
+3. narrowly-scoped spec corrections,
+4. narrowly-scoped upstream seam handoffs,
+5. necessary reference notes for behavior that now exists in code.
+
+If a proposed bead's main output is a local note, floor, or baseline document,
+rewrite it as implementation work or do not create it.
+
+## 9. Compact Rollout Template
 When a workset is chosen for rollout, capture this:
 
 1. Workset:
@@ -138,24 +158,23 @@ When a workset is chosen for rollout, capture this:
    - explicit dependencies
    - explicit evidence
 
-## 9. Compact Example
+## 10. Compact Example
 Example workset:
-- `WS-05 Editor Viability And OxFml Language-Service Baseline`
+- `WS-02 Formula Editing And Language-Service Integration`
 
 Example epic set:
-1. roll out host-shell child beads
-2. desktop and browser proof-of-life lane
-3. editor input and IME viability lane
-4. OxFml immutable-edit integration lane
-5. validation and evidence lane
+1. editor shell and interaction lane
+2. OxFml edit-packet integration lane
+3. diagnostics projection lane
+4. verification lane
 
 Example first child beads:
-1. create desktop and browser host shell skeleton
-2. prove formula-buffer editing and cursor behavior
-3. wire immutable edit request/result through the editor
-4. record proof-of-life and viability evidence
+1. implement formula buffer, cursor, and keyboard flow in the real shell
+2. wire `FormulaEditRequest` and `FormulaEditResult` through the editor state
+3. project `LiveDiagnosticSnapshot` into visible diagnostics and spans
+4. add a runnable editor integration proof or test
 
-## 10. Validator
+## 11. Validator
 Use:
 - `scripts/check-worksets.ps1`
 

@@ -1,5 +1,11 @@
 # DnaOneCalc Charter
 
+`DnaOneCalc` is one repo in the larger `DNA Calc` program.
+Read [../../Foundation/CHARTER.md](../../Foundation/CHARTER.md) as the
+top-level charter for that wider project.
+This local charter defines the narrower role, scope, and ownership of
+`DnaOneCalc` within that broader system.
+
 ## 1. Mission
 `DnaOneCalc` is the single-formula proving host for the DNA Calc stack.
 
