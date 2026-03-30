@@ -46,6 +46,27 @@ impl HostPacketKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformGate {
+    DesktopNativeOnly,
+}
+
+impl PlatformGate {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::DesktopNativeOnly => "desktop_native_only",
+        }
+    }
+
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::DesktopNativeOnly => {
+                "Desktop native host only; browser and secondary hosts are not admitted yet."
+            }
+        }
+    }
+}
+
 const OC_H0_PACKET_KINDS: &[HostPacketKind] = &[
     HostPacketKind::FormulaEdit,
     HostPacketKind::EditAcceptRecalc,
@@ -97,6 +118,10 @@ impl RuntimeAdapter {
             OneCalcHostProfile::OcH1 => OC_H1_PACKET_KINDS,
             OneCalcHostProfile::OcH2 => OC_H2_PACKET_KINDS,
         }
+    }
+
+    pub const fn platform_gate(&self) -> PlatformGate {
+        PlatformGate::DesktopNativeOnly
     }
 
     pub fn parse_formula_source(&self, source: FormulaSourceRecord) -> ParseSnapshot {

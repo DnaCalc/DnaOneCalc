@@ -1,4 +1,5 @@
 pub mod runtime;
+pub mod shell;
 
 use oxfml_core::{parse_formula, FormulaChannelKind, FormulaSourceRecord, ParseRequest};
 use oxfunc_core::functions::sum::eval_sum_surface;
@@ -7,7 +8,10 @@ use oxfunc_core::value::{CallArgValue, EvalValue, ReferenceLike};
 use oxreplay_abstractions::{LaneId, RegistryRef};
 use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 
-pub use runtime::{HostPacketKind, OneCalcHostProfile, ParseSnapshot, RuntimeAdapter};
+pub use runtime::{
+    HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate, RuntimeAdapter,
+};
+pub use shell::{launch_shell, OneCalcShellApp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DependencyProbeReport {

@@ -1,6 +1,21 @@
-use dnaonecalc_host::{OneCalcHostProfile, RuntimeAdapter};
+use std::env;
+
+use dnaonecalc_host::{launch_shell, OneCalcHostProfile, RuntimeAdapter};
 
 fn main() {
+    match env::args().nth(1).as_deref() {
+        Some("--probe") => run_probe(),
+        Some("--shell-smoke") => run_shell(true),
+        Some(flag) => {
+            eprintln!("unknown flag: {flag}");
+            eprintln!("supported flags: --probe, --shell-smoke");
+            std::process::exit(2);
+        }
+        None => run_shell(false),
+    }
+}
+
+fn run_probe() {
     let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
     let packet_register = adapter
         .packet_kinds()
@@ -28,5 +43,12 @@ fn main() {
             eprintln!("dependency probe failed: {error:?}");
             std::process::exit(1);
         }
+    }
+}
+
+fn run_shell(smoke_mode: bool) {
+    if let Err(error) = launch_shell(smoke_mode) {
+        eprintln!("failed to launch dnaonecalc shell: {error}");
+        std::process::exit(1);
     }
 }
