@@ -1,0 +1,4 @@
+[workspace]
+members = ["src/dnaonecalc-host"]
+resolver = "2"
+

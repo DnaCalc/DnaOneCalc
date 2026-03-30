@@ -1,0 +1,11 @@
+[package]
+name = "dnaonecalc-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+oxfml_core = { path = "../../../OxFml/crates/oxfml_core" }
+oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core" }
+oxreplay-core = { path = "../../../OxReplay/src/oxreplay-core" }
+oxreplay-abstractions = { path = "../../../OxReplay/src/oxreplay-abstractions" }
+
