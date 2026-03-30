@@ -9,9 +9,10 @@ use oxreplay_abstractions::{LaneId, RegistryRef};
 use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 
 pub use runtime::{
-    HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate, RuntimeAdapter,
+    FormulaEditPacketSummary, FormulaEditorSession, HostPacketKind, OneCalcHostProfile,
+    ParseSnapshot, PlatformGate, RuntimeAdapter,
 };
-pub use shell::{launch_shell, OneCalcShellApp};
+pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DependencyProbeReport {

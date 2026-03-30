@@ -1,4 +1,8 @@
-use oxfml_core::{parse_formula, FormulaSourceRecord, ParseRequest};
+use oxfml_core::{
+    apply_formula_edit, parse_formula, BindContext, EditFollowOnStage, FormulaChannelKind,
+    FormulaEditRequest, FormulaEditResult, FormulaSourceRecord, FormulaTextChangeRange,
+    ParseRequest, StructureContextVersion,
+};
 
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 
@@ -98,6 +102,37 @@ pub struct ParseSnapshot {
     pub diagnostic_count: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct FormulaEditorSession {
+    formula_stable_id: String,
+    formula_text_version: u64,
+    latest_result: Option<FormulaEditResult>,
+}
+
+impl FormulaEditorSession {
+    pub fn new(formula_stable_id: impl Into<String>) -> Self {
+        Self {
+            formula_stable_id: formula_stable_id.into(),
+            formula_text_version: 0,
+            latest_result: None,
+        }
+    }
+
+    pub fn latest_result(&self) -> Option<&FormulaEditResult> {
+        self.latest_result.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaEditPacketSummary {
+    pub formula_token: String,
+    pub diagnostic_count: usize,
+    pub text_change_range: Option<FormulaTextChangeRange>,
+    pub reused_green_tree: bool,
+    pub reused_red_projection: bool,
+    pub reused_bound_formula: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeAdapter {
     host_profile: OneCalcHostProfile,
@@ -137,5 +172,49 @@ impl RuntimeAdapter {
 
     pub fn dependency_probe(&self) -> Result<DependencyProbeReport, DependencyProbeError> {
         run_dependency_probe()
+    }
+
+    pub fn apply_formula_edit_packet(
+        &self,
+        session: &mut FormulaEditorSession,
+        formula_text: impl Into<String>,
+    ) -> FormulaEditPacketSummary {
+        let source = FormulaSourceRecord::new(
+            session.formula_stable_id.clone(),
+            session.formula_text_version + 1,
+            formula_text,
+        )
+        .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
+
+        let mut bind_context = BindContext::default();
+        bind_context.formula_token = source.formula_token();
+        bind_context.structure_context_version =
+            StructureContextVersion("onecalc:single_formula:v1".to_string());
+
+        let previous_result = session.latest_result.as_ref();
+        let result = apply_formula_edit(FormulaEditRequest {
+            source: source.clone(),
+            bind_context,
+            previous_green_tree: previous_result.map(|result| &result.green_tree),
+            previous_red_projection: previous_result.map(|result| &result.red_projection),
+            previous_bound_formula: previous_result
+                .and_then(|result| result.bound_formula.as_ref()),
+            follow_on_stage: EditFollowOnStage::ParseAndBind,
+            semantic_plan_options: None,
+        });
+
+        session.formula_text_version += 1;
+
+        let summary = FormulaEditPacketSummary {
+            formula_token: result.source.formula_token().0,
+            diagnostic_count: result.live_diagnostics.diagnostics.len(),
+            text_change_range: result.text_change_range,
+            reused_green_tree: result.reuse_summary.reused_green_tree,
+            reused_red_projection: result.reuse_summary.reused_red_projection,
+            reused_bound_formula: result.reuse_summary.reused_bound_formula,
+        };
+
+        session.latest_result = Some(result);
+        summary
     }
 }

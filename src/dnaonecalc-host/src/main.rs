@@ -1,14 +1,17 @@
 use std::env;
 
-use dnaonecalc_host::{launch_shell, OneCalcHostProfile, RuntimeAdapter};
+use dnaonecalc_host::{
+    launch_shell, launch_shell_with_formula, OneCalcHostProfile, RuntimeAdapter,
+};
 
 fn main() {
     match env::args().nth(1).as_deref() {
         Some("--probe") => run_probe(),
         Some("--shell-smoke") => run_shell(true),
+        Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
-            eprintln!("supported flags: --probe, --shell-smoke");
+            eprintln!("supported flags: --probe, --shell-smoke, --editor-diagnostic-smoke");
             std::process::exit(2);
         }
         None => run_shell(false),
@@ -49,6 +52,13 @@ fn run_probe() {
 fn run_shell(smoke_mode: bool) {
     if let Err(error) = launch_shell(smoke_mode) {
         eprintln!("failed to launch dnaonecalc shell: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_editor_diagnostic_smoke() {
+    if let Err(error) = launch_shell_with_formula("=SUM(1,", true) {
+        eprintln!("failed to launch dnaonecalc editor diagnostic smoke: {error}");
         std::process::exit(1);
     }
 }
