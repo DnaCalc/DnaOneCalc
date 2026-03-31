@@ -1,8 +1,8 @@
 use oxfml_core::{
-    bind_formula, parse_formula, project_red_view, BindContext, BindRequest,
-    CarrierRestrictionCode, CarrierValidationDisposition, ConditionalFormattingCarrierSpec,
-    FormulaChannelKind, FormulaSourceRecord, ParseRequest, StructureContextVersion,
-    validate_conditional_formatting_formula,
+    bind_formula, parse_formula, project_red_view, validate_conditional_formatting_formula,
+    BindContext, BindRequest, CarrierRestrictionCode, CarrierValidationDisposition,
+    ConditionalFormattingCarrierSpec, FormulaChannelKind, FormulaSourceRecord, ParseRequest,
+    StructureContextVersion,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,9 @@ pub fn validate_isolated_conditional_formatting_carrier(
         carrier.formula_text.clone(),
     )
     .with_formula_channel_kind(FormulaChannelKind::ConditionalFormatting);
-    let parse = parse_formula(ParseRequest { source: source.clone() });
+    let parse = parse_formula(ParseRequest {
+        source: source.clone(),
+    });
     let red = project_red_view(source.formula_stable_id.clone(), &parse.green_tree);
     let bind = bind_formula(BindRequest {
         source,
@@ -86,7 +88,9 @@ pub fn validate_isolated_conditional_formatting_carrier(
         context: BindContext {
             caller_row: 1,
             caller_col: 1,
-            structure_context_version: StructureContextVersion("onecalc:cf:isolation:v1".to_string()),
+            structure_context_version: StructureContextVersion(
+                "onecalc:cf:isolation:v1".to_string(),
+            ),
             ..BindContext::default()
         },
     });
@@ -146,7 +150,10 @@ mod tests {
             .expect("CF carrier should validate");
 
         assert_eq!(summary.disposition, "admitted");
-        assert_eq!(summary.restriction_profile_id, "cf_restricted_not_equal_to_dv");
+        assert_eq!(
+            summary.restriction_profile_id,
+            "cf_restricted_not_equal_to_dv"
+        );
         assert!(summary.restriction_codes.is_empty());
         assert!(summary
             .host_field_facts

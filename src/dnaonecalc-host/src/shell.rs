@@ -1,14 +1,18 @@
+use std::env;
+
 use eframe::egui;
 use egui::TextBuffer as _;
 
 use crate::{
-    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary,
-    IsolatedConditionalFormattingCarrier, OneCalcHostProfile, RuntimeAdapter,
+    CapabilitySnapshotDiffSummary, FormulaEditPacketSummary, FormulaEditorSession,
+    FormulaEvaluationSummary, IsolatedConditionalFormattingCarrier, OneCalcHostProfile,
+    OpenedCapabilitySnapshotSummary, RetainedScenarioStore, RuntimeAdapter,
 };
 
 pub const FORMULA_REGION_ID: &str = "formula";
 pub const RESULT_REGION_ID: &str = "result";
 pub const DIAGNOSTICS_REGION_ID: &str = "diagnostics";
+pub const CAPABILITY_REGION_ID: &str = "capability_center";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormulaEditorState {
@@ -40,6 +44,23 @@ impl FormulaEditorState {
             self.selection_start = sorted_chars.start;
             self.selection_end = sorted_chars.end;
             self.selected_text = self.buffer.char_range(sorted_chars).to_string();
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityCenterState {
+    active_snapshot: Option<OpenedCapabilitySnapshotSummary>,
+    snapshot_diff: Option<CapabilitySnapshotDiffSummary>,
+    last_error: Option<String>,
+}
+
+impl CapabilityCenterState {
+    fn empty() -> Self {
+        Self {
+            active_snapshot: None,
+            snapshot_diff: None,
+            last_error: None,
         }
     }
 }
@@ -118,6 +139,9 @@ impl EffectiveDisplayRenderState {
 
 pub struct OneCalcShellApp {
     runtime_adapter: RuntimeAdapter,
+    capability_store: RetainedScenarioStore,
+    capability_center: CapabilityCenterState,
+    latest_capability_snapshot_id: Option<String>,
     edit_session: FormulaEditorSession,
     latest_edit_packet: FormulaEditPacketSummary,
     latest_evaluation: Option<FormulaEvaluationSummary>,
@@ -147,6 +171,10 @@ impl OneCalcShellApp {
 
     fn with_formula(adapter: RuntimeAdapter, formula_text: String, smoke_mode: bool) -> Self {
         let host_profile_id = adapter.host_profile().id().to_string();
+        let capability_store = RetainedScenarioStore::new(env::temp_dir().join(format!(
+            "dnaonecalc-shell-capability-{}",
+            std::process::id()
+        )));
         let packet_register_text = adapter
             .packet_kinds()
             .iter()
@@ -189,6 +217,9 @@ impl OneCalcShellApp {
 
         let mut app = Self {
             runtime_adapter: adapter,
+            capability_store,
+            capability_center: CapabilityCenterState::empty(),
+            latest_capability_snapshot_id: None,
             edit_session,
             latest_edit_packet,
             latest_evaluation: None,
@@ -211,6 +242,8 @@ impl OneCalcShellApp {
             smoke_reported: false,
         };
 
+        app.refresh_capability_center("formula_edit");
+
         if smoke_mode {
             app.evaluate_current_formula();
         }
@@ -220,7 +253,12 @@ impl OneCalcShellApp {
     }
 
     pub const fn region_ids() -> &'static [&'static str] {
-        &[FORMULA_REGION_ID, RESULT_REGION_ID, DIAGNOSTICS_REGION_ID]
+        &[
+            FORMULA_REGION_ID,
+            RESULT_REGION_ID,
+            DIAGNOSTICS_REGION_ID,
+            CAPABILITY_REGION_ID,
+        ]
     }
 
     fn sync_edit_packet(&mut self) {
@@ -288,6 +326,7 @@ impl OneCalcShellApp {
                 self.latest_evaluation = None;
             }
         }
+        self.refresh_capability_center("edit_accept_recalc");
     }
 
     fn render_live_diagnostics(edit_session: &FormulaEditorSession) -> Vec<String> {
@@ -311,6 +350,58 @@ impl OneCalcShellApp {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn refresh_capability_center(&mut self, packet_kind: &str) {
+        let previous_snapshot_id = self.latest_capability_snapshot_id.clone();
+        match self.runtime_adapter.persist_capability_snapshot(
+            &self.capability_store,
+            packet_kind,
+            previous_snapshot_id.as_deref(),
+        ) {
+            Ok(persisted) => {
+                let opened = self.runtime_adapter.open_capability_snapshot(
+                    &self.capability_store,
+                    &persisted.snapshot.capability_snapshot_id,
+                );
+                let diff = previous_snapshot_id
+                    .as_deref()
+                    .map(|left_id| {
+                        self.runtime_adapter.diff_capability_snapshots(
+                            &self.capability_store,
+                            left_id,
+                            &persisted.snapshot.capability_snapshot_id,
+                        )
+                    })
+                    .transpose();
+
+                match (opened, diff) {
+                    (Ok(active_snapshot), Ok(snapshot_diff)) => {
+                        self.capability_center = CapabilityCenterState {
+                            active_snapshot: Some(active_snapshot),
+                            snapshot_diff,
+                            last_error: None,
+                        };
+                        self.latest_capability_snapshot_id =
+                            Some(persisted.snapshot.capability_snapshot_id);
+                    }
+                    (Err(error), _) | (_, Err(error)) => {
+                        self.capability_center = CapabilityCenterState {
+                            active_snapshot: None,
+                            snapshot_diff: None,
+                            last_error: Some(error),
+                        };
+                    }
+                }
+            }
+            Err(error) => {
+                self.capability_center = CapabilityCenterState {
+                    active_snapshot: None,
+                    snapshot_diff: None,
+                    last_error: Some(error),
+                };
+            }
+        }
     }
 }
 
@@ -404,6 +495,117 @@ impl eframe::App for OneCalcShellApp {
                 }
             });
 
+        egui::TopBottomPanel::bottom(CAPABILITY_REGION_ID)
+            .resizable(true)
+            .default_height(170.0)
+            .show(ctx, |ui| {
+                ui.heading("Capability Center");
+                ui.separator();
+                if let Some(error) = &self.capability_center.last_error {
+                    ui.colored_label(egui::Color32::from_rgb(160, 32, 32), error);
+                    return;
+                }
+
+                if let Some(snapshot) = &self.capability_center.active_snapshot {
+                    ui.monospace(format!(
+                        "snapshot_id={}\nhost_kind={}; runtime_platform={}; runtime_class={}\ncapability_floor={}; seam_pin_set_id={}\nfunction_surface_policy={}",
+                        snapshot.capability_snapshot_id,
+                        snapshot.host_kind,
+                        snapshot.runtime_platform,
+                        snapshot.runtime_class,
+                        snapshot.capability_floor,
+                        snapshot.seam_pin_set_id,
+                        snapshot.function_surface_policy_id
+                    ));
+                    ui.separator();
+                    ui.label("Dependency Ledger");
+                    ui.monospace(snapshot.dependency_set.join("\n"));
+                    ui.separator();
+                    ui.label("Packet Kinds");
+                    ui.monospace(snapshot.packet_kind_register.join(", "));
+                    ui.separator();
+                    ui.label("Mode Availability");
+                    for mode in &snapshot.mode_availability {
+                        let reason = mode.reason.as_deref().unwrap_or("none");
+                        ui.monospace(format!(
+                            "{} = {} ({})",
+                            mode.mode_id, mode.state, reason
+                        ));
+                    }
+                    ui.separator();
+                    ui.label("Provisional Seams");
+                    if snapshot.provisional_seams.is_empty() {
+                        ui.small("none");
+                    } else {
+                        ui.monospace(snapshot.provisional_seams.join("\n"));
+                    }
+                    ui.separator();
+                    ui.label("Capability Ceilings");
+                    if snapshot.capability_ceilings.is_empty() {
+                        ui.small("none");
+                    } else {
+                        ui.monospace(snapshot.capability_ceilings.join("\n"));
+                    }
+                    if !snapshot.lossiness.is_empty() {
+                        ui.separator();
+                        ui.label("Lossiness");
+                        ui.monospace(snapshot.lossiness.join("\n"));
+                    }
+                } else {
+                    ui.small("No immutable capability snapshot available yet.");
+                }
+
+                ui.separator();
+                ui.label("Snapshot Diff");
+                if let Some(diff) = &self.capability_center.snapshot_diff {
+                    ui.monospace(format!(
+                        "left={}\nright={}\ndiff_floor={}\nfunction_surface_policy_changed={}\nruntime_class_changed={}",
+                        diff.left_snapshot_id,
+                        diff.right_snapshot_id,
+                        diff.diff_floor,
+                        diff.function_surface_policy_changed,
+                        diff.runtime_class_changed
+                    ));
+                    for line in &diff.mode_changes {
+                        ui.monospace(format!("mode_change: {line}"));
+                    }
+                    if !diff.dependencies_added.is_empty() || !diff.dependencies_removed.is_empty() {
+                        ui.monospace(format!(
+                            "dependencies_added={}\ndependencies_removed={}",
+                            diff.dependencies_added.join(","),
+                            diff.dependencies_removed.join(",")
+                        ));
+                    }
+                    if !diff.packet_kinds_added.is_empty() || !diff.packet_kinds_removed.is_empty() {
+                        ui.monospace(format!(
+                            "packet_kinds_added={}\npacket_kinds_removed={}",
+                            diff.packet_kinds_added.join(","),
+                            diff.packet_kinds_removed.join(",")
+                        ));
+                    }
+                    if !diff.provisional_seams_added.is_empty()
+                        || !diff.provisional_seams_removed.is_empty()
+                    {
+                        ui.monospace(format!(
+                            "provisional_seams_added={}\nprovisional_seams_removed={}",
+                            diff.provisional_seams_added.join(","),
+                            diff.provisional_seams_removed.join(",")
+                        ));
+                    }
+                    if !diff.capability_ceilings_added.is_empty()
+                        || !diff.capability_ceilings_removed.is_empty()
+                    {
+                        ui.monospace(format!(
+                            "capability_ceilings_added={}\ncapability_ceilings_removed={}",
+                            diff.capability_ceilings_added.join(","),
+                            diff.capability_ceilings_removed.join(",")
+                        ));
+                    }
+                } else {
+                    ui.small("No earlier immutable capability snapshot is available for diff.");
+                }
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.push_id(RESULT_REGION_ID, |ui| {
                 ui.heading("Result");
@@ -439,7 +641,9 @@ impl eframe::App for OneCalcShellApp {
             );
             println!(
                 "conditional_formatting_truth={}",
-                self.conditional_formatting_policy_text.replace(": ", "=").replace(" ", "_")
+                self.conditional_formatting_policy_text
+                    .replace(": ", "=")
+                    .replace(" ", "_")
             );
             println!(
                 "editor_truth=buffer_len:{};cursor_index:{};selection:{}..{}",
@@ -460,7 +664,7 @@ impl eframe::App for OneCalcShellApp {
             println!("live_diagnostic_lines={}", self.rendered_diagnostics.len());
             if let Some(summary) = &self.latest_evaluation {
                 println!(
-                    "evaluation_truth=formula_token:{};worksheet_value:{};payload_summary:{};returned_surface:{};returned_presentation_hint:{};host_style_state:{};effective_display:{};commit_decision:{};trace_event_count:{}",
+                "evaluation_truth=formula_token:{};worksheet_value:{};payload_summary:{};returned_surface:{};returned_presentation_hint:{};host_style_state:{};effective_display:{};commit_decision:{};trace_event_count:{}",
                     summary.formula_token,
                     summary.worksheet_value_summary,
                     summary.payload_summary,
@@ -470,6 +674,32 @@ impl eframe::App for OneCalcShellApp {
                     summary.effective_display_status,
                     summary.commit_decision_kind,
                     summary.trace_event_count
+                );
+            }
+            if let Some(snapshot) = &self.capability_center.active_snapshot {
+                println!(
+                    "capability_center=snapshot:{};runtime_class:{};dependencies:{};modes:{};seams:{};ceilings:{}",
+                    snapshot.capability_snapshot_id,
+                    snapshot.runtime_class,
+                    snapshot.dependency_set.join("|"),
+                    snapshot
+                        .mode_availability
+                        .iter()
+                        .map(|mode| format!("{}:{}", mode.mode_id, mode.state))
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                    snapshot.provisional_seams.join("|"),
+                    snapshot.capability_ceilings.join("|")
+                );
+            }
+            if let Some(diff) = &self.capability_center.snapshot_diff {
+                println!(
+                    "capability_diff=left:{};right:{};mode_changes:{};policy_changed:{};runtime_class_changed:{}",
+                    diff.left_snapshot_id,
+                    diff.right_snapshot_id,
+                    diff.mode_changes.join("|"),
+                    diff.function_surface_policy_changed,
+                    diff.runtime_class_changed
                 );
             }
             self.smoke_reported = true;
@@ -544,7 +774,12 @@ mod tests {
     fn shell_app_exposes_the_three_core_regions() {
         assert_eq!(
             OneCalcShellApp::region_ids(),
-            &[FORMULA_REGION_ID, RESULT_REGION_ID, DIAGNOSTICS_REGION_ID]
+            &[
+                FORMULA_REGION_ID,
+                RESULT_REGION_ID,
+                DIAGNOSTICS_REGION_ID,
+                CAPABILITY_REGION_ID,
+            ]
         );
     }
 
@@ -586,6 +821,8 @@ mod tests {
         assert_eq!(app.returned_presentation_hint_text, "none");
         assert_eq!(app.host_style_state_text, "none");
         assert!(app.rendered_diagnostics.is_empty());
+        assert!(app.capability_center.active_snapshot.is_some());
+        assert!(app.capability_center.snapshot_diff.is_some());
     }
 
     #[test]
@@ -638,8 +875,7 @@ mod tests {
             returned_presentation_hint_status: "number_format:none;style:Currency".to_string(),
             host_style_state_status: "accent".to_string(),
             effective_display_status:
-                "presentation_hint:number_format:none;style:Currency;host_style:accent"
-                    .to_string(),
+                "presentation_hint:number_format:none;style:Currency;host_style:accent".to_string(),
             commit_decision_kind: "accepted".to_string(),
             trace_event_count: 2,
         };
@@ -647,7 +883,10 @@ mod tests {
         let render = EffectiveDisplayRenderState::from_summary(&summary);
 
         assert_eq!(render.display_text, "6");
-        assert_eq!(render.formatting_plane_source, "presentation_hint+host_style");
+        assert_eq!(
+            render.formatting_plane_source,
+            "presentation_hint+host_style"
+        );
         assert_eq!(render.emphasis, "host:accent");
         assert_eq!(render.number_format, "none");
     }

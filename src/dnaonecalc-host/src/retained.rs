@@ -234,6 +234,22 @@ impl RetainedScenarioStore {
         })
     }
 
+    pub fn persist_capability_snapshot(
+        &self,
+        capability_snapshot: &CapabilityLedgerSnapshotRecord,
+    ) -> Result<PersistedCapabilitySnapshot, String> {
+        fs::create_dir_all(self.capability_snapshots_dir()).map_err(|error| error.to_string())?;
+
+        let capability_snapshot_path =
+            self.capability_snapshot_path(&capability_snapshot.capability_snapshot_id);
+        write_json(&capability_snapshot_path, capability_snapshot)?;
+
+        Ok(PersistedCapabilitySnapshot {
+            snapshot: capability_snapshot.clone(),
+            snapshot_path: capability_snapshot_path,
+        })
+    }
+
     pub fn reopen_run(&self, scenario_run_id: &str) -> Result<ReopenedScenarioRun, String> {
         let run = read_json::<ScenarioRunRecord>(&self.run_path(scenario_run_id))?;
         let scenario = read_json::<ScenarioRecord>(&self.scenario_path(&run.scenario_id))?;

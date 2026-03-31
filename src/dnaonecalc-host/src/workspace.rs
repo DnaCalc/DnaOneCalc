@@ -92,7 +92,10 @@ pub fn read_workspace_manifest(
     serde_json::from_str(&body).map_err(|error| error.to_string())
 }
 
-fn workspace_document_entry(path: &Path, document: &OneCalcDocumentRecord) -> WorkspaceDocumentEntry {
+fn workspace_document_entry(
+    path: &Path,
+    document: &OneCalcDocumentRecord,
+) -> WorkspaceDocumentEntry {
     WorkspaceDocumentEntry {
         document_id: document.document_id.clone(),
         document_path: path.display().to_string(),
@@ -105,7 +108,13 @@ fn workspace_document_entry(path: &Path, document: &OneCalcDocumentRecord) -> Wo
 fn sanitize_slug(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|segment| !segment.is_empty())

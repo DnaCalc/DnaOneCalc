@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,17 +20,18 @@ use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
 };
-use crate::conditional_formatting::IsolatedConditionalFormattingCarrier;
 use crate::capsule::{ImportedScenarioCapsule, PersistedScenarioCapsule};
+use crate::conditional_formatting::IsolatedConditionalFormattingCarrier;
 use crate::document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
-    HandoffReadinessRecord, PersistedHandoffPacket, PersistedReplayCapture, PersistedScenarioRun,
-    PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
-    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
+    HandoffReadinessRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
+    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord,
+    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
+    ScenarioRunRecord, WitnessRecord,
 };
 use crate::workspace::{
     read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
@@ -297,6 +299,42 @@ pub struct ReopenedOneCalcDocument {
 pub struct OpenedOneCalcWorkspace {
     pub manifest: OneCalcWorkspaceManifest,
     pub reopened_documents: Vec<ReopenedOneCalcDocument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedCapabilitySnapshotSummary {
+    pub capability_snapshot_id: String,
+    pub host_kind: String,
+    pub runtime_platform: String,
+    pub runtime_class: String,
+    pub dependency_set: Vec<String>,
+    pub seam_pin_set_id: String,
+    pub capability_floor: String,
+    pub packet_kind_register: Vec<String>,
+    pub function_surface_policy_id: String,
+    pub mode_availability: Vec<CapabilityModeAvailabilityRecord>,
+    pub provisional_seams: Vec<String>,
+    pub capability_ceilings: Vec<String>,
+    pub lossiness: Vec<String>,
+    pub diff_base_snapshot_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilitySnapshotDiffSummary {
+    pub left_snapshot_id: String,
+    pub right_snapshot_id: String,
+    pub dependencies_added: Vec<String>,
+    pub dependencies_removed: Vec<String>,
+    pub packet_kinds_added: Vec<String>,
+    pub packet_kinds_removed: Vec<String>,
+    pub mode_changes: Vec<String>,
+    pub provisional_seams_added: Vec<String>,
+    pub provisional_seams_removed: Vec<String>,
+    pub capability_ceilings_added: Vec<String>,
+    pub capability_ceilings_removed: Vec<String>,
+    pub function_surface_policy_changed: bool,
+    pub runtime_class_changed: bool,
+    pub diff_floor: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -955,6 +993,81 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn persist_capability_snapshot(
+        &self,
+        store: &RetainedScenarioStore,
+        packet_kind: &str,
+        diff_base_snapshot_ref: Option<&str>,
+    ) -> Result<PersistedCapabilitySnapshot, String> {
+        let snapshot = self.emit_capability_snapshot(packet_kind, diff_base_snapshot_ref)?;
+        store.persist_capability_snapshot(&snapshot)
+    }
+
+    pub fn open_capability_snapshot(
+        &self,
+        store: &RetainedScenarioStore,
+        capability_snapshot_id: &str,
+    ) -> Result<OpenedCapabilitySnapshotSummary, String> {
+        let snapshot = store.read_capability_snapshot(capability_snapshot_id)?;
+
+        Ok(OpenedCapabilitySnapshotSummary {
+            capability_snapshot_id: snapshot.capability_snapshot_id,
+            host_kind: snapshot.host_kind,
+            runtime_platform: snapshot.runtime_platform,
+            runtime_class: snapshot.runtime_class,
+            dependency_set: snapshot.dependency_set,
+            seam_pin_set_id: snapshot.seam_pin_set_id,
+            capability_floor: snapshot.capability_floor,
+            packet_kind_register: snapshot.packet_kind_register,
+            function_surface_policy_id: snapshot.function_surface_policy_id,
+            mode_availability: snapshot.mode_availability,
+            provisional_seams: snapshot.provisional_seams,
+            capability_ceilings: snapshot.capability_ceilings,
+            lossiness: snapshot.lossiness,
+            diff_base_snapshot_id: snapshot
+                .diff_base_refs
+                .first()
+                .map(|snapshot_ref| snapshot_ref.logical_id.clone()),
+        })
+    }
+
+    pub fn diff_capability_snapshots(
+        &self,
+        store: &RetainedScenarioStore,
+        left_snapshot_id: &str,
+        right_snapshot_id: &str,
+    ) -> Result<CapabilitySnapshotDiffSummary, String> {
+        let left = store.read_capability_snapshot(left_snapshot_id)?;
+        let right = store.read_capability_snapshot(right_snapshot_id)?;
+
+        let left_dependencies = to_sorted_set(left.dependency_set.iter().cloned());
+        let right_dependencies = to_sorted_set(right.dependency_set.iter().cloned());
+        let left_packet_kinds = to_sorted_set(left.packet_kind_register.iter().cloned());
+        let right_packet_kinds = to_sorted_set(right.packet_kind_register.iter().cloned());
+        let left_seams = to_sorted_set(left.provisional_seams.iter().cloned());
+        let right_seams = to_sorted_set(right.provisional_seams.iter().cloned());
+        let left_ceilings = to_sorted_set(left.capability_ceilings.iter().cloned());
+        let right_ceilings = to_sorted_set(right.capability_ceilings.iter().cloned());
+
+        Ok(CapabilitySnapshotDiffSummary {
+            left_snapshot_id: left.capability_snapshot_id,
+            right_snapshot_id: right.capability_snapshot_id,
+            dependencies_added: set_added(&left_dependencies, &right_dependencies),
+            dependencies_removed: set_removed(&left_dependencies, &right_dependencies),
+            packet_kinds_added: set_added(&left_packet_kinds, &right_packet_kinds),
+            packet_kinds_removed: set_removed(&left_packet_kinds, &right_packet_kinds),
+            mode_changes: mode_changes(&left.mode_availability, &right.mode_availability),
+            provisional_seams_added: set_added(&left_seams, &right_seams),
+            provisional_seams_removed: set_removed(&left_seams, &right_seams),
+            capability_ceilings_added: set_added(&left_ceilings, &right_ceilings),
+            capability_ceilings_removed: set_removed(&left_ceilings, &right_ceilings),
+            function_surface_policy_changed: left.function_surface_policy_id
+                != right.function_surface_policy_id,
+            runtime_class_changed: left.runtime_class != right.runtime_class,
+            diff_floor: "immutable_capability_snapshot_diff".to_string(),
+        })
+    }
+
     pub fn export_scenario_capsule(
         &self,
         store: &RetainedScenarioStore,
@@ -1120,7 +1233,7 @@ impl RuntimeAdapter {
             formatting_truth_plane: formatting_truth_plane().to_string(),
             conditional_formatting_scope: conditional_formatting_truth_plane(),
             blocked_dimensions: vec![
-                "conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+                "conditional_formatting_rules_not_attached_to_retained_run".to_string()
             ],
             capability_snapshot_id,
             replay_capture_id,
@@ -1163,7 +1276,7 @@ impl RuntimeAdapter {
             formatting_truth_plane: formatting_truth_plane().to_string(),
             conditional_formatting_scope: conditional_formatting_truth_plane(),
             blocked_dimensions: vec![
-                "conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+                "conditional_formatting_rules_not_attached_to_retained_run".to_string()
             ],
             diff_floor: "retained_artifact_direct_diff".to_string(),
         })
@@ -1889,6 +2002,87 @@ fn signature_help_argument_index(
     oxfml_core::signature_help_context_at_cursor(source, green_tree, cursor_offset)
         .map(|context| context.active_argument_index)
         .unwrap_or(0)
+}
+
+fn to_sorted_set(values: impl IntoIterator<Item = String>) -> BTreeSet<String> {
+    values.into_iter().collect()
+}
+
+fn set_added(left: &BTreeSet<String>, right: &BTreeSet<String>) -> Vec<String> {
+    right.difference(left).cloned().collect()
+}
+
+fn set_removed(left: &BTreeSet<String>, right: &BTreeSet<String>) -> Vec<String> {
+    left.difference(right).cloned().collect()
+}
+
+fn mode_changes(
+    left: &[CapabilityModeAvailabilityRecord],
+    right: &[CapabilityModeAvailabilityRecord],
+) -> Vec<String> {
+    let left_map = left
+        .iter()
+        .map(|mode| {
+            (
+                mode.mode_id.clone(),
+                (mode.state.clone(), mode.reason.clone().unwrap_or_default()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let right_map = right
+        .iter()
+        .map(|mode| {
+            (
+                mode.mode_id.clone(),
+                (mode.state.clone(), mode.reason.clone().unwrap_or_default()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mode_ids = left_map
+        .keys()
+        .chain(right_map.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changes = Vec::new();
+
+    for mode_id in mode_ids {
+        match (left_map.get(&mode_id), right_map.get(&mode_id)) {
+            (Some((left_state, left_reason)), Some((right_state, right_reason))) => {
+                if left_state != right_state || left_reason != right_reason {
+                    let left_text = if left_reason.is_empty() {
+                        left_state.clone()
+                    } else {
+                        format!("{left_state} ({left_reason})")
+                    };
+                    let right_text = if right_reason.is_empty() {
+                        right_state.clone()
+                    } else {
+                        format!("{right_state} ({right_reason})")
+                    };
+                    changes.push(format!("{mode_id}: {left_text} -> {right_text}"));
+                }
+            }
+            (None, Some((right_state, right_reason))) => {
+                let right_text = if right_reason.is_empty() {
+                    right_state.clone()
+                } else {
+                    format!("{right_state} ({right_reason})")
+                };
+                changes.push(format!("{mode_id}: added -> {right_text}"));
+            }
+            (Some((left_state, left_reason)), None) => {
+                let left_text = if left_reason.is_empty() {
+                    left_state.clone()
+                } else {
+                    format!("{left_state} ({left_reason})")
+                };
+                changes.push(format!("{mode_id}: {left_text} -> removed"));
+            }
+            (None, None) => {}
+        }
+    }
+
+    changes
 }
 
 fn summarize_eval_value(value: &EvalValue) -> String {

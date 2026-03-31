@@ -10,6 +10,7 @@ fn main() {
         Some("--probe") => run_probe(),
         Some("--function-surface-smoke") => run_function_surface_smoke(),
         Some("--capability-snapshot-smoke") => run_capability_snapshot_smoke(),
+        Some("--capability-center-smoke") => run_capability_center_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -25,7 +26,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -122,6 +123,57 @@ fn run_capability_snapshot_smoke() {
             mode.reason.as_deref().unwrap_or("none")
         );
     }
+}
+
+fn run_capability_center_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-capability-center-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+
+    let left = adapter
+        .persist_capability_snapshot(&store, "formula_edit", None)
+        .expect("left snapshot should persist");
+    let right = adapter
+        .persist_capability_snapshot(
+            &store,
+            "edit_accept_recalc",
+            Some(&left.snapshot.capability_snapshot_id),
+        )
+        .expect("right snapshot should persist");
+    let opened = adapter
+        .open_capability_snapshot(&store, &right.snapshot.capability_snapshot_id)
+        .expect("current snapshot should open");
+    let diff = adapter
+        .diff_capability_snapshots(
+            &store,
+            &left.snapshot.capability_snapshot_id,
+            &right.snapshot.capability_snapshot_id,
+        )
+        .expect("snapshot diff should open");
+
+    println!("dnaonecalc-host capability center smoke");
+    println!("snapshot_id={}", opened.capability_snapshot_id);
+    println!("runtime_class={}", opened.runtime_class);
+    println!("dependencies={}", opened.dependency_set.join(","));
+    println!("packet_kinds={}", opened.packet_kind_register.join(","));
+    println!(
+        "modes={}",
+        opened
+            .mode_availability
+            .iter()
+            .map(|mode| format!("{}:{}", mode.mode_id, mode.state))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!(
+        "diff=left:{};right:{};mode_changes:{};policy_changed:{};runtime_class_changed:{}",
+        diff.left_snapshot_id,
+        diff.right_snapshot_id,
+        diff.mode_changes.join("|"),
+        diff.function_surface_policy_changed,
+        diff.runtime_class_changed
+    );
 }
 
 fn run_h1_smoke() {
@@ -626,7 +678,13 @@ fn run_workspace_smoke() {
         .edit_accept_recalc(&mut first_host, "=SUM(1,2,3)", first_context)
         .expect("first workspace recalc should succeed");
     let first_retained = adapter
-        .persist_driven_scenario_run(&store, &first_host, &first_context, &first_summary, "SUM workspace left")
+        .persist_driven_scenario_run(
+            &store,
+            &first_host,
+            &first_context,
+            &first_summary,
+            "SUM workspace left",
+        )
         .expect("first retained run should persist");
     let first_document = adapter
         .persist_isolated_document(
@@ -647,7 +705,13 @@ fn run_workspace_smoke() {
         .edit_accept_recalc(&mut second_host, "=SUM(1,2,4)", second_context)
         .expect("second workspace recalc should succeed");
     let second_retained = adapter
-        .persist_driven_scenario_run(&store, &second_host, &second_context, &second_summary, "SUM workspace right")
+        .persist_driven_scenario_run(
+            &store,
+            &second_host,
+            &second_context,
+            &second_summary,
+            "SUM workspace right",
+        )
         .expect("second retained run should persist");
     let second_document = adapter
         .persist_isolated_document(
@@ -664,7 +728,10 @@ fn run_workspace_smoke() {
         .persist_workspace_manifest(
             &workspace_path,
             "OneCalc Workspace Smoke",
-            &[&first_document.document_path, &second_document.document_path],
+            &[
+                &first_document.document_path,
+                &second_document.document_path,
+            ],
         )
         .expect("workspace manifest should persist");
     let opened = adapter

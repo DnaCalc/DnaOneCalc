@@ -42,13 +42,13 @@ pub use retained::{
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 pub use runtime::{
-    CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
-    DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
-    FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
-    OpenedHandoffPacketSummary, OpenedOneCalcWorkspace, OpenedReplayCaptureSummary,
-    OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
-    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
-    RetainedRunXRaySummary, RuntimeAdapter,
+    CapabilitySnapshotDiffSummary, CompletionProposalSummary, DocumentRoundTripInvariantReport,
+    DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary,
+    FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
+    OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
+    OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot,
+    PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
+    ReopenedOneCalcDocument, RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -697,6 +697,53 @@ mod tests {
     }
 
     #[test]
+    fn capability_snapshot_open_and_diff_read_persisted_immutable_truth() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-capability-diff-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+
+        let left = adapter
+            .persist_capability_snapshot(&store, "formula_edit", None)
+            .expect("left snapshot should persist");
+        let right = adapter
+            .persist_capability_snapshot(
+                &store,
+                "edit_accept_recalc",
+                Some(&left.snapshot.capability_snapshot_id),
+            )
+            .expect("right snapshot should persist");
+
+        let opened = adapter
+            .open_capability_snapshot(&store, &right.snapshot.capability_snapshot_id)
+            .expect("right snapshot should open");
+        let diff = adapter
+            .diff_capability_snapshots(
+                &store,
+                &left.snapshot.capability_snapshot_id,
+                &right.snapshot.capability_snapshot_id,
+            )
+            .expect("snapshot diff should open");
+
+        assert_eq!(
+            opened.diff_base_snapshot_id,
+            Some(left.snapshot.capability_snapshot_id.clone())
+        );
+        assert!(opened
+            .mode_availability
+            .iter()
+            .any(|mode| mode.mode_id == "Replay"));
+        assert!(diff.packet_kinds_added.is_empty());
+        assert!(!diff.function_surface_policy_changed);
+        assert_eq!(diff.diff_floor, "immutable_capability_snapshot_diff");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn retained_h1_runs_compare_version_to_version_in_code() {
         let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
         let mut host = adapter
@@ -977,10 +1024,8 @@ mod tests {
     #[test]
     fn workspace_manifest_groups_multiple_isolated_documents_without_merging_them() {
         let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let root = std::env::temp_dir().join(format!(
-            "dnaonecalc-workspace-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("dnaonecalc-workspace-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let store = RetainedScenarioStore::new(root.join("retained"));
 
@@ -1042,7 +1087,10 @@ mod tests {
             .persist_workspace_manifest(
                 root.join("workspace.onecalc.json"),
                 "Workspace Test",
-                &[&first_document.document_path, &second_document.document_path],
+                &[
+                    &first_document.document_path,
+                    &second_document.document_path,
+                ],
             )
             .expect("workspace manifest should persist");
         let opened = adapter
