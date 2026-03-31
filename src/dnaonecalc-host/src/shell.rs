@@ -53,6 +53,7 @@ pub struct OneCalcShellApp {
     host_profile_id: String,
     packet_register_text: String,
     platform_gate_text: String,
+    function_policy_text: String,
     editor_state: FormulaEditorState,
     result_text: String,
     diagnostics_text: String,
@@ -75,6 +76,15 @@ impl OneCalcShellApp {
             .collect::<Vec<_>>()
             .join(", ");
         let platform_gate_text = adapter.platform_gate().message().to_string();
+        let function_summary = adapter.function_surface_summary();
+        let function_policy_text = format!(
+            "Function Policy: supported={} preview={} experimental={} deferred={} catalog_only={} executable=supported+preview only",
+            function_summary.supported,
+            function_summary.preview,
+            function_summary.experimental,
+            function_summary.deferred,
+            function_summary.catalog_only
+        );
         let probe = adapter.dependency_probe().ok();
         let mut edit_session = FormulaEditorSession::new("onecalc.editor");
         let latest_edit_packet =
@@ -101,6 +111,7 @@ impl OneCalcShellApp {
             host_profile_id,
             packet_register_text,
             platform_gate_text,
+            function_policy_text,
             editor_state: FormulaEditorState::new(formula_text),
             result_text,
             diagnostics_text,
@@ -183,6 +194,8 @@ impl eframe::App for OneCalcShellApp {
                 ui.label(format!("Packet Kinds: {}", self.packet_register_text));
                 ui.separator();
                 ui.colored_label(egui::Color32::YELLOW, &self.platform_gate_text);
+                ui.separator();
+                ui.label(&self.function_policy_text);
             });
         });
 
@@ -256,10 +269,13 @@ impl eframe::App for OneCalcShellApp {
         if self.smoke_mode && !self.smoke_reported {
             println!("shell_regions={}", Self::region_ids().join(","));
             println!(
-                "shell_truth=host_profile:{};packet_kinds:{};platform_gate:{}",
+                "shell_truth=host_profile:{};packet_kinds:{};platform_gate:{};function_policy:{}",
                 self.host_profile_id,
                 self.packet_register_text.replace(", ", "|"),
-                self.platform_gate_text
+                self.platform_gate_text,
+                self.function_policy_text
+                    .replace(": ", "=")
+                    .replace(" ", "_")
             );
             println!(
                 "editor_truth=buffer_len:{};cursor_index:{};selection:{}..{}",
@@ -351,6 +367,10 @@ mod tests {
         assert_eq!(app.host_profile_id, "OC-H0");
         assert!(app.packet_register_text.contains("formula_edit"));
         assert!(app.platform_gate_text.contains("Desktop native host only"));
+        assert!(app.function_policy_text.contains("supported="));
+        assert!(app
+            .function_policy_text
+            .contains("executable=supported+preview only"));
         assert_eq!(
             app.editor_state.cursor_index,
             app.editor_state.buffer.chars().count()
