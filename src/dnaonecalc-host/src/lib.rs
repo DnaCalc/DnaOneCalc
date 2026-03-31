@@ -41,21 +41,22 @@ pub use observation::{
     ObservationProvenancePayload, ObservationSurfaceDescriptor, ObservationSurfaceValue,
 };
 pub use retained::{
-    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
-    HandoffReadinessRecord, ObservationRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
-    PersistedObservation, PersistedReplayCapture, PersistedScenarioRun, PersistedWitness,
-    ReopenedScenarioRun, ReplayCaptureRecord, RetainedProvenanceRecord,
-    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
-    WitnessRecord,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, ComparisonMismatchRecord,
+    ComparisonRecord, HandoffPacketRecord, HandoffReadinessRecord, ObservationRecord,
+    PersistedCapabilitySnapshot, PersistedComparison, PersistedHandoffPacket, PersistedObservation,
+    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReopenedScenarioRun,
+    ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 pub use runtime::{
     CapabilitySnapshotDiffSummary, CompletionProposalSummary, DocumentRoundTripInvariantReport,
     DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary,
     FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
-    OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot,
-    PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
-    ReopenedOneCalcDocument, RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
+    OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
+    OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
+    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
+    RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -698,6 +699,10 @@ mod tests {
         assert!(snapshot
             .mode_availability
             .iter()
+            .any(|mode| mode.mode_id == "Twin compare" && mode.state == "available"));
+        assert!(snapshot
+            .mode_availability
+            .iter()
             .any(|mode| mode.mode_id == "Replay" && mode.state == "available"));
         assert!(snapshot
             .mode_availability
@@ -794,6 +799,63 @@ mod tests {
             .read_observation(&persisted.observation.observation_id)
             .expect("observation artifact should reopen");
         assert_eq!(reopened.scenario_id, "xlobs_capture_values_formulae_001");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn twin_compare_artifact_persists_and_opens_on_real_run_and_observation() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-twin-compare-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.compare.obs", "=SUM(10,20,12)")
+            .expect("compare host should initialize");
+        let context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(10,20,12)", context)
+            .expect("compare recalc should succeed");
+        let retained = adapter
+            .persist_driven_scenario_run(&store, &host, &context, &summary, "Twin compare")
+            .expect("retained run should persist");
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("OxXlObs")
+            .join("states/excel/xlobs_capture_values_formulae_001");
+        let observation = adapter
+            .persist_observation_from_existing_source(&store, &source_root)
+            .expect("observation should persist");
+
+        let comparison = adapter
+            .compare_run_with_observation(
+                &store,
+                &retained.run.scenario_run_id,
+                &observation.observation.observation_id,
+            )
+            .expect("comparison should persist");
+        let opened = adapter
+            .open_twin_compare(&store, &comparison.comparison.comparison_id)
+            .expect("compare view should open");
+
+        assert_eq!(opened.reliability_badge, "direct");
+        assert_eq!(
+            opened.comparison_envelope,
+            vec!["worksheet_value".to_string(), "formula_text".to_string()]
+        );
+        assert!(opened
+            .mismatch_lines
+            .iter()
+            .any(|line| line.contains("worksheet_value:match")));
+        assert!(opened
+            .mismatch_lines
+            .iter()
+            .any(|line| line.contains("formula_text:mismatch")));
 
         let _ = fs::remove_dir_all(&root);
     }

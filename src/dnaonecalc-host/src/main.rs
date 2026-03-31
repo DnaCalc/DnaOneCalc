@@ -21,13 +21,14 @@ fn main() {
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--workspace-smoke") => run_workspace_smoke(),
         Some("--windows-observation-smoke") => run_windows_observation_smoke(),
+        Some("--twin-compare-smoke") => run_twin_compare_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -792,6 +793,52 @@ fn run_windows_observation_smoke() {
             .join(",")
     );
     println!("lossiness={}", persisted.observation.lossiness.join(","));
+}
+
+fn run_twin_compare_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-twin-compare-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(root.join("retained"));
+    let output_root = root.join("source-bundle");
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.twin-compare", "=SUM(10,20,12)")
+        .expect("compare host should initialize");
+    let context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(10,20,12)", context)
+        .expect("compare recalc should succeed");
+    let retained = adapter
+        .persist_driven_scenario_run(&store, &host, &context, &summary, "Twin compare")
+        .expect("retained run should persist");
+    let observation = adapter
+        .capture_windows_observation(&store, &output_root)
+        .expect("windows observation should capture");
+    let comparison = adapter
+        .compare_run_with_observation(
+            &store,
+            &retained.run.scenario_run_id,
+            &observation.observation.observation_id,
+        )
+        .expect("comparison should persist");
+    let opened = adapter
+        .open_twin_compare(&store, &comparison.comparison.comparison_id)
+        .expect("twin compare should open");
+
+    println!("dnaonecalc-host twin compare smoke");
+    println!("comparison_id={}", opened.comparison_id);
+    println!("left_run_id={}", opened.left_run_id);
+    println!("observation_id={}", opened.observation_id);
+    println!(
+        "envelope={};reliability={}",
+        opened.comparison_envelope.join(","),
+        opened.reliability_badge
+    );
+    println!("mismatches={}", opened.mismatch_lines.join("|"));
+    println!(
+        "projection_limitations={}",
+        opened.projection_limitations.join(",")
+    );
 }
 
 fn run_shell(smoke_mode: bool) {

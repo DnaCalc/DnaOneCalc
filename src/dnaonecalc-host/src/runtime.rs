@@ -28,11 +28,12 @@ use crate::document::{
 };
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
-    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
-    HandoffReadinessRecord, ObservationRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
-    PersistedObservation, PersistedReplayCapture, PersistedScenarioRun, PersistedWitness,
-    ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
-    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, ComparisonMismatchRecord,
+    ComparisonRecord, HandoffPacketRecord, HandoffReadinessRecord, ObservationRecord,
+    PersistedCapabilitySnapshot, PersistedComparison, PersistedHandoffPacket, PersistedObservation,
+    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord,
+    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
+    ScenarioRunRecord, WitnessRecord,
 };
 use crate::workspace::{
     read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
@@ -416,6 +417,17 @@ pub struct OpenedHandoffPacketSummary {
     pub status: String,
     pub readiness: Vec<HandoffReadinessRecord>,
     pub capability_snapshot_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedTwinCompareSummary {
+    pub comparison_id: String,
+    pub left_run_id: String,
+    pub observation_id: String,
+    pub comparison_envelope: Vec<String>,
+    pub reliability_badge: String,
+    pub mismatch_lines: Vec<String>,
+    pub projection_limitations: Vec<String>,
 }
 
 impl DocumentRoundTripInvariantReport {
@@ -1627,8 +1639,8 @@ impl RuntimeAdapter {
                 ),
                 capability_mode(
                     "Twin compare",
-                    "blocked",
-                    Some("retained Observation capture is available; Observation comparison path not yet integrated"),
+                    "available",
+                    Some("retained run versus Observation comparison artifacts and view opening are available for the first comparison envelope"),
                 ),
                 capability_mode(
                     "Replay",
@@ -1654,7 +1666,7 @@ impl RuntimeAdapter {
             ],
             provisional_seams: vec![
                 "browser_and_secondary_hosts_not_admitted".to_string(),
-                "observation_compare_path_not_integrated".to_string(),
+                "observation_envelope_narrow".to_string(),
             ],
             capability_ceilings: vec![
                 "single_formula_scope_only".to_string(),
@@ -1793,6 +1805,152 @@ impl RuntimeAdapter {
             commit_decision_match: left.run.commit_decision_kind == right.run.commit_decision_kind,
             comparison_envelope: "formula_text,worksheet_value,payload,returned_surface,effective_display,commit_decision".to_string(),
             reliability_badge: "direct".to_string(),
+        })
+    }
+
+    pub fn compare_run_with_observation(
+        &self,
+        store: &RetainedScenarioStore,
+        scenario_run_id: &str,
+        observation_id: &str,
+    ) -> Result<PersistedComparison, String> {
+        let reopened = store.reopen_run(scenario_run_id)?;
+        let observation = store.read_observation(observation_id)?;
+        let value_surface = observation
+            .capture
+            .surfaces
+            .iter()
+            .find(|surface| surface.surface.surface_kind == "cell_value")
+            .ok_or_else(|| {
+                format!("observation {observation_id} is missing a cell_value surface")
+            })?;
+        let formula_surface = observation
+            .capture
+            .surfaces
+            .iter()
+            .find(|surface| surface.surface.surface_kind == "formula_text")
+            .ok_or_else(|| {
+                format!("observation {observation_id} is missing a formula_text surface")
+            })?;
+        let left_value = reopened.run.worksheet_value_summary.clone();
+        let right_value = normalize_observation_surface_value(value_surface);
+        let value_agreement = left_value == right_value;
+        let formula_agreement = reopened.run.authored_formula_text
+            == formula_surface.value_repr.clone().unwrap_or_default();
+        let reliability_badge =
+            comparison_reliability_badge(&observation, value_surface, formula_surface);
+        let projection_limitations = vec![
+            "display_state_not_in_current_observation_envelope".to_string(),
+            "formatting_not_in_current_observation_envelope".to_string(),
+            "conditional_formatting_not_in_current_observation_envelope".to_string(),
+        ];
+        let comparison_id = format!(
+            "comparison-{}-{}",
+            sanitize_slug(scenario_run_id),
+            sanitize_slug(observation_id)
+        );
+        let content_hash = stable_hash(&(
+            &comparison_id,
+            scenario_run_id,
+            observation_id,
+            &left_value,
+            &right_value,
+            reopened.run.authored_formula_text.as_str(),
+            formula_surface.value_repr.as_deref().unwrap_or(""),
+            &reliability_badge,
+        ));
+        let comparison = ComparisonRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.comparison".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::Comparison.id().to_string(),
+                logical_id: comparison_id.clone(),
+                content_hash,
+                created_at_unix_ms: unix_time_millis()?,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: HostPacketKind::ObservationCapture.id().to_string(),
+                seam_pin_set_id: "onecalc:ws-08:comparison".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: if reliability_badge == "provisional" {
+                    "provisional".to_string()
+                } else {
+                    "stable".to_string()
+                },
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: observation.envelope.capability_snapshot_ref.clone(),
+            },
+            comparison_id,
+            left_artifact_ref: reopened.run.envelope.stable_ref(),
+            right_artifact_ref: observation.envelope.stable_ref(),
+            comparison_envelope: vec!["worksheet_value".to_string(), "formula_text".to_string()],
+            mismatches: vec![
+                ComparisonMismatchRecord {
+                    dimension_id: "worksheet_value".to_string(),
+                    left_summary: left_value,
+                    right_summary: right_value,
+                    agreement: value_agreement,
+                    status: if value_agreement { "match" } else { "mismatch" }.to_string(),
+                    note: Some(format!(
+                        "observation surface status={} capture_loss={}",
+                        value_surface.status, value_surface.capture_loss
+                    )),
+                },
+                ComparisonMismatchRecord {
+                    dimension_id: "formula_text".to_string(),
+                    left_summary: reopened.run.authored_formula_text,
+                    right_summary: formula_surface.value_repr.clone().unwrap_or_default(),
+                    agreement: formula_agreement,
+                    status: if formula_agreement {
+                        "match"
+                    } else {
+                        "mismatch"
+                    }
+                    .to_string(),
+                    note: Some(format!(
+                        "observation surface status={} capture_loss={}",
+                        formula_surface.status, formula_surface.capture_loss
+                    )),
+                },
+            ],
+            reliability_badge,
+            projection_limitations,
+            explanation_refs: Vec::new(),
+            witness_candidate_refs: Vec::new(),
+        };
+
+        store.persist_comparison(&comparison)
+    }
+
+    pub fn open_twin_compare(
+        &self,
+        store: &RetainedScenarioStore,
+        comparison_id: &str,
+    ) -> Result<OpenedTwinCompareSummary, String> {
+        let comparison = store.read_comparison(comparison_id)?;
+
+        Ok(OpenedTwinCompareSummary {
+            comparison_id: comparison.comparison_id,
+            left_run_id: comparison.left_artifact_ref.logical_id,
+            observation_id: comparison.right_artifact_ref.logical_id,
+            comparison_envelope: comparison.comparison_envelope,
+            reliability_badge: comparison.reliability_badge,
+            mismatch_lines: comparison
+                .mismatches
+                .into_iter()
+                .map(|mismatch| {
+                    format!(
+                        "{}:{}:{}:{}:{}",
+                        mismatch.dimension_id,
+                        mismatch.status,
+                        mismatch.left_summary,
+                        mismatch.right_summary,
+                        mismatch.note.unwrap_or_default()
+                    )
+                })
+                .collect(),
+            projection_limitations: comparison.projection_limitations,
         })
     }
 
@@ -2239,6 +2397,48 @@ fn observation_lossiness(source: &crate::LoadedObservationSourceBundle) -> Vec<S
     }
 
     lossiness
+}
+
+fn normalize_observation_surface_value(surface: &crate::ObservationSurfaceValue) -> String {
+    match surface.surface.surface_kind.as_str() {
+        "cell_value" => surface
+            .value_repr
+            .as_deref()
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|value| format!("Number({value})"))
+            .unwrap_or_else(|| {
+                surface
+                    .value_repr
+                    .clone()
+                    .unwrap_or_else(|| "none".to_string())
+            }),
+        _ => surface
+            .value_repr
+            .clone()
+            .unwrap_or_else(|| "none".to_string()),
+    }
+}
+
+fn comparison_reliability_badge(
+    observation: &ObservationRecord,
+    value_surface: &crate::ObservationSurfaceValue,
+    formula_surface: &crate::ObservationSurfaceValue,
+) -> String {
+    if observation.capture.interpretation.bridge_influenced {
+        return "provisional".to_string();
+    }
+    if value_surface.status == "derived" || formula_surface.status == "derived" {
+        return "derived".to_string();
+    }
+    if observation
+        .lossiness
+        .iter()
+        .any(|item| item == "normalized_replay_projection_is_lossy")
+        && (value_surface.status != "direct" || formula_surface.status != "direct")
+    {
+        return "lossy".to_string();
+    }
+    "direct".to_string()
 }
 
 fn summarize_eval_value(value: &EvalValue) -> String {

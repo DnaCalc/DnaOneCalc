@@ -121,6 +121,30 @@ pub struct ObservationRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComparisonMismatchRecord {
+    pub dimension_id: String,
+    pub left_summary: String,
+    pub right_summary: String,
+    pub agreement: bool,
+    pub status: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComparisonRecord {
+    pub envelope: ArtifactEnvelope,
+    pub comparison_id: String,
+    pub left_artifact_ref: StableArtifactRef,
+    pub right_artifact_ref: StableArtifactRef,
+    pub comparison_envelope: Vec<String>,
+    pub mismatches: Vec<ComparisonMismatchRecord>,
+    pub reliability_badge: String,
+    pub projection_limitations: Vec<String>,
+    pub explanation_refs: Vec<StableArtifactRef>,
+    pub witness_candidate_refs: Vec<StableArtifactRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayCaptureRecord {
     pub envelope: ArtifactEnvelope,
     pub replay_capture_id: String,
@@ -181,6 +205,12 @@ pub struct PersistedCapabilitySnapshot {
 pub struct PersistedObservation {
     pub observation: ObservationRecord,
     pub observation_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedComparison {
+    pub comparison: ComparisonRecord,
+    pub comparison_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,6 +347,23 @@ impl RetainedScenarioStore {
         read_json::<ObservationRecord>(&self.observation_path(observation_id))
     }
 
+    pub fn persist_comparison(
+        &self,
+        comparison: &ComparisonRecord,
+    ) -> Result<PersistedComparison, String> {
+        fs::create_dir_all(self.comparisons_dir()).map_err(|error| error.to_string())?;
+        let comparison_path = self.comparison_path(&comparison.comparison_id);
+        write_json(&comparison_path, comparison)?;
+        Ok(PersistedComparison {
+            comparison: comparison.clone(),
+            comparison_path,
+        })
+    }
+
+    pub fn read_comparison(&self, comparison_id: &str) -> Result<ComparisonRecord, String> {
+        read_json::<ComparisonRecord>(&self.comparison_path(comparison_id))
+    }
+
     pub fn read_replay_capture(
         &self,
         replay_capture_id: &str,
@@ -396,6 +443,10 @@ impl RetainedScenarioStore {
         self.root.join("observations")
     }
 
+    fn comparisons_dir(&self) -> PathBuf {
+        self.root.join("comparisons")
+    }
+
     fn witnesses_dir(&self) -> PathBuf {
         self.root.join("witnesses")
     }
@@ -430,6 +481,10 @@ impl RetainedScenarioStore {
     fn observation_path(&self, observation_id: &str) -> PathBuf {
         self.observations_dir()
             .join(format!("{observation_id}.json"))
+    }
+
+    fn comparison_path(&self, comparison_id: &str) -> PathBuf {
+        self.comparisons_dir().join(format!("{comparison_id}.json"))
     }
 
     fn witness_path(&self, witness_id: &str) -> PathBuf {
