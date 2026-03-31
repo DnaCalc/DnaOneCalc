@@ -307,6 +307,35 @@ pub struct OpenedReplayCaptureSummary {
     pub artifact_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedRunXRaySummary {
+    pub scenario_id: String,
+    pub scenario_run_id: String,
+    pub formula_text: String,
+    pub formula_text_version: u64,
+    pub host_profile_id: String,
+    pub packet_kind: String,
+    pub worksheet_value_summary: String,
+    pub payload_summary: String,
+    pub effective_display_status: String,
+    pub capability_snapshot_id: String,
+    pub replay_capture_id: Option<String>,
+    pub replay_floor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedRunDiffSummary {
+    pub left_run_id: String,
+    pub right_run_id: String,
+    pub same_scenario: bool,
+    pub formula_text_changed: bool,
+    pub worksheet_value_match: bool,
+    pub payload_match: bool,
+    pub capability_snapshot_changed: bool,
+    pub replay_pair_openable: bool,
+    pub diff_floor: String,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -982,6 +1011,86 @@ impl RuntimeAdapter {
             registry_ref_count,
             view_family: view.view_family,
             artifact_path: view.artifact_path,
+        })
+    }
+
+    pub fn open_retained_run_xray(
+        &self,
+        store: &RetainedScenarioStore,
+        scenario_run_id: &str,
+    ) -> Result<RetainedRunXRaySummary, String> {
+        let reopened = store.reopen_run(scenario_run_id)?;
+        let capability_snapshot_id = reopened
+            .run
+            .envelope
+            .capability_snapshot_ref
+            .as_ref()
+            .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?
+            .logical_id
+            .clone();
+        let (replay_capture_id, replay_floor) = reopened
+            .run
+            .replay_capture_ref
+            .as_ref()
+            .map(|replay_ref| {
+                let opened = self.open_replay_capture(store, &replay_ref.logical_id)?;
+                Ok::<_, String>((
+                    Some(replay_ref.logical_id.clone()),
+                    Some(opened.replay_floor),
+                ))
+            })
+            .transpose()?
+            .unwrap_or((None, None));
+
+        Ok(RetainedRunXRaySummary {
+            scenario_id: reopened.scenario.scenario_id,
+            scenario_run_id: reopened.run.scenario_run_id,
+            formula_text: reopened.scenario.formula_text,
+            formula_text_version: reopened.run.formula_text_version,
+            host_profile_id: reopened.scenario.host_profile_id,
+            packet_kind: reopened.scenario.host_driving_packet_kind,
+            worksheet_value_summary: reopened.run.worksheet_value_summary,
+            payload_summary: reopened.run.payload_summary,
+            effective_display_status: reopened.run.effective_display_status,
+            capability_snapshot_id,
+            replay_capture_id,
+            replay_floor,
+        })
+    }
+
+    pub fn diff_retained_run_xray(
+        &self,
+        store: &RetainedScenarioStore,
+        left_run_id: &str,
+        right_run_id: &str,
+    ) -> Result<RetainedRunDiffSummary, String> {
+        let comparison = self.compare_retained_driven_runs(store, left_run_id, right_run_id)?;
+        let left = store.reopen_run(left_run_id)?;
+        let right = store.reopen_run(right_run_id)?;
+        let capability_snapshot_changed =
+            left.run.envelope.capability_snapshot_ref != right.run.envelope.capability_snapshot_ref;
+        let replay_pair_openable = match (
+            left.run.replay_capture_ref.as_ref(),
+            right.run.replay_capture_ref.as_ref(),
+        ) {
+            (Some(left_replay), Some(right_replay)) => {
+                self.open_replay_capture(store, &left_replay.logical_id)?;
+                self.open_replay_capture(store, &right_replay.logical_id)?;
+                true
+            }
+            _ => false,
+        };
+
+        Ok(RetainedRunDiffSummary {
+            left_run_id: comparison.left_run_id,
+            right_run_id: comparison.right_run_id,
+            same_scenario: comparison.same_scenario,
+            formula_text_changed: comparison.formula_text_changed,
+            worksheet_value_match: comparison.worksheet_value_match,
+            payload_match: comparison.payload_match,
+            capability_snapshot_changed,
+            replay_pair_openable,
+            diff_floor: "retained_artifact_direct_diff".to_string(),
         })
     }
 

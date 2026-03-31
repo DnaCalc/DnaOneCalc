@@ -39,7 +39,8 @@ pub use runtime::{
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
     OpenedReplayCaptureSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
-    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RuntimeAdapter,
+    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
+    RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -400,6 +401,78 @@ mod tests {
         assert_eq!(opened.view_family, "normalized_replay");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn retained_run_xray_and_diff_surfaces_open_on_real_retained_data() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.xray", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let store_root =
+            std::env::temp_dir().join(format!("dnaonecalc-xray-diff-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&store_root);
+        let store = RetainedScenarioStore::new(&store_root);
+
+        let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let first_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
+            .expect("first xray run should succeed");
+        let first = adapter
+            .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM xray")
+            .expect("first retained run should persist");
+        let first_replay = adapter
+            .emit_replay_capture_for_run(&store, &first.run.scenario_run_id)
+            .expect("first replay capture should emit");
+
+        let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+        let second_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
+            .expect("second xray run should succeed");
+        let second = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &second_context,
+                &second_summary,
+                "SUM xray",
+            )
+            .expect("second retained run should persist");
+        let second_replay = adapter
+            .emit_replay_capture_for_run(&store, &second.run.scenario_run_id)
+            .expect("second replay capture should emit");
+
+        let xray = adapter
+            .open_retained_run_xray(&store, &first.run.scenario_run_id)
+            .expect("retained X-Ray should open");
+        assert_eq!(xray.scenario_id, first.scenario.scenario_id);
+        assert_eq!(xray.scenario_run_id, first.run.scenario_run_id);
+        assert_eq!(
+            xray.replay_capture_id.as_deref(),
+            Some(first_replay.capture.replay_capture_id.as_str())
+        );
+        assert_eq!(
+            xray.replay_floor.as_deref(),
+            Some("cap.C1.replay_valid (normalized_replay_open)")
+        );
+
+        let diff = adapter
+            .diff_retained_run_xray(
+                &store,
+                &first.run.scenario_run_id,
+                &second.run.scenario_run_id,
+            )
+            .expect("retained diff should open");
+        assert!(diff.same_scenario);
+        assert!(diff.formula_text_changed);
+        assert!(!diff.worksheet_value_match);
+        assert!(diff.capability_snapshot_changed);
+        assert!(diff.replay_pair_openable);
+        assert_eq!(diff.diff_floor, "retained_artifact_direct_diff");
+        assert!(!first_replay.capture.replay_capture_id.is_empty());
+        assert!(!second_replay.capture.replay_capture_id.is_empty());
+
+        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]

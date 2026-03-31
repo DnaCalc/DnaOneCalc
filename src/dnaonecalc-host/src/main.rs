@@ -14,6 +14,7 @@ fn main() {
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
         Some("--replay-capture-smoke") => run_replay_capture_smoke(),
+        Some("--xray-diff-smoke") => run_xray_diff_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
@@ -21,7 +22,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -293,6 +294,73 @@ fn run_replay_capture_smoke() {
         opened.event_count,
         opened.registry_ref_count,
         opened.view_family
+    );
+}
+
+fn run_xray_diff_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-xray-diff-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.xray", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let first_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
+        .expect("first xray recalc should succeed");
+    let first = adapter
+        .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM xray")
+        .expect("first retained run should persist");
+    let first_replay = adapter
+        .emit_replay_capture_for_run(&store, &first.run.scenario_run_id)
+        .expect("first replay capture should emit");
+
+    let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+    let second_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
+        .expect("second xray recalc should succeed");
+    let second = adapter
+        .persist_driven_scenario_run(&store, &host, &second_context, &second_summary, "SUM xray")
+        .expect("second retained run should persist");
+    let second_replay = adapter
+        .emit_replay_capture_for_run(&store, &second.run.scenario_run_id)
+        .expect("second replay capture should emit");
+
+    let xray = adapter
+        .open_retained_run_xray(&store, &first.run.scenario_run_id)
+        .expect("retained X-Ray should open");
+    let diff = adapter
+        .diff_retained_run_xray(
+            &store,
+            &first.run.scenario_run_id,
+            &second.run.scenario_run_id,
+        )
+        .expect("retained diff should open");
+
+    println!("dnaonecalc-host xray diff smoke");
+    println!(
+        "xray=run:{};worksheet_value:{};capability_snapshot:{};replay_capture:{};replay_floor:{}",
+        xray.scenario_run_id,
+        xray.worksheet_value_summary,
+        xray.capability_snapshot_id,
+        xray.replay_capture_id.as_deref().unwrap_or("none"),
+        xray.replay_floor.as_deref().unwrap_or("none")
+    );
+    println!(
+        "diff=left:{};right:{};formula_text_changed:{};worksheet_value_match:{};capability_snapshot_changed:{};replay_pair_openable:{};floor:{}",
+        diff.left_run_id,
+        diff.right_run_id,
+        diff.formula_text_changed,
+        diff.worksheet_value_match,
+        diff.capability_snapshot_changed,
+        diff.replay_pair_openable,
+        diff.diff_floor
+    );
+    println!(
+        "replay_ids={},{}",
+        first_replay.capture.replay_capture_id, second_replay.capture.replay_capture_id
     );
 }
 
