@@ -112,6 +112,19 @@ pub struct ReplayCaptureRecord {
     pub emitted_at_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessRecord {
+    pub envelope: ArtifactEnvelope,
+    pub witness_id: String,
+    pub scenario_id: String,
+    pub left_run_ref: StableArtifactRef,
+    pub right_run_ref: StableArtifactRef,
+    pub explain_floor: String,
+    pub explanation_lines: Vec<String>,
+    pub blocked_dimensions: Vec<String>,
+    pub emitted_at_unix_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedCapabilitySnapshot {
     pub snapshot: CapabilityLedgerSnapshotRecord,
@@ -132,6 +145,12 @@ pub struct PersistedReplayCapture {
     pub capture: ReplayCaptureRecord,
     pub capture_path: PathBuf,
     pub replay_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedWitness {
+    pub witness: WitnessRecord,
+    pub witness_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +233,10 @@ impl RetainedScenarioStore {
         read_json::<ReplayCaptureRecord>(&self.replay_capture_path(replay_capture_id))
     }
 
+    pub fn read_witness(&self, witness_id: &str) -> Result<WitnessRecord, String> {
+        read_json::<WitnessRecord>(&self.witness_path(witness_id))
+    }
+
     pub fn persist_replay_capture(
         &self,
         capture: &ReplayCaptureRecord,
@@ -228,6 +251,16 @@ impl RetainedScenarioStore {
             capture: capture.clone(),
             capture_path,
             replay_path,
+        })
+    }
+
+    pub fn persist_witness(&self, witness: &WitnessRecord) -> Result<PersistedWitness, String> {
+        fs::create_dir_all(self.witnesses_dir()).map_err(|error| error.to_string())?;
+        let witness_path = self.witness_path(&witness.witness_id);
+        write_json(&witness_path, witness)?;
+        Ok(PersistedWitness {
+            witness: witness.clone(),
+            witness_path,
         })
     }
 
@@ -251,6 +284,10 @@ impl RetainedScenarioStore {
         self.root.join("replay-captures")
     }
 
+    fn witnesses_dir(&self) -> PathBuf {
+        self.root.join("witnesses")
+    }
+
     fn scenario_path(&self, scenario_id: &str) -> PathBuf {
         self.scenarios_dir().join(format!("{scenario_id}.json"))
     }
@@ -272,6 +309,10 @@ impl RetainedScenarioStore {
     fn replay_scenario_path(&self, replay_capture_id: &str) -> PathBuf {
         self.replay_captures_dir()
             .join(format!("{replay_capture_id}.replay.json"))
+    }
+
+    fn witness_path(&self, witness_id: &str) -> PathBuf {
+        self.witnesses_dir().join(format!("{witness_id}.json"))
     }
 }
 

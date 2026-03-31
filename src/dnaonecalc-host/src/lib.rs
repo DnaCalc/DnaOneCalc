@@ -30,17 +30,17 @@ pub use function_surface::{
 };
 pub use retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedCapabilitySnapshot,
-    PersistedReplayCapture, PersistedScenarioRun, ReopenedScenarioRun, ReplayCaptureRecord,
-    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
-    ScenarioRunRecord,
+    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReopenedScenarioRun,
+    ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 pub use runtime::{
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
-    OpenedReplayCaptureSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
-    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
-    RetainedRunXRaySummary, RuntimeAdapter,
+    OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext,
+    RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
+    RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -471,6 +471,81 @@ mod tests {
         assert_eq!(diff.diff_floor, "retained_artifact_direct_diff");
         assert!(!first_replay.capture.replay_capture_id.is_empty());
         assert!(!second_replay.capture.replay_capture_id.is_empty());
+
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn retained_witness_generation_uses_real_diff_state_and_keeps_blocked_dimensions_explicit() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.witness", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let store_root =
+            std::env::temp_dir().join(format!("dnaonecalc-witness-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&store_root);
+        let store = RetainedScenarioStore::new(&store_root);
+
+        let left_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let left_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", left_context)
+            .expect("left witness run should succeed");
+        let left = adapter
+            .persist_driven_scenario_run(&store, &host, &left_context, &left_summary, "SUM witness")
+            .expect("left retained run should persist");
+        adapter
+            .emit_replay_capture_for_run(&store, &left.run.scenario_run_id)
+            .expect("left replay capture should emit");
+
+        let right_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+        let right_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", right_context)
+            .expect("right witness run should succeed");
+        let right = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &right_context,
+                &right_summary,
+                "SUM witness",
+            )
+            .expect("right retained run should persist");
+        adapter
+            .emit_replay_capture_for_run(&store, &right.run.scenario_run_id)
+            .expect("right replay capture should emit");
+
+        let persisted = adapter
+            .generate_retained_witness(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("witness should generate");
+        assert!(persisted.witness_path.exists());
+        assert_eq!(persisted.witness.envelope.artifact_kind, "witness");
+        assert_eq!(
+            persisted.witness.left_run_ref.logical_id,
+            left.run.scenario_run_id
+        );
+        assert_eq!(
+            persisted.witness.right_run_ref.logical_id,
+            right.run.scenario_run_id
+        );
+
+        let opened = adapter
+            .open_witness(&store, &persisted.witness.witness_id)
+            .expect("witness should open");
+        assert_eq!(opened.explain_floor, "retained_diff_explain_summary");
+        assert!(opened
+            .explanation_lines
+            .iter()
+            .any(|line| line.contains("formula_text_changed=true")));
+        assert!(opened
+            .blocked_dimensions
+            .contains(&"distill_not_integrated".to_string()));
+        assert!(opened
+            .blocked_dimensions
+            .contains(&"no_oxreplay_explain_adapter_invocation_yet".to_string()));
 
         let _ = fs::remove_dir_all(store.root());
     }

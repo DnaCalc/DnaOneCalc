@@ -13,6 +13,7 @@ pub enum ArtifactKind {
     RejectDecision,
     ExecutionTrace,
     ReplayCapture,
+    Witness,
     CapabilityLedgerSnapshot,
 }
 
@@ -27,6 +28,7 @@ impl ArtifactKind {
             Self::RejectDecision => "reject_decision",
             Self::ExecutionTrace => "execution_trace",
             Self::ReplayCapture => "replay_capture",
+            Self::Witness => "witness",
             Self::CapabilityLedgerSnapshot => "capability_ledger_snapshot",
         }
     }

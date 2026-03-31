@@ -26,8 +26,9 @@ use crate::document::{
 };
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedReplayCapture,
-    PersistedScenarioRun, ReplayCaptureRecord, RetainedProvenanceRecord,
+    PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord,
     RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+    WitnessRecord,
 };
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -334,6 +335,15 @@ pub struct RetainedRunDiffSummary {
     pub capability_snapshot_changed: bool,
     pub replay_pair_openable: bool,
     pub diff_floor: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedWitnessSummary {
+    pub witness_id: String,
+    pub scenario_id: String,
+    pub explain_floor: String,
+    pub explanation_lines: Vec<String>,
+    pub blocked_dimensions: Vec<String>,
 }
 
 impl DocumentRoundTripInvariantReport {
@@ -1094,6 +1104,96 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn generate_retained_witness(
+        &self,
+        store: &RetainedScenarioStore,
+        left_run_id: &str,
+        right_run_id: &str,
+    ) -> Result<PersistedWitness, String> {
+        let diff = self.diff_retained_run_xray(store, left_run_id, right_run_id)?;
+        let left = store.reopen_run(left_run_id)?;
+        let right = store.reopen_run(right_run_id)?;
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let witness_id = format!("witness-{}-{}", left_run_id, right_run_id);
+        let explain_floor = "retained_diff_explain_summary".to_string();
+        let explanation_lines = vec![
+            format!("same_scenario={}", diff.same_scenario),
+            format!("formula_text_changed={}", diff.formula_text_changed),
+            format!("worksheet_value_match={}", diff.worksheet_value_match),
+            format!("payload_match={}", diff.payload_match),
+            format!(
+                "capability_snapshot_changed={}",
+                diff.capability_snapshot_changed
+            ),
+            format!("replay_pair_openable={}", diff.replay_pair_openable),
+        ];
+        let blocked_dimensions = vec![
+            "distill_not_integrated".to_string(),
+            "no_oxreplay_explain_adapter_invocation_yet".to_string(),
+        ];
+        let content_hash = stable_hash(&(
+            &witness_id,
+            &left.scenario.scenario_id,
+            &left.run.scenario_run_id,
+            &right.run.scenario_run_id,
+            &explanation_lines,
+            &blocked_dimensions,
+        ));
+        let witness = WitnessRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.witness".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::Witness.id().to_string(),
+                logical_id: witness_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: "witness_generation".to_string(),
+                seam_pin_set_id: "onecalc:ws-06:witness".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "lane_limited".to_string(),
+                lineage_refs: vec![
+                    ArtifactLineageRef {
+                        relation: "left_run".to_string(),
+                        artifact_ref: left.run.envelope.stable_ref(),
+                    },
+                    ArtifactLineageRef {
+                        relation: "right_run".to_string(),
+                        artifact_ref: right.run.envelope.stable_ref(),
+                    },
+                ],
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: left.run.envelope.capability_snapshot_ref.clone(),
+            },
+            witness_id,
+            scenario_id: left.scenario.scenario_id,
+            left_run_ref: left.run.envelope.stable_ref(),
+            right_run_ref: right.run.envelope.stable_ref(),
+            explain_floor,
+            explanation_lines,
+            blocked_dimensions,
+            emitted_at_unix_ms,
+        };
+
+        store.persist_witness(&witness)
+    }
+
+    pub fn open_witness(
+        &self,
+        store: &RetainedScenarioStore,
+        witness_id: &str,
+    ) -> Result<OpenedWitnessSummary, String> {
+        let witness = store.read_witness(witness_id)?;
+        Ok(OpenedWitnessSummary {
+            witness_id: witness.witness_id,
+            scenario_id: witness.scenario_id,
+            explain_floor: witness.explain_floor,
+            explanation_lines: witness.explanation_lines,
+            blocked_dimensions: witness.blocked_dimensions,
+        })
+    }
+
     pub fn emit_capability_snapshot(
         &self,
         packet_kind: &str,
@@ -1192,7 +1292,11 @@ impl RuntimeAdapter {
                     Some("retained run replay capture and open path available at cap.C1.replay_valid"),
                 ),
                 capability_mode("Diff", "blocked", Some("artifact diff surface not yet integrated")),
-                capability_mode("Explain", "blocked", Some("explain or witness generation not yet integrated")),
+                capability_mode(
+                    "Explain",
+                    "available",
+                    Some("retained diff explain summary available; distill remains blocked"),
+                ),
                 capability_mode("Distill", "blocked", Some("distill path not yet integrated")),
                 capability_mode("Handoff", "blocked", Some("handoff packet generation not yet integrated")),
             ],
