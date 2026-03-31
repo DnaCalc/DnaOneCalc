@@ -116,6 +116,7 @@ pub fn read_spreadsheetml_document(
     reader.config_mut().trim_text(true);
 
     let mut current_row: Vec<String> = Vec::new();
+    let mut current_cell_text = String::new();
     let mut rows = BTreeMap::new();
     let mut inside_row = false;
     let mut inside_data = false;
@@ -130,6 +131,7 @@ pub fn read_spreadsheetml_document(
                 b"Data" => {
                     if inside_row {
                         inside_data = true;
+                        current_cell_text.clear();
                     }
                 }
                 _ => {}
@@ -143,13 +145,20 @@ pub fn read_spreadsheetml_document(
                     inside_row = false;
                     inside_data = false;
                 }
-                b"Data" => inside_data = false,
+                b"Data" => {
+                    if inside_row && inside_data {
+                        current_row.push(current_cell_text.clone());
+                        current_cell_text.clear();
+                    }
+                    inside_data = false;
+                }
                 _ => {}
             },
             Ok(Event::Text(text)) => {
                 if inside_row && inside_data {
-                    current_row.push(
-                        text.decode()
+                    current_cell_text.push_str(
+                        &text
+                            .decode()
                             .map_err(|error| error.to_string())?
                             .into_owned(),
                     );
@@ -385,4 +394,65 @@ fn parse_bool(rows: &BTreeMap<String, String>, key: &str) -> Result<bool, String
     required(rows, key)?
         .parse::<bool>()
         .map_err(|error| format!("invalid bool for {key}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn spreadsheetml_round_trip_preserves_empty_optional_fields() {
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-document-empty-optionals-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let path = root.join("empty-optionals.xml");
+        let document = OneCalcDocumentRecord {
+            document_id: "doc-001".to_string(),
+            document_title: "Document".to_string(),
+            document_scope: "isolated_single_formula_instance".to_string(),
+            persistence_format_id: "spreadsheetml2003.onecalc.single_instance.v1".to_string(),
+            worksheet_name: "Formula".to_string(),
+            saved_at_unix_ms: 46_000,
+            host_profile_id: "OC-H1".to_string(),
+            scenario_slug: "sum".to_string(),
+            formula_stable_id: "formula-001".to_string(),
+            formula_text: "=SUM(1,2,3)".to_string(),
+            formula_channel_kind: "worksheet_a1".to_string(),
+            formula_text_version: 1,
+            structure_context_version: "onecalc:single_formula:h1".to_string(),
+            host_driving_packet_kind: "edit_accept_recalc".to_string(),
+            host_driving_block: "single_formula".to_string(),
+            recalc_trigger_kind: "edit_accept".to_string(),
+            display_context: "single_formula_result".to_string(),
+            effective_display_status: "none".to_string(),
+            function_surface_policy_id: "policy-001".to_string(),
+            library_context_snapshot_ref: None,
+            view_state: DocumentViewStateRecord {
+                active_surface: "formula".to_string(),
+                cursor_offset: 4,
+                selection_anchor: 4,
+                selection_focus: 4,
+            },
+            artifact_index: vec![DocumentArtifactIndexEntry {
+                artifact_kind: "scenario_run".to_string(),
+                logical_id: "run-001".to_string(),
+                path_hint: "scenario-runs/run-001.json".to_string(),
+                content_hash: None,
+                embedded: false,
+            }],
+        };
+
+        let persisted =
+            write_spreadsheetml_document(&path, &document).expect("document should persist");
+        let reopened =
+            read_spreadsheetml_document(&persisted.document_path).expect("document should reopen");
+
+        assert_eq!(reopened, document);
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }

@@ -1412,6 +1412,8 @@ impl RuntimeAdapter {
                 "dnaonecalc-host".to_string(),
                 "oxfml_core".to_string(),
                 "oxfunc_core".to_string(),
+                "oxreplay_abstractions".to_string(),
+                "oxreplay_core".to_string(),
             ],
             function_surface_snapshot_ref,
             seam_pin_set_id: "onecalc:ws-05:capability".to_string(),
@@ -1434,7 +1436,11 @@ impl RuntimeAdapter {
                     "available",
                     Some("retained run replay capture and open path available at cap.C1.replay_valid"),
                 ),
-                capability_mode("Diff", "blocked", Some("artifact diff surface not yet integrated")),
+                capability_mode(
+                    "Diff",
+                    "available",
+                    Some("retained run diff surface is available; observation compare remains blocked"),
+                ),
                 capability_mode(
                     "Explain",
                     "available",
@@ -1449,7 +1455,7 @@ impl RuntimeAdapter {
             ],
             provisional_seams: vec![
                 "browser_and_secondary_hosts_not_admitted".to_string(),
-                "observation_and_replay_paths_not_integrated".to_string(),
+                "observation_path_not_integrated".to_string(),
             ],
             capability_ceilings: vec![
                 "single_formula_scope_only".to_string(),

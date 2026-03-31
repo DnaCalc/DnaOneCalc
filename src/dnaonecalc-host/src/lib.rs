@@ -641,9 +641,26 @@ mod tests {
             .packet_kind_register
             .contains(&"edit_accept_recalc".to_string()));
         assert!(snapshot
+            .dependency_set
+            .contains(&"oxreplay_core".to_string()));
+        assert!(snapshot
+            .dependency_set
+            .contains(&"oxreplay_abstractions".to_string()));
+        assert!(snapshot
             .mode_availability
             .iter()
             .any(|mode| mode.mode_id == "DNA-only" && mode.state == "available"));
+        assert!(snapshot
+            .mode_availability
+            .iter()
+            .any(|mode| mode.mode_id == "Replay" && mode.state == "available"));
+        assert!(snapshot
+            .mode_availability
+            .iter()
+            .any(|mode| mode.mode_id == "Diff" && mode.state == "available"));
+        assert!(!snapshot
+            .provisional_seams
+            .contains(&"observation_and_replay_paths_not_integrated".to_string()));
     }
 
     #[test]
