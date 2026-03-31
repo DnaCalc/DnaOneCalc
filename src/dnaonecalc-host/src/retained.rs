@@ -39,6 +39,9 @@ pub struct ScenarioRecord {
 pub struct ScenarioRunRecord {
     pub scenario_run_id: String,
     pub scenario_id: String,
+    pub formula_text_version: u64,
+    pub formula_token: String,
+    pub authored_formula_text: String,
     pub build_id: String,
     pub runtime_platform: String,
     pub seam_pin_set_id: String,
@@ -52,6 +55,11 @@ pub struct ScenarioRunRecord {
     pub function_surface_effective_id: String,
     pub projection_status: String,
     pub provisionality_status: String,
+    pub worksheet_value_summary: String,
+    pub payload_summary: String,
+    pub returned_value_surface_kind: String,
+    pub effective_display_status: String,
+    pub commit_decision_kind: String,
     pub executed_at_unix_ms: u64,
 }
 

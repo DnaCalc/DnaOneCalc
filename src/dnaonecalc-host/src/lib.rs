@@ -18,7 +18,7 @@ pub use retained::{
     RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
 };
 pub use runtime::{
-    CompletionProposalSummary, DrivenRecalcSummary, DrivenSingleFormulaHost,
+    CompletionProposalSummary, DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost,
     FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary,
     FunctionHelpSummary, HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate,
     RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, RuntimeAdapter,
@@ -262,6 +262,48 @@ mod tests {
             .expect("reopened driven host should recalc");
         assert_eq!(reopened_summary.host_profile_id, "OC-H1");
         assert_eq!(reopened_summary.evaluation.worksheet_value_summary, "Number(6)");
+
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn retained_h1_runs_compare_version_to_version_in_code() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.compare", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let store_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-h1-compare-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&store_root);
+        let store = RetainedScenarioStore::new(&store_root);
+
+        let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let first_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
+            .expect("first run should succeed");
+        let first = adapter
+            .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM compare")
+            .expect("first run should persist");
+
+        let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+        let second_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
+            .expect("second run should succeed");
+        let second = adapter
+            .persist_driven_scenario_run(&store, &host, &second_context, &second_summary, "SUM compare")
+            .expect("second run should persist");
+
+        let comparison = adapter
+            .compare_retained_driven_runs(&store, &first.run.scenario_run_id, &second.run.scenario_run_id)
+            .expect("retained driven runs should compare");
+
+        assert!(comparison.same_scenario);
+        assert!(comparison.formula_version_changed);
+        assert!(comparison.formula_text_changed);
+        assert!(!comparison.worksheet_value_match);
+        assert_eq!(comparison.reliability_badge, "direct");
 
         let _ = fs::remove_dir_all(store.root());
     }

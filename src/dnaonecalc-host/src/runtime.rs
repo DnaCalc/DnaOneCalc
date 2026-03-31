@@ -265,6 +265,22 @@ pub struct ReopenedDrivenSingleFormulaRun {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrivenRunComparison {
+    pub left_run_id: String,
+    pub right_run_id: String,
+    pub same_scenario: bool,
+    pub formula_version_changed: bool,
+    pub formula_text_changed: bool,
+    pub worksheet_value_match: bool,
+    pub payload_match: bool,
+    pub returned_surface_match: bool,
+    pub effective_display_match: bool,
+    pub commit_decision_match: bool,
+    pub comparison_envelope: String,
+    pub reliability_badge: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionProposalSummary {
     pub proposal_kind: String,
     pub display_text: String,
@@ -460,6 +476,9 @@ impl RuntimeAdapter {
         let run = ScenarioRunRecord {
             scenario_run_id,
             scenario_id,
+            formula_text_version: recalc_summary.formula_text_version,
+            formula_token: recalc_summary.evaluation.formula_token.clone(),
+            authored_formula_text: driven_host.formula_text().to_string(),
             build_id: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
             runtime_platform: std::env::consts::OS.to_string(),
             seam_pin_set_id: "onecalc:ws-04:h1".to_string(),
@@ -492,6 +511,11 @@ impl RuntimeAdapter {
             } else {
                 "stable".to_string()
             },
+            worksheet_value_summary: recalc_summary.evaluation.worksheet_value_summary.clone(),
+            payload_summary: recalc_summary.evaluation.payload_summary.clone(),
+            returned_value_surface_kind: recalc_summary.evaluation.returned_value_surface_kind.clone(),
+            effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
+            commit_decision_kind: recalc_summary.evaluation.commit_decision_kind.clone(),
             executed_at_unix_ms,
         };
 
@@ -506,9 +530,9 @@ impl RuntimeAdapter {
         let retained = store.reopen_run(scenario_run_id)?;
         let mut driven_host = self.new_driven_single_formula_host(
             retained.scenario.provenance.formula_stable_id.clone(),
-            retained.scenario.formula_text.clone(),
+            retained.run.authored_formula_text.clone(),
         )?;
-        driven_host.host.formula_text_version = retained.scenario.provenance.formula_text_version;
+        driven_host.host.formula_text_version = retained.run.formula_text_version;
         driven_host.host.structure_context_version =
             retained.scenario.provenance.structure_context_version.clone();
         driven_host.host.formula_channel_kind =
@@ -517,6 +541,33 @@ impl RuntimeAdapter {
         Ok(ReopenedDrivenSingleFormulaRun {
             retained,
             driven_host,
+        })
+    }
+
+    pub fn compare_retained_driven_runs(
+        &self,
+        store: &RetainedScenarioStore,
+        left_run_id: &str,
+        right_run_id: &str,
+    ) -> Result<DrivenRunComparison, String> {
+        let left = store.reopen_run(left_run_id)?;
+        let right = store.reopen_run(right_run_id)?;
+
+        Ok(DrivenRunComparison {
+            left_run_id: left.run.scenario_run_id.clone(),
+            right_run_id: right.run.scenario_run_id.clone(),
+            same_scenario: left.run.scenario_id == right.run.scenario_id,
+            formula_version_changed: left.run.formula_text_version != right.run.formula_text_version,
+            formula_text_changed: left.run.authored_formula_text != right.run.authored_formula_text,
+            worksheet_value_match: left.run.worksheet_value_summary == right.run.worksheet_value_summary,
+            payload_match: left.run.payload_summary == right.run.payload_summary,
+            returned_surface_match: left.run.returned_value_surface_kind
+                == right.run.returned_value_surface_kind,
+            effective_display_match: left.run.effective_display_status
+                == right.run.effective_display_status,
+            commit_decision_match: left.run.commit_decision_kind == right.run.commit_decision_kind,
+            comparison_envelope: "formula_text,worksheet_value,payload,returned_surface,effective_display,commit_decision".to_string(),
+            reliability_badge: "direct".to_string(),
         })
     }
 

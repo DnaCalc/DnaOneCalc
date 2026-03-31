@@ -11,12 +11,13 @@ fn main() {
         Some("--function-surface-smoke") => run_function_surface_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
+        Some("--h1-compare-smoke") => run_h1_compare_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --h1-smoke, --h1-retained-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -173,6 +174,48 @@ fn run_h1_retained_smoke() {
         reopened_summary.host_profile_id,
         reopened_summary.formula_text_version,
         reopened_summary.evaluation.worksheet_value_summary
+    );
+}
+
+fn run_h1_compare_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-h1-compare-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.compare", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let first_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
+        .expect("first retained run should succeed");
+    let first = adapter
+        .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM compare")
+        .expect("first retained run should persist");
+
+    let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+    let second_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
+        .expect("second retained run should succeed");
+    let second = adapter
+        .persist_driven_scenario_run(&store, &host, &second_context, &second_summary, "SUM compare")
+        .expect("second retained run should persist");
+
+    let comparison = adapter
+        .compare_retained_driven_runs(&store, &first.run.scenario_run_id, &second.run.scenario_run_id)
+        .expect("retained driven runs should compare");
+
+    println!("dnaonecalc-host h1 compare smoke");
+    println!("left_run_id={}", comparison.left_run_id);
+    println!("right_run_id={}", comparison.right_run_id);
+    println!(
+        "comparison=same_scenario:{};formula_version_changed:{};formula_text_changed:{};worksheet_value_match:{};reliability:{}",
+        comparison.same_scenario,
+        comparison.formula_version_changed,
+        comparison.formula_text_changed,
+        comparison.worksheet_value_match,
+        comparison.reliability_badge
     );
 }
 
