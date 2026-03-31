@@ -44,6 +44,78 @@ impl FormulaEditorState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveDisplayRenderState {
+    display_text: String,
+    formatting_plane_source: String,
+    emphasis: String,
+    number_format: String,
+}
+
+impl EffectiveDisplayRenderState {
+    fn none() -> Self {
+        Self {
+            display_text: "not evaluated yet".to_string(),
+            formatting_plane_source: "none".to_string(),
+            emphasis: "plain".to_string(),
+            number_format: "none".to_string(),
+        }
+    }
+
+    fn from_summary(summary: &FormulaEvaluationSummary) -> Self {
+        let display_text = decode_display_text(&summary.worksheet_value_summary);
+        let number_format = extract_presentation_hint_field(
+            &summary.returned_presentation_hint_status,
+            "number_format",
+        )
+        .unwrap_or_else(|| "none".to_string());
+        let presentation_style =
+            extract_presentation_hint_field(&summary.returned_presentation_hint_status, "style")
+                .unwrap_or_else(|| "none".to_string());
+        let host_style = if summary.host_style_state_status == "none" {
+            None
+        } else {
+            Some(summary.host_style_state_status.as_str())
+        };
+
+        let formatting_plane_source = match (
+            summary.returned_presentation_hint_status == "none",
+            summary.host_style_state_status == "none",
+        ) {
+            (true, true) => "none".to_string(),
+            (false, true) => "presentation_hint".to_string(),
+            (true, false) => "host_style".to_string(),
+            (false, false) => "presentation_hint+host_style".to_string(),
+        };
+
+        let emphasis = if let Some(host_style) = host_style {
+            format!("host:{host_style}")
+        } else if presentation_style != "none" {
+            format!("hint:{presentation_style}")
+        } else {
+            "plain".to_string()
+        };
+
+        Self {
+            display_text,
+            formatting_plane_source,
+            emphasis,
+            number_format,
+        }
+    }
+
+    fn rich_text(&self) -> egui::RichText {
+        let mut text = egui::RichText::new(self.display_text.clone());
+        if self.emphasis != "plain" {
+            text = text.italics();
+        }
+        if self.number_format != "none" {
+            text = text.monospace();
+        }
+        text
+    }
+}
+
 pub struct OneCalcShellApp {
     runtime_adapter: RuntimeAdapter,
     edit_session: FormulaEditorSession,
@@ -59,6 +131,7 @@ pub struct OneCalcShellApp {
     editor_state: FormulaEditorState,
     returned_presentation_hint_text: String,
     host_style_state_text: String,
+    effective_display_render: EffectiveDisplayRenderState,
     result_text: String,
     diagnostics_text: String,
     editor_focus_requested: bool,
@@ -126,6 +199,7 @@ impl OneCalcShellApp {
             editor_state: FormulaEditorState::new(formula_text),
             returned_presentation_hint_text: "none".to_string(),
             host_style_state_text: "none".to_string(),
+            effective_display_render: EffectiveDisplayRenderState::none(),
             result_text,
             diagnostics_text,
             editor_focus_requested: false,
@@ -189,6 +263,7 @@ impl OneCalcShellApp {
                 self.returned_presentation_hint_text =
                     summary.returned_presentation_hint_status.clone();
                 self.host_style_state_text = summary.host_style_state_status.clone();
+                self.effective_display_render = EffectiveDisplayRenderState::from_summary(&summary);
                 self.result_text = format!(
                     "worksheet_value: {}\npayload_summary: {}\nreturned_surface: {}\nreturned_presentation_hint: {}\nhost_style_state: {}\neffective_display: {}\ncommit_decision: {}",
                     summary.worksheet_value_summary,
@@ -204,6 +279,7 @@ impl OneCalcShellApp {
             Err(error) => {
                 self.returned_presentation_hint_text = "none".to_string();
                 self.host_style_state_text = "none".to_string();
+                self.effective_display_render = EffectiveDisplayRenderState::none();
                 self.result_text = format!("evaluation failed: {error}");
                 self.latest_evaluation = None;
             }
@@ -331,6 +407,15 @@ impl eframe::App for OneCalcShellApp {
                     self.returned_presentation_hint_text, self.host_style_state_text
                 ));
                 ui.separator();
+                ui.label("Effective Display Preview");
+                ui.label(self.effective_display_render.rich_text());
+                ui.small(format!(
+                    "formatting_plane_source={} | emphasis={} | number_format={}",
+                    self.effective_display_render.formatting_plane_source,
+                    self.effective_display_render.emphasis,
+                    self.effective_display_render.number_format
+                ));
+                ui.separator();
                 ui.code(&self.result_text);
             });
         });
@@ -381,6 +466,35 @@ impl eframe::App for OneCalcShellApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+}
+
+fn extract_presentation_hint_field(summary: &str, field: &str) -> Option<String> {
+    if summary == "none" {
+        return None;
+    }
+
+    let prefix = format!("{field}:");
+    summary
+        .split(';')
+        .find_map(|segment| segment.strip_prefix(&prefix))
+        .map(|value| value.to_string())
+}
+
+fn decode_display_text(summary: &str) -> String {
+    if let Some(value) = summary
+        .strip_prefix("Number(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        return value.to_string();
+    }
+    if let Some(value) = summary
+        .strip_prefix("Text(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        return value.to_string();
+    }
+
+    summary.to_string()
 }
 
 pub fn launch_shell(smoke_mode: bool) -> Result<(), eframe::Error> {
@@ -434,6 +548,8 @@ mod tests {
         assert!(app.result_text.contains("returned_presentation_hint: none"));
         assert!(app.result_text.contains("host_style_state: none"));
         assert!(app.result_text.contains("effective_display: none"));
+        assert_eq!(app.effective_display_render.display_text, "6");
+        assert_eq!(app.effective_display_render.formatting_plane_source, "none");
         assert!(app
             .diagnostics_text
             .contains("edit_packet_diagnostic_count"));
@@ -494,5 +610,29 @@ mod tests {
         assert!(app.function_help_text.contains("Current Help: SUM"));
         assert!(app.function_help_text.contains("signature: SUM(1..255)"));
         assert!(app.function_help_text.contains("availability: supported"));
+    }
+
+    #[test]
+    fn effective_display_render_state_derives_from_the_two_formatting_planes() {
+        let summary = FormulaEvaluationSummary {
+            formula_token: "token".to_string(),
+            worksheet_value_summary: "Number(6)".to_string(),
+            payload_summary: "Number".to_string(),
+            returned_value_surface_kind: "OrdinaryValue".to_string(),
+            returned_presentation_hint_status: "number_format:none;style:Currency".to_string(),
+            host_style_state_status: "accent".to_string(),
+            effective_display_status:
+                "presentation_hint:number_format:none;style:Currency;host_style:accent"
+                    .to_string(),
+            commit_decision_kind: "accepted".to_string(),
+            trace_event_count: 2,
+        };
+
+        let render = EffectiveDisplayRenderState::from_summary(&summary);
+
+        assert_eq!(render.display_text, "6");
+        assert_eq!(render.formatting_plane_source, "presentation_hint+host_style");
+        assert_eq!(render.emphasis, "host:accent");
+        assert_eq!(render.number_format, "none");
     }
 }
