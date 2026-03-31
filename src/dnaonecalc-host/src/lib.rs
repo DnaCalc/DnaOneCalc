@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod function_surface;
 pub mod retained;
 pub mod runtime;
@@ -10,6 +11,10 @@ use oxfunc_core::value::{CallArgValue, EvalValue, ReferenceLike};
 use oxreplay_abstractions::{LaneId, RegistryRef};
 use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 
+pub use artifact::{
+    stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
+    StableArtifactRef,
+};
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
@@ -237,6 +242,14 @@ mod tests {
         assert_eq!(persisted.scenario.scenario_slug, "sum-baseline");
         assert_eq!(persisted.scenario.host_profile_id, "OC-H1");
         assert_eq!(persisted.run.scenario_id, persisted.scenario.scenario_id);
+        assert_eq!(persisted.scenario.envelope.artifact_kind, "scenario");
+        assert_eq!(persisted.run.envelope.artifact_kind, "scenario_run");
+        assert_eq!(persisted.run.scenario_ref.logical_id, persisted.scenario.scenario_id);
+        assert_eq!(persisted.run.envelope.lineage_refs.len(), 1);
+        assert_eq!(
+            persisted.run.envelope.lineage_refs[0].artifact_ref.logical_id,
+            persisted.scenario.scenario_id
+        );
 
         let mut reopened = adapter
             .reopen_driven_scenario_run(&store, &persisted.run.scenario_run_id)

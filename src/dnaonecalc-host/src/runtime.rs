@@ -10,6 +10,10 @@ use oxfml_core::{
 use oxfunc_core::value::EvalValue;
 use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
 
+use crate::artifact::{
+    stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
+    StableArtifactRef,
+};
 use crate::retained::{
     PersistedScenarioRun, RetainedProvenanceRecord, RetainedRecalcContextRecord,
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
@@ -448,8 +452,34 @@ impl RuntimeAdapter {
             .admitted_execution_snapshot();
         let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
         let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
+        let scenario_content_hash = stable_hash(&(
+            driven_host.formula_stable_id(),
+            driven_host.formula_text(),
+            recalc_summary.formula_text_version,
+            self.host_profile.id(),
+            recalc_summary.packet_kind.as_str(),
+        ));
+        let scenario_envelope = ArtifactEnvelope {
+            schema_id: "dnaonecalc.artifact.scenario".to_string(),
+            schema_version: "v1".to_string(),
+            artifact_kind: ArtifactKind::Scenario.id().to_string(),
+            logical_id: scenario_id.clone(),
+            content_hash: scenario_content_hash,
+            created_at_unix_ms: executed_at_unix_ms,
+            created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+            host_profile_id: self.host_profile.id().to_string(),
+            packet_kind: recalc_summary.packet_kind.clone(),
+            seam_pin_set_id: "onecalc:ws-04:h1".to_string(),
+            capability_floor: self.host_profile.id().to_string(),
+            provisionality_state: "stable".to_string(),
+            lineage_refs: Vec::new(),
+            attachment_refs: Vec::<ArtifactAttachmentRef>::new(),
+            capability_snapshot_ref: None,
+        };
+        let scenario_ref = scenario_envelope.stable_ref();
 
         let scenario = ScenarioRecord {
+            envelope: scenario_envelope,
             scenario_id: scenario_id.clone(),
             scenario_slug,
             formula_text: driven_host.formula_text().to_string(),
@@ -473,9 +503,93 @@ impl RuntimeAdapter {
                 structure_context_version: recalc_summary.structure_context_version.clone(),
             },
         };
+        let result_surface_ref = StableArtifactRef {
+            artifact_kind: ArtifactKind::ResultSurface.id().to_string(),
+            logical_id: format!("result-surface-{}", recalc_summary.evaluation.formula_token),
+            content_hash: Some(stable_hash(&(
+                recalc_summary.evaluation.formula_token.as_str(),
+                recalc_summary.evaluation.worksheet_value_summary.as_str(),
+                recalc_summary.evaluation.payload_summary.as_str(),
+            ))),
+        };
+        let candidate_ref = StableArtifactRef {
+            artifact_kind: ArtifactKind::CandidateResult.id().to_string(),
+            logical_id: format!("candidate-{}", recalc_summary.evaluation.formula_token),
+            content_hash: Some(stable_hash(&(
+                recalc_summary.evaluation.formula_token.as_str(),
+                recalc_summary.evaluation.commit_decision_kind.as_str(),
+                "candidate",
+            ))),
+        };
+        let trace_ref = StableArtifactRef {
+            artifact_kind: ArtifactKind::ExecutionTrace.id().to_string(),
+            logical_id: format!("trace-{}", recalc_summary.evaluation.formula_token),
+            content_hash: Some(stable_hash(&(
+                recalc_summary.evaluation.formula_token.as_str(),
+                recalc_summary.evaluation.trace_event_count,
+            ))),
+        };
+        let commit_ref = if recalc_summary.evaluation.commit_decision_kind == "accepted" {
+            Some(StableArtifactRef {
+                artifact_kind: ArtifactKind::CommitDecision.id().to_string(),
+                logical_id: format!("commit-{}", recalc_summary.evaluation.formula_token),
+                content_hash: Some(stable_hash(&(
+                    recalc_summary.evaluation.formula_token.as_str(),
+                    "accepted",
+                ))),
+            })
+        } else {
+            None
+        };
+        let reject_ref = if recalc_summary.evaluation.commit_decision_kind == "rejected" {
+            Some(StableArtifactRef {
+                artifact_kind: ArtifactKind::RejectDecision.id().to_string(),
+                logical_id: format!("reject-{}", recalc_summary.evaluation.formula_token),
+                content_hash: Some(stable_hash(&(
+                    recalc_summary.evaluation.formula_token.as_str(),
+                    "rejected",
+                ))),
+            })
+        } else {
+            None
+        };
+        let run_content_hash = stable_hash(&(
+            scenario_run_id.as_str(),
+            recalc_summary.formula_text_version,
+            recalc_summary.evaluation.formula_token.as_str(),
+            recalc_summary.evaluation.worksheet_value_summary.as_str(),
+            recalc_summary.evaluation.commit_decision_kind.as_str(),
+        ));
+        let run_envelope = ArtifactEnvelope {
+            schema_id: "dnaonecalc.artifact.scenario_run".to_string(),
+            schema_version: "v1".to_string(),
+            artifact_kind: ArtifactKind::ScenarioRun.id().to_string(),
+            logical_id: scenario_run_id.clone(),
+            content_hash: run_content_hash,
+            created_at_unix_ms: executed_at_unix_ms,
+            created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+            host_profile_id: self.host_profile.id().to_string(),
+            packet_kind: recalc_summary.packet_kind.clone(),
+            seam_pin_set_id: "onecalc:ws-04:h1".to_string(),
+            capability_floor: self.host_profile.id().to_string(),
+            provisionality_state: if recalc_summary.packet_kind == HostPacketKind::ForcedRecalc.id()
+            {
+                "forced".to_string()
+            } else {
+                "stable".to_string()
+            },
+            lineage_refs: vec![ArtifactLineageRef {
+                relation: "scenario".to_string(),
+                artifact_ref: scenario_ref.clone(),
+            }],
+            attachment_refs: Vec::<ArtifactAttachmentRef>::new(),
+            capability_snapshot_ref: None,
+        };
         let run = ScenarioRunRecord {
+            envelope: run_envelope,
             scenario_run_id,
             scenario_id,
+            scenario_ref,
             formula_text_version: recalc_summary.formula_text_version,
             formula_token: recalc_summary.evaluation.formula_token.clone(),
             authored_formula_text: driven_host.formula_text().to_string(),
@@ -483,30 +597,18 @@ impl RuntimeAdapter {
             runtime_platform: std::env::consts::OS.to_string(),
             seam_pin_set_id: "onecalc:ws-04:h1".to_string(),
             effective_capability_floor: self.host_profile.id().to_string(),
-            result_surface_ref: format!("result-surface:{}", recalc_summary.evaluation.formula_token),
-            candidate_ref: Some(format!(
-                "candidate:{}",
-                recalc_summary.evaluation.formula_token
-            )),
-            commit_ref: if recalc_summary.evaluation.commit_decision_kind == "accepted" {
-                Some(format!("commit:{}", recalc_summary.evaluation.formula_token))
-            } else {
-                None
-            },
-            reject_ref: if recalc_summary.evaluation.commit_decision_kind == "rejected" {
-                Some(format!("reject:{}", recalc_summary.evaluation.formula_token))
-            } else {
-                None
-            },
-            trace_ref: Some(format!("trace:{}", recalc_summary.evaluation.formula_token)),
+            result_surface_ref,
+            candidate_ref: Some(candidate_ref),
+            commit_ref,
+            reject_ref,
+            trace_ref: Some(trace_ref),
             replay_capture_ref: None,
             function_surface_effective_id: format!(
                 "{}:{}",
                 function_surface_policy_id, snapshot_ref
             ),
             projection_status: "direct".to_string(),
-            provisionality_status: if recalc_summary.packet_kind == HostPacketKind::ForcedRecalc.id()
-            {
+            provisionality_status: if recalc_summary.packet_kind == HostPacketKind::ForcedRecalc.id() {
                 "forced".to_string()
             } else {
                 "stable".to_string()

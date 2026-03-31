@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::{ArtifactEnvelope, StableArtifactRef};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetainedRecalcContextRecord {
     pub trigger_kind: String,
@@ -20,6 +22,7 @@ pub struct RetainedProvenanceRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenarioRecord {
+    pub envelope: ArtifactEnvelope,
     pub scenario_id: String,
     pub scenario_slug: String,
     pub formula_text: String,
@@ -37,8 +40,10 @@ pub struct ScenarioRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenarioRunRecord {
+    pub envelope: ArtifactEnvelope,
     pub scenario_run_id: String,
     pub scenario_id: String,
+    pub scenario_ref: StableArtifactRef,
     pub formula_text_version: u64,
     pub formula_token: String,
     pub authored_formula_text: String,
@@ -46,12 +51,12 @@ pub struct ScenarioRunRecord {
     pub runtime_platform: String,
     pub seam_pin_set_id: String,
     pub effective_capability_floor: String,
-    pub result_surface_ref: String,
-    pub candidate_ref: Option<String>,
-    pub commit_ref: Option<String>,
-    pub reject_ref: Option<String>,
-    pub trace_ref: Option<String>,
-    pub replay_capture_ref: Option<String>,
+    pub result_surface_ref: StableArtifactRef,
+    pub candidate_ref: Option<StableArtifactRef>,
+    pub commit_ref: Option<StableArtifactRef>,
+    pub reject_ref: Option<StableArtifactRef>,
+    pub trace_ref: Option<StableArtifactRef>,
+    pub replay_capture_ref: Option<StableArtifactRef>,
     pub function_surface_effective_id: String,
     pub projection_status: String,
     pub provisionality_status: String,
