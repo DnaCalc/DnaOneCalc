@@ -863,10 +863,8 @@ mod tests {
     #[test]
     fn widening_request_handoff_emits_from_real_compare_state() {
         let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let root = std::env::temp_dir().join(format!(
-            "dnaonecalc-widening-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("dnaonecalc-widening-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let store = RetainedScenarioStore::new(&root);
         let mut host = adapter
