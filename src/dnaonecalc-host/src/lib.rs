@@ -861,6 +861,56 @@ mod tests {
     }
 
     #[test]
+    fn widening_request_handoff_emits_from_real_compare_state() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-widening-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.widening", "=SUM(10,20,12)")
+            .expect("widening host should initialize");
+        let context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(10,20,12)", context)
+            .expect("widening recalc should succeed");
+        let retained = adapter
+            .persist_driven_scenario_run(&store, &host, &context, &summary, "Widening request")
+            .expect("retained run should persist");
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("OxXlObs")
+            .join("states/excel/xlobs_capture_values_formulae_001");
+        let observation = adapter
+            .persist_observation_from_existing_source(&store, &source_root)
+            .expect("observation should persist");
+        let comparison = adapter
+            .compare_run_with_observation(
+                &store,
+                &retained.run.scenario_run_id,
+                &observation.observation.observation_id,
+            )
+            .expect("comparison should persist");
+
+        let handoff = adapter
+            .generate_observation_widening_handoff(&store, &comparison.comparison.comparison_id)
+            .expect("widening handoff should persist");
+        let opened = adapter
+            .open_handoff_packet(&store, &handoff.handoff.handoff_id)
+            .expect("handoff should open");
+
+        assert_eq!(opened.target_lane, "OxXlObs/DnaOneCalc");
+        assert_eq!(opened.requested_action_kind, "widen_observation_envelope");
+        assert_eq!(opened.status, "ready");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn retained_h1_runs_compare_version_to_version_in_code() {
         let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
         let mut host = adapter

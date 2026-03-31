@@ -1954,6 +1954,132 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn generate_observation_widening_handoff(
+        &self,
+        store: &RetainedScenarioStore,
+        comparison_id: &str,
+    ) -> Result<PersistedHandoffPacket, String> {
+        let comparison = store.read_comparison(comparison_id)?;
+        if comparison.projection_limitations.is_empty() {
+            return Err(format!(
+                "comparison {comparison_id} does not have blocked dimensions to widen"
+            ));
+        }
+
+        let source_run = store.reopen_run(&comparison.left_artifact_ref.logical_id)?;
+        let observation = store.read_observation(&comparison.right_artifact_ref.logical_id)?;
+        let capability_snapshot_ref = observation
+            .envelope
+            .capability_snapshot_ref
+            .clone()
+            .or_else(|| source_run.run.envelope.capability_snapshot_ref.clone())
+            .ok_or_else(|| {
+                format!(
+                    "compare pair {} / {} is missing a capability snapshot ref",
+                    source_run.run.scenario_run_id, observation.observation_id
+                )
+            })?;
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let handoff_id = format!("handoff-widen-{}", comparison_id);
+        let readiness = vec![
+            HandoffReadinessRecord {
+                item_id: "target_lane_selected".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "requested_action_selected".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "expected_vs_observed_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "retained_source_artifact_attached".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "build_seam_platform_context_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "reliability_state_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "witness_lineage_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "lossiness_explicit".to_string(),
+                satisfied: true,
+            },
+        ];
+        let status = "ready".to_string();
+        let content_hash = stable_hash(&(
+            &handoff_id,
+            &comparison.comparison_id,
+            comparison.projection_limitations.as_slice(),
+            &status,
+        ));
+        let handoff = HandoffPacketRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.handoff_packet".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::HandoffPacket.id().to_string(),
+                logical_id: handoff_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: "handoff_generation".to_string(),
+                seam_pin_set_id: "onecalc:ws-08:widening".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: vec![
+                    ArtifactLineageRef {
+                        relation: "source_run".to_string(),
+                        artifact_ref: source_run.run.envelope.stable_ref(),
+                    },
+                    ArtifactLineageRef {
+                        relation: "observation".to_string(),
+                        artifact_ref: observation.envelope.stable_ref(),
+                    },
+                    ArtifactLineageRef {
+                        relation: "comparison".to_string(),
+                        artifact_ref: comparison.envelope.stable_ref(),
+                    },
+                ],
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            handoff_id,
+            scenario_id: source_run.run.scenario_id.clone(),
+            source_run_ref: source_run.run.envelope.stable_ref(),
+            witness_ref: comparison.envelope.stable_ref(),
+            capability_snapshot_ref,
+            requested_action_kind: "widen_observation_envelope".to_string(),
+            target_lane: "OxXlObs/DnaOneCalc".to_string(),
+            expected_behavior: "the observation envelope should cover the validation dimensions needed by the active twin compare".to_string(),
+            observed_behavior: format!(
+                "current compare envelope={} blocked dimensions={}",
+                comparison.comparison_envelope.join(","),
+                comparison.projection_limitations.join(",")
+            ),
+            supporting_artifact_refs: vec![
+                source_run.run.envelope.stable_ref(),
+                observation.envelope.stable_ref(),
+                comparison.envelope.stable_ref(),
+            ],
+            reliability_state: format!("compare_{}", comparison.reliability_badge),
+            status,
+            readiness,
+            emitted_at_unix_ms,
+        };
+
+        store.persist_handoff_packet(&handoff)
+    }
+
     pub fn collect_completion_proposals(
         &self,
         session: &FormulaEditorSession,
