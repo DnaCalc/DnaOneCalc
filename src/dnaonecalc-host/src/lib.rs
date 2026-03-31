@@ -19,6 +19,7 @@ pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
 pub use retained::{
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedCapabilitySnapshot,
     PersistedScenarioRun, ReopenedScenarioRun, RetainedProvenanceRecord,
     RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
 };
@@ -239,16 +240,41 @@ mod tests {
 
         assert!(persisted.scenario_path.exists());
         assert!(persisted.run_path.exists());
+        assert!(persisted.capability_snapshot.snapshot_path.exists());
         assert_eq!(persisted.scenario.scenario_slug, "sum-baseline");
         assert_eq!(persisted.scenario.host_profile_id, "OC-H1");
         assert_eq!(persisted.run.scenario_id, persisted.scenario.scenario_id);
         assert_eq!(persisted.scenario.envelope.artifact_kind, "scenario");
         assert_eq!(persisted.run.envelope.artifact_kind, "scenario_run");
+        assert_eq!(
+            persisted.capability_snapshot.snapshot.envelope.artifact_kind,
+            "capability_ledger_snapshot"
+        );
         assert_eq!(persisted.run.scenario_ref.logical_id, persisted.scenario.scenario_id);
         assert_eq!(persisted.run.envelope.lineage_refs.len(), 1);
         assert_eq!(
             persisted.run.envelope.lineage_refs[0].artifact_ref.logical_id,
             persisted.scenario.scenario_id
+        );
+        assert_eq!(
+            persisted
+                .run
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .expect("run should point to the capability snapshot")
+                .logical_id,
+            persisted.capability_snapshot.snapshot.capability_snapshot_id
+        );
+        assert_eq!(
+            persisted
+                .scenario
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .expect("scenario should point to the capability snapshot")
+                .logical_id,
+            persisted.capability_snapshot.snapshot.capability_snapshot_id
         );
 
         let mut reopened = adapter
@@ -277,6 +303,25 @@ mod tests {
         assert_eq!(reopened_summary.evaluation.worksheet_value_summary, "Number(6)");
 
         let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn runtime_adapter_emits_capability_snapshot_from_executable_truth() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let snapshot = adapter
+            .emit_capability_snapshot("edit_accept_recalc", None)
+            .expect("capability snapshot should emit");
+
+        assert_eq!(snapshot.envelope.artifact_kind, "capability_ledger_snapshot");
+        assert_eq!(snapshot.host_kind, "dnaonecalc-host");
+        assert_eq!(snapshot.capability_floor, "OC-H1");
+        assert!(snapshot
+            .packet_kind_register
+            .contains(&"edit_accept_recalc".to_string()));
+        assert!(snapshot
+            .mode_availability
+            .iter()
+            .any(|mode| mode.mode_id == "DNA-only" && mode.state == "available"));
     }
 
     #[test]

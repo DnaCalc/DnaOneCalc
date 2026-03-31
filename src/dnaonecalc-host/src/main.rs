@@ -9,6 +9,7 @@ fn main() {
     match env::args().nth(1).as_deref() {
         Some("--probe") => run_probe(),
         Some("--function-surface-smoke") => run_function_surface_smoke(),
+        Some("--capability-snapshot-smoke") => run_capability_snapshot_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -17,7 +18,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -90,6 +91,30 @@ fn run_function_surface_smoke() {
         accrint.admission_category.id(),
         encodeurl.admission_category.id()
     );
+}
+
+fn run_capability_snapshot_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let snapshot = adapter
+        .emit_capability_snapshot("edit_accept_recalc", None)
+        .expect("capability snapshot should emit");
+
+    println!("dnaonecalc-host capability snapshot smoke");
+    println!("capability_snapshot_id={}", snapshot.capability_snapshot_id);
+    println!("capability_floor={}", snapshot.capability_floor);
+    println!(
+        "function_surface_snapshot_ref={}",
+        snapshot.function_surface_snapshot_ref
+    );
+    println!("packet_kinds={}", snapshot.packet_kind_register.join(","));
+    for mode in &snapshot.mode_availability {
+        println!(
+            "mode={} state={} reason={}",
+            mode.mode_id,
+            mode.state,
+            mode.reason.as_deref().unwrap_or("none")
+        );
+    }
 }
 
 fn run_h1_smoke() {

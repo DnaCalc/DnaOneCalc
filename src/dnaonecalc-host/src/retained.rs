@@ -68,8 +68,44 @@ pub struct ScenarioRunRecord {
     pub executed_at_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityModeAvailabilityRecord {
+    pub mode_id: String,
+    pub state: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityLedgerSnapshotRecord {
+    pub envelope: ArtifactEnvelope,
+    pub capability_snapshot_id: String,
+    pub emitted_at_unix_ms: u64,
+    pub emitter_build_id: String,
+    pub host_kind: String,
+    pub runtime_platform: String,
+    pub runtime_class: String,
+    pub dependency_set: Vec<String>,
+    pub function_surface_snapshot_ref: String,
+    pub seam_pin_set_id: String,
+    pub capability_floor: String,
+    pub packet_kind_register: Vec<String>,
+    pub function_surface_policy_id: String,
+    pub mode_availability: Vec<CapabilityModeAvailabilityRecord>,
+    pub provisional_seams: Vec<String>,
+    pub capability_ceilings: Vec<String>,
+    pub lossiness: Vec<String>,
+    pub diff_base_refs: Vec<StableArtifactRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedCapabilitySnapshot {
+    pub snapshot: CapabilityLedgerSnapshotRecord,
+    pub snapshot_path: PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedScenarioRun {
+    pub capability_snapshot: PersistedCapabilitySnapshot,
     pub scenario: ScenarioRecord,
     pub run: ScenarioRunRecord,
     pub scenario_path: PathBuf,
@@ -98,18 +134,27 @@ impl RetainedScenarioStore {
 
     pub fn persist_scenario_and_run(
         &self,
+        capability_snapshot: &CapabilityLedgerSnapshotRecord,
         scenario: &ScenarioRecord,
         run: &ScenarioRunRecord,
     ) -> Result<PersistedScenarioRun, String> {
         fs::create_dir_all(self.scenarios_dir()).map_err(|error| error.to_string())?;
         fs::create_dir_all(self.runs_dir()).map_err(|error| error.to_string())?;
+        fs::create_dir_all(self.capability_snapshots_dir()).map_err(|error| error.to_string())?;
 
+        let capability_snapshot_path =
+            self.capability_snapshot_path(&capability_snapshot.capability_snapshot_id);
         let scenario_path = self.scenario_path(&scenario.scenario_id);
         let run_path = self.run_path(&run.scenario_run_id);
+        write_json(&capability_snapshot_path, capability_snapshot)?;
         write_json(&scenario_path, scenario)?;
         write_json(&run_path, run)?;
 
         Ok(PersistedScenarioRun {
+            capability_snapshot: PersistedCapabilitySnapshot {
+                snapshot: capability_snapshot.clone(),
+                snapshot_path: capability_snapshot_path,
+            },
             scenario: scenario.clone(),
             run: run.clone(),
             scenario_path,
@@ -131,12 +176,21 @@ impl RetainedScenarioStore {
         self.root.join("scenario-runs")
     }
 
+    fn capability_snapshots_dir(&self) -> PathBuf {
+        self.root.join("capability-snapshots")
+    }
+
     fn scenario_path(&self, scenario_id: &str) -> PathBuf {
         self.scenarios_dir().join(format!("{scenario_id}.json"))
     }
 
     fn run_path(&self, scenario_run_id: &str) -> PathBuf {
         self.runs_dir().join(format!("{scenario_run_id}.json"))
+    }
+
+    fn capability_snapshot_path(&self, capability_snapshot_id: &str) -> PathBuf {
+        self.capability_snapshots_dir()
+            .join(format!("{capability_snapshot_id}.json"))
     }
 }
 

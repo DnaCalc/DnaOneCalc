@@ -15,8 +15,9 @@ use crate::artifact::{
     StableArtifactRef,
 };
 use crate::retained::{
-    PersistedScenarioRun, RetainedProvenanceRecord, RetainedRecalcContextRecord,
-    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedScenarioRun,
+    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
+    ScenarioRunRecord,
 };
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -452,6 +453,9 @@ impl RuntimeAdapter {
             .admitted_execution_snapshot();
         let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
         let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
+        let capability_snapshot =
+            self.emit_capability_snapshot(recalc_summary.packet_kind.as_str(), Some(&snapshot_ref))?;
+        let capability_snapshot_ref = capability_snapshot.envelope.stable_ref();
         let scenario_content_hash = stable_hash(&(
             driven_host.formula_stable_id(),
             driven_host.formula_text(),
@@ -474,7 +478,7 @@ impl RuntimeAdapter {
             provisionality_state: "stable".to_string(),
             lineage_refs: Vec::new(),
             attachment_refs: Vec::<ArtifactAttachmentRef>::new(),
-            capability_snapshot_ref: None,
+            capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
         };
         let scenario_ref = scenario_envelope.stable_ref();
 
@@ -583,7 +587,7 @@ impl RuntimeAdapter {
                 artifact_ref: scenario_ref.clone(),
             }],
             attachment_refs: Vec::<ArtifactAttachmentRef>::new(),
-            capability_snapshot_ref: None,
+            capability_snapshot_ref: Some(capability_snapshot_ref),
         };
         let run = ScenarioRunRecord {
             envelope: run_envelope,
@@ -621,7 +625,7 @@ impl RuntimeAdapter {
             executed_at_unix_ms,
         };
 
-        store.persist_scenario_and_run(&scenario, &run)
+        store.persist_scenario_and_run(&capability_snapshot, &scenario, &run)
     }
 
     pub fn reopen_driven_scenario_run(
@@ -643,6 +647,118 @@ impl RuntimeAdapter {
         Ok(ReopenedDrivenSingleFormulaRun {
             retained,
             driven_host,
+        })
+    }
+
+    pub fn emit_capability_snapshot(
+        &self,
+        packet_kind: &str,
+        diff_base_snapshot_ref: Option<&str>,
+    ) -> Result<CapabilityLedgerSnapshotRecord, String> {
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let function_catalog = self.load_function_surface_catalog();
+        let function_summary = function_catalog.label_summary();
+        let admitted_snapshot = function_catalog.admitted_execution_snapshot();
+        let function_surface_snapshot_ref = format!(
+            "{}@{}",
+            admitted_snapshot.snapshot_id, admitted_snapshot.snapshot_version
+        );
+        let packet_kind_register = self
+            .packet_kinds()
+            .iter()
+            .map(|packet| packet.id().to_string())
+            .collect::<Vec<_>>();
+        let capability_snapshot_id = format!(
+            "capability-snapshot-{}-{}-{}",
+            sanitize_slug(self.host_profile.id()),
+            sanitize_slug(packet_kind),
+            emitted_at_unix_ms
+        );
+        let content_hash = stable_hash(&(
+            capability_snapshot_id.as_str(),
+            self.host_profile.id(),
+            self.platform_gate().id(),
+            function_surface_snapshot_ref.as_str(),
+            packet_kind,
+            packet_kind_register.as_slice(),
+            function_summary.supported,
+            function_summary.preview,
+            function_summary.experimental,
+            function_summary.deferred,
+            function_summary.catalog_only,
+        ));
+        let diff_base_refs = diff_base_snapshot_ref
+            .map(|snapshot_ref| {
+                vec![StableArtifactRef {
+                    artifact_kind: ArtifactKind::CapabilityLedgerSnapshot.id().to_string(),
+                    logical_id: snapshot_ref.to_string(),
+                    content_hash: None,
+                }]
+            })
+            .unwrap_or_default();
+
+        Ok(CapabilityLedgerSnapshotRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.capability_ledger_snapshot".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::CapabilityLedgerSnapshot.id().to_string(),
+                logical_id: capability_snapshot_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: packet_kind.to_string(),
+                seam_pin_set_id: "onecalc:ws-05:capability".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: None,
+            },
+            capability_snapshot_id,
+            emitted_at_unix_ms,
+            emitter_build_id: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+            host_kind: "dnaonecalc-host".to_string(),
+            runtime_platform: std::env::consts::OS.to_string(),
+            runtime_class: self.platform_gate().id().to_string(),
+            dependency_set: vec![
+                "dnaonecalc-host".to_string(),
+                "oxfml_core".to_string(),
+                "oxfunc_core".to_string(),
+            ],
+            function_surface_snapshot_ref,
+            seam_pin_set_id: "onecalc:ws-05:capability".to_string(),
+            capability_floor: self.host_profile.id().to_string(),
+            packet_kind_register,
+            function_surface_policy_id: format!(
+                "onecalc:admitted_execution:supported={}::preview={}::experimental={}::deferred={}::catalog_only={}",
+                function_summary.supported,
+                function_summary.preview,
+                function_summary.experimental,
+                function_summary.deferred,
+                function_summary.catalog_only
+            ),
+            mode_availability: vec![
+                capability_mode("DNA-only", "available", None),
+                capability_mode("Excel-observed", "blocked", Some("Windows observation path not yet integrated")),
+                capability_mode("Twin compare", "blocked", Some("retained run comparison exists, observation compare path not yet integrated")),
+                capability_mode("Replay", "blocked", Some("replay capture from retained runs not yet integrated")),
+                capability_mode("Diff", "blocked", Some("artifact diff surface not yet integrated")),
+                capability_mode("Explain", "blocked", Some("explain or witness generation not yet integrated")),
+                capability_mode("Distill", "blocked", Some("distill path not yet integrated")),
+                capability_mode("Handoff", "blocked", Some("handoff packet generation not yet integrated")),
+            ],
+            provisional_seams: vec![
+                "browser_and_secondary_hosts_not_admitted".to_string(),
+                "observation_and_replay_paths_not_integrated".to_string(),
+            ],
+            capability_ceilings: vec![
+                "single_formula_scope_only".to_string(),
+                "no_worksheet_environment".to_string(),
+                "no_multi_node_recalc".to_string(),
+            ],
+            lossiness: vec!["capability_snapshot_uses_current_local_dependency_identity_only".to_string()],
+            diff_base_refs,
         })
     }
 
@@ -856,6 +972,18 @@ fn parse_formula_channel_kind(value: &str) -> Result<FormulaChannelKind, String>
         "ConditionalFormatting" => Ok(FormulaChannelKind::ConditionalFormatting),
         "DataValidation" => Ok(FormulaChannelKind::DataValidation),
         _ => Err(format!("unsupported retained formula channel kind: {value}")),
+    }
+}
+
+fn capability_mode(
+    mode_id: &str,
+    state: &str,
+    reason: Option<&str>,
+) -> CapabilityModeAvailabilityRecord {
+    CapabilityModeAvailabilityRecord {
+        mode_id: mode_id.to_string(),
+        state: state.to_string(),
+        reason: reason.map(|value| value.to_string()),
     }
 }
 
