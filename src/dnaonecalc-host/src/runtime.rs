@@ -28,6 +28,10 @@ impl OneCalcHostProfile {
             Self::OcH2 => "OC-H2",
         }
     }
+
+    pub const fn supports_driven_host(self) -> bool {
+        matches!(self, Self::OcH1 | Self::OcH2)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +153,97 @@ pub struct FormulaEvaluationSummary {
     pub trace_event_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecalcTriggerKind {
+    EditAccept,
+    Manual,
+    Forced,
+}
+
+impl RecalcTriggerKind {
+    pub const fn packet_kind(self) -> HostPacketKind {
+        match self {
+            Self::EditAccept => HostPacketKind::EditAcceptRecalc,
+            Self::Manual => HostPacketKind::ManualRecalc,
+            Self::Forced => HostPacketKind::ForcedRecalc,
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::EditAccept => "edit_accept",
+            Self::Manual => "manual",
+            Self::Forced => "forced",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecalcContext {
+    pub trigger_kind: RecalcTriggerKind,
+    pub now_serial: Option<f64>,
+    pub random_value: Option<f64>,
+}
+
+impl RecalcContext {
+    pub const fn edit_accept(now_serial: Option<f64>, random_value: Option<f64>) -> Self {
+        Self {
+            trigger_kind: RecalcTriggerKind::EditAccept,
+            now_serial,
+            random_value,
+        }
+    }
+
+    pub const fn manual(now_serial: Option<f64>, random_value: Option<f64>) -> Self {
+        Self {
+            trigger_kind: RecalcTriggerKind::Manual,
+            now_serial,
+            random_value,
+        }
+    }
+
+    pub const fn forced(now_serial: Option<f64>, random_value: Option<f64>) -> Self {
+        Self {
+            trigger_kind: RecalcTriggerKind::Forced,
+            now_serial,
+            random_value,
+        }
+    }
+
+    pub const fn packet_kind(self) -> HostPacketKind {
+        self.trigger_kind.packet_kind()
+    }
+}
+
+#[derive(Debug)]
+pub struct DrivenSingleFormulaHost {
+    host: SingleFormulaHost,
+}
+
+impl DrivenSingleFormulaHost {
+    pub fn formula_text(&self) -> &str {
+        &self.host.formula_text
+    }
+
+    pub const fn formula_text_version(&self) -> u64 {
+        self.host.formula_text_version
+    }
+
+    pub fn structure_context_version(&self) -> &str {
+        &self.host.structure_context_version
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrivenRecalcSummary {
+    pub host_profile_id: String,
+    pub trigger_kind: String,
+    pub packet_kind: String,
+    pub formula_text_version: u64,
+    pub structure_context_version: String,
+    pub evaluation: FormulaEvaluationSummary,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionProposalSummary {
     pub proposal_kind: String,
@@ -229,20 +324,62 @@ impl RuntimeAdapter {
             Some(&provider),
         )?;
 
-        Ok(FormulaEvaluationSummary {
-            formula_token: output.source.formula_token().0,
-            worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
-            payload_summary: output.returned_value_surface.payload_summary.clone(),
-            returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
-            effective_display_status: summarize_presentation_hint(
-                output.returned_value_surface.presentation_hint,
-            ),
-            commit_decision_kind: match output.commit_decision {
-                oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
-                oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
-            },
-            trace_event_count: output.trace_events.len(),
-        })
+        Ok(summarize_host_output(output))
+    }
+
+    pub fn new_driven_single_formula_host(
+        &self,
+        formula_stable_id: impl Into<String>,
+        formula_text: impl Into<String>,
+    ) -> Result<DrivenSingleFormulaHost, String> {
+        if !self.host_profile.supports_driven_host() {
+            return Err(format!(
+                "{} does not admit the driven single-formula host model",
+                self.host_profile.id()
+            ));
+        }
+
+        let mut host = SingleFormulaHost::new(formula_stable_id, formula_text);
+        host.structure_context_version = "onecalc:single_formula:h1".to_string();
+        Ok(DrivenSingleFormulaHost { host })
+    }
+
+    pub fn edit_accept_recalc(
+        &self,
+        driven_host: &mut DrivenSingleFormulaHost,
+        formula_text: impl Into<String>,
+        recalc_context: RecalcContext,
+    ) -> Result<DrivenRecalcSummary, String> {
+        if recalc_context.trigger_kind != RecalcTriggerKind::EditAccept {
+            return Err("edit_accept_recalc requires RecalcTriggerKind::EditAccept".to_string());
+        }
+
+        driven_host.host.set_formula_text(formula_text);
+        self.run_driven_recalc(driven_host, recalc_context)
+    }
+
+    pub fn manual_recalc(
+        &self,
+        driven_host: &mut DrivenSingleFormulaHost,
+        recalc_context: RecalcContext,
+    ) -> Result<DrivenRecalcSummary, String> {
+        if recalc_context.trigger_kind != RecalcTriggerKind::Manual {
+            return Err("manual_recalc requires RecalcTriggerKind::Manual".to_string());
+        }
+
+        self.run_driven_recalc(driven_host, recalc_context)
+    }
+
+    pub fn forced_recalc(
+        &self,
+        driven_host: &mut DrivenSingleFormulaHost,
+        recalc_context: RecalcContext,
+    ) -> Result<DrivenRecalcSummary, String> {
+        if recalc_context.trigger_kind != RecalcTriggerKind::Forced {
+            return Err("forced_recalc requires RecalcTriggerKind::Forced".to_string());
+        }
+
+        self.run_driven_recalc(driven_host, recalc_context)
     }
 
     pub fn collect_completion_proposals(
@@ -354,6 +491,46 @@ impl RuntimeAdapter {
         session.latest_result = Some(result);
         summary
     }
+
+    fn run_driven_recalc(
+        &self,
+        driven_host: &mut DrivenSingleFormulaHost,
+        recalc_context: RecalcContext,
+    ) -> Result<DrivenRecalcSummary, String> {
+        if !self.host_profile.supports_driven_host() {
+            return Err(format!(
+                "{} does not admit the driven single-formula host model",
+                self.host_profile.id()
+            ));
+        }
+
+        let catalog = self.load_function_surface_catalog();
+        let snapshot = catalog.admitted_execution_snapshot();
+        let provider = InMemoryLibraryContextProvider::new(snapshot);
+        driven_host.host.now_serial = recalc_context.now_serial;
+        driven_host.host.random_value = recalc_context.random_value;
+        let query_bundle = TypedContextQueryBundle::new(
+            None,
+            None,
+            None,
+            recalc_context.now_serial,
+            recalc_context.random_value,
+        );
+        let output = driven_host.host.recalc_with_interfaces(
+            EvaluationBackend::OxFuncBacked,
+            query_bundle,
+            Some(&provider),
+        )?;
+
+        Ok(DrivenRecalcSummary {
+            host_profile_id: self.host_profile.id().to_string(),
+            trigger_kind: recalc_context.trigger_kind.id().to_string(),
+            packet_kind: recalc_context.packet_kind().id().to_string(),
+            formula_text_version: driven_host.host.formula_text_version,
+            structure_context_version: driven_host.host.structure_context_version.clone(),
+            evaluation: summarize_host_output(output),
+        })
+    }
 }
 
 fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
@@ -362,6 +539,23 @@ fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
     bind_context.structure_context_version =
         StructureContextVersion("onecalc:single_formula:v1".to_string());
     bind_context
+}
+
+fn summarize_host_output(output: oxfml_core::HostRecalcOutput) -> FormulaEvaluationSummary {
+    FormulaEvaluationSummary {
+        formula_token: output.source.formula_token().0,
+        worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
+        payload_summary: output.returned_value_surface.payload_summary.clone(),
+        returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
+        effective_display_status: summarize_presentation_hint(
+            output.returned_value_surface.presentation_hint,
+        ),
+        commit_decision_kind: match output.commit_decision {
+            oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
+            oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
+        },
+        trace_event_count: output.trace_events.len(),
+    }
 }
 
 fn summarize_arity(min: usize, max: usize) -> String {
