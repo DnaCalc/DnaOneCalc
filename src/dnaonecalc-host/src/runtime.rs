@@ -26,6 +26,10 @@ use crate::document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
+use crate::extension::{
+    admitted_extension_abi, validate_extension_manifest, ExtensionAbiContract,
+    ExtensionProviderManifest, ExtensionValidationResult,
+};
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, ComparisonMismatchRecord,
@@ -484,6 +488,17 @@ impl RuntimeAdapter {
 
     pub const fn host_profile(&self) -> OneCalcHostProfile {
         self.host_profile
+    }
+
+    pub fn extension_abi_contract(&self) -> ExtensionAbiContract {
+        admitted_extension_abi(self.host_profile.id(), self.platform_gate().id())
+    }
+
+    pub fn validate_extension_manifest(
+        &self,
+        manifest: &ExtensionProviderManifest,
+    ) -> ExtensionValidationResult {
+        validate_extension_manifest(manifest, self.host_profile.id(), self.platform_gate().id())
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {
@@ -1672,6 +1687,9 @@ impl RuntimeAdapter {
                 "single_formula_scope_only".to_string(),
                 "no_worksheet_environment".to_string(),
                 "no_multi_node_recalc".to_string(),
+                "extension_abi_v1_host_managed_function_only".to_string(),
+                "rtd_provider_not_admitted_yet".to_string(),
+                "vba_bridge_not_admitted".to_string(),
             ],
             lossiness: vec!["capability_snapshot_uses_current_local_dependency_identity_only".to_string()],
             diff_base_refs,

@@ -2,6 +2,7 @@ pub mod artifact;
 pub mod capsule;
 pub mod conditional_formatting;
 pub mod document;
+pub mod extension;
 pub mod function_surface;
 pub mod observation;
 pub mod retained;
@@ -31,6 +32,10 @@ pub use conditional_formatting::{
 pub use document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
+};
+pub use extension::{
+    admitted_extension_abi, validate_extension_manifest, ExtensionAbiContract,
+    ExtensionProviderManifest, ExtensionValidationResult,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -188,6 +193,51 @@ mod tests {
         assert_eq!(summary.host_style_state_status, "none");
         assert_eq!(summary.effective_display_status, "none");
         assert_eq!(summary.commit_decision_kind, "accepted");
+    }
+
+    #[test]
+    fn extension_abi_contract_and_validation_keep_scope_narrow() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let contract = adapter.extension_abi_contract();
+        let admitted_manifest = ExtensionProviderManifest {
+            provider_id: "demo.sum.provider".to_string(),
+            display_name: "Demo Sum Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["host_managed_function_registration".to_string()],
+            entrypoint: "providers/demo_sum".to_string(),
+        };
+        let blocked_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "providers/demo_rtd".to_string(),
+        };
+
+        let admitted = adapter.validate_extension_manifest(&admitted_manifest);
+        let blocked = adapter.validate_extension_manifest(&blocked_manifest);
+
+        assert_eq!(contract.abi_id, "dnaonecalc.desktop.extension_abi");
+        assert!(contract
+            .admitted_capabilities
+            .contains(&"host_managed_function_registration".to_string()));
+        assert!(contract
+            .excluded_capabilities
+            .contains(&"rtd_provider".to_string()));
+        assert!(admitted.admitted);
+        assert_eq!(
+            admitted.admitted_capabilities,
+            vec!["host_managed_function_registration".to_string()]
+        );
+        assert!(!blocked.admitted);
+        assert!(blocked
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("rtd_provider")));
     }
 
     #[test]

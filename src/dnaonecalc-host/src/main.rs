@@ -11,6 +11,7 @@ fn main() {
         Some("--function-surface-smoke") => run_function_surface_smoke(),
         Some("--capability-snapshot-smoke") => run_capability_snapshot_smoke(),
         Some("--capability-center-smoke") => run_capability_center_smoke(),
+        Some("--extension-abi-smoke") => run_extension_abi_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -29,7 +30,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -176,6 +177,52 @@ fn run_capability_center_smoke() {
         diff.mode_changes.join("|"),
         diff.function_surface_policy_changed,
         diff.runtime_class_changed
+    );
+}
+
+fn run_extension_abi_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let contract = adapter.extension_abi_contract();
+    let admitted_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.sum.provider".to_string(),
+        display_name: "Demo Sum Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["host_managed_function_registration".to_string()],
+        entrypoint: "providers/demo_sum".to_string(),
+    };
+    let blocked_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.rtd.provider".to_string(),
+        display_name: "Demo RTD Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["rtd_provider".to_string()],
+        entrypoint: "providers/demo_rtd".to_string(),
+    };
+    let admitted = adapter.validate_extension_manifest(&admitted_manifest);
+    let blocked = adapter.validate_extension_manifest(&blocked_manifest);
+
+    println!("dnaonecalc-host extension abi smoke");
+    println!(
+        "abi=id:{};version:{};host:{};platform:{}",
+        contract.abi_id, contract.abi_version, contract.host_profile_id, contract.platform_gate_id
+    );
+    println!("admitted_capabilities={}", contract.admitted_capabilities.join(","));
+    println!("excluded_capabilities={}", contract.excluded_capabilities.join(","));
+    println!(
+        "admitted_provider={};admitted:{};caps:{}",
+        admitted.provider_id,
+        admitted.admitted,
+        admitted.admitted_capabilities.join(",")
+    );
+    println!(
+        "blocked_provider={};admitted:{};blocked_caps:{};reasons:{}",
+        blocked.provider_id,
+        blocked.admitted,
+        blocked.blocked_capabilities.join(","),
+        blocked.blocked_reasons.join("|")
     );
 }
 
