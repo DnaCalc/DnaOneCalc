@@ -7,11 +7,14 @@ use dnaonecalc_host::{
 fn main() {
     match env::args().nth(1).as_deref() {
         Some("--probe") => run_probe(),
+        Some("--function-surface-smoke") => run_function_surface_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
-            eprintln!("supported flags: --probe, --shell-smoke, --editor-diagnostic-smoke");
+            eprintln!(
+                "supported flags: --probe, --function-surface-smoke, --shell-smoke, --editor-diagnostic-smoke"
+            );
             std::process::exit(2);
         }
         None => run_shell(false),
@@ -47,6 +50,42 @@ fn run_probe() {
             std::process::exit(1);
         }
     }
+}
+
+fn run_function_surface_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+    let catalog = adapter.load_function_surface_catalog();
+    let summary = catalog.label_summary();
+
+    let abs = catalog
+        .get("ABS")
+        .expect("ABS should exist in the snapshot");
+    let call = catalog
+        .get("CALL")
+        .expect("CALL should exist in the snapshot");
+    let accrint = catalog
+        .get("ACCRINT")
+        .expect("ACCRINT should exist in the snapshot");
+    let encodeurl = catalog
+        .get("ENCODEURL")
+        .expect("ENCODEURL should exist in the snapshot");
+
+    println!("dnaonecalc-host function surface smoke");
+    println!(
+        "label_summary=supported:{};preview:{};experimental:{};deferred:{};catalog_only:{}",
+        summary.supported,
+        summary.preview,
+        summary.experimental,
+        summary.deferred,
+        summary.catalog_only
+    );
+    println!(
+        "ABS={} CALL={} ACCRINT={} ENCODEURL={}",
+        abs.admission_category.id(),
+        call.admission_category.id(),
+        accrint.admission_category.id(),
+        encodeurl.admission_category.id()
+    );
 }
 
 fn run_shell(smoke_mode: bool) {

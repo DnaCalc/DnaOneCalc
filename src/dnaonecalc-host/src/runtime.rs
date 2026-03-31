@@ -5,6 +5,7 @@ use oxfml_core::{
 };
 
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
+use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OneCalcHostProfile {
@@ -172,6 +173,14 @@ impl RuntimeAdapter {
 
     pub fn dependency_probe(&self) -> Result<DependencyProbeReport, DependencyProbeError> {
         run_dependency_probe()
+    }
+
+    pub fn load_function_surface_catalog(&self) -> FunctionSurfaceCatalog {
+        FunctionSurfaceCatalog::load_current()
+    }
+
+    pub fn function_surface_summary(&self) -> SurfaceLabelSummary {
+        self.load_function_surface_catalog().label_summary()
     }
 
     pub fn apply_formula_edit_packet(

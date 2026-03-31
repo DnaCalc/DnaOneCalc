@@ -1,3 +1,4 @@
+pub mod function_surface;
 pub mod runtime;
 pub mod shell;
 
@@ -8,6 +9,9 @@ use oxfunc_core::value::{CallArgValue, EvalValue, ReferenceLike};
 use oxreplay_abstractions::{LaneId, RegistryRef};
 use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 
+pub use function_surface::{
+    AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
+};
 pub use runtime::{
     FormulaEditPacketSummary, FormulaEditorSession, HostPacketKind, OneCalcHostProfile,
     ParseSnapshot, PlatformGate, RuntimeAdapter,
