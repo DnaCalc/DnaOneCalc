@@ -5,6 +5,7 @@ use oxreplay_abstractions::ReplayArtifactRef;
 use oxreplay_core::ReplayScenario;
 use serde::{Deserialize, Serialize};
 
+use crate::observation::{ObservationCapturePayload, ObservationProvenancePayload};
 use crate::{ArtifactEnvelope, StableArtifactRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +101,26 @@ pub struct CapabilityLedgerSnapshotRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationRecord {
+    pub envelope: ArtifactEnvelope,
+    pub observation_id: String,
+    pub scenario_id: String,
+    pub source_lane_id: String,
+    pub source_schema_id: String,
+    pub source_artifact_ref: StableArtifactRef,
+    pub capture_mode: String,
+    pub projection_status: String,
+    pub provenance_ref: StableArtifactRef,
+    pub capture_loss_ref: StableArtifactRef,
+    pub platform_scope: String,
+    pub replay_manifest_ref: Option<StableArtifactRef>,
+    pub normalized_replay_ref: Option<StableArtifactRef>,
+    pub capture: ObservationCapturePayload,
+    pub provenance: ObservationProvenancePayload,
+    pub lossiness: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayCaptureRecord {
     pub envelope: ArtifactEnvelope,
     pub replay_capture_id: String,
@@ -154,6 +175,12 @@ pub struct HandoffPacketRecord {
 pub struct PersistedCapabilitySnapshot {
     pub snapshot: CapabilityLedgerSnapshotRecord,
     pub snapshot_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedObservation {
+    pub observation: ObservationRecord,
+    pub observation_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +300,23 @@ impl RetainedScenarioStore {
         )
     }
 
+    pub fn persist_observation(
+        &self,
+        observation: &ObservationRecord,
+    ) -> Result<PersistedObservation, String> {
+        fs::create_dir_all(self.observations_dir()).map_err(|error| error.to_string())?;
+        let observation_path = self.observation_path(&observation.observation_id);
+        write_json(&observation_path, observation)?;
+        Ok(PersistedObservation {
+            observation: observation.clone(),
+            observation_path,
+        })
+    }
+
+    pub fn read_observation(&self, observation_id: &str) -> Result<ObservationRecord, String> {
+        read_json::<ObservationRecord>(&self.observation_path(observation_id))
+    }
+
     pub fn read_replay_capture(
         &self,
         replay_capture_id: &str,
@@ -348,6 +392,10 @@ impl RetainedScenarioStore {
         self.root.join("replay-captures")
     }
 
+    fn observations_dir(&self) -> PathBuf {
+        self.root.join("observations")
+    }
+
     fn witnesses_dir(&self) -> PathBuf {
         self.root.join("witnesses")
     }
@@ -377,6 +425,11 @@ impl RetainedScenarioStore {
     fn replay_scenario_path(&self, replay_capture_id: &str) -> PathBuf {
         self.replay_captures_dir()
             .join(format!("{replay_capture_id}.replay.json"))
+    }
+
+    fn observation_path(&self, observation_id: &str) -> PathBuf {
+        self.observations_dir()
+            .join(format!("{observation_id}.json"))
     }
 
     fn witness_path(&self, witness_id: &str) -> PathBuf {

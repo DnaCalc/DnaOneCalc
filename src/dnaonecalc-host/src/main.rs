@@ -20,13 +20,14 @@ fn main() {
         Some("--handoff-smoke") => run_handoff_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--workspace-smoke") => run_workspace_smoke(),
+        Some("--windows-observation-smoke") => run_windows_observation_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -752,6 +753,45 @@ fn run_workspace_smoke() {
             .collect::<Vec<_>>()
             .join(",")
     );
+}
+
+fn run_windows_observation_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-windows-observation-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(root.join("retained"));
+    let output_root = root.join("source-bundle");
+    let persisted = adapter
+        .capture_windows_observation(&store, &output_root)
+        .expect("windows observation capture should succeed");
+
+    println!("dnaonecalc-host windows observation smoke");
+    println!("observation_id={}", persisted.observation.observation_id);
+    println!("scenario_id={}", persisted.observation.scenario_id);
+    println!(
+        "capture_mode={};projection_status={};platform_scope={}",
+        persisted.observation.capture_mode,
+        persisted.observation.projection_status,
+        persisted.observation.platform_scope
+    );
+    println!(
+        "surfaces={}",
+        persisted
+            .observation
+            .capture
+            .surfaces
+            .iter()
+            .map(|surface| format!(
+                "{}:{}:{}:{}",
+                surface.surface.surface_id,
+                surface.surface.surface_kind,
+                surface.status,
+                surface.capture_loss
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!("lossiness={}", persisted.observation.lossiness.join(","));
 }
 
 fn run_shell(smoke_mode: bool) {

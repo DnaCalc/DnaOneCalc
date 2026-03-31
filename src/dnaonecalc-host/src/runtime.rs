@@ -26,12 +26,13 @@ use crate::document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
+use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
-    HandoffReadinessRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
-    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord,
-    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
-    ScenarioRunRecord, WitnessRecord,
+    HandoffReadinessRecord, ObservationRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
+    PersistedObservation, PersistedReplayCapture, PersistedScenarioRun, PersistedWitness,
+    ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 use crate::workspace::{
     read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
@@ -70,6 +71,7 @@ pub enum HostPacketKind {
     ManualRecalc,
     ForcedRecalc,
     ReplayCapture,
+    ObservationCapture,
     ExtensionRegistration,
     RtdUpdate,
 }
@@ -82,6 +84,7 @@ impl HostPacketKind {
             Self::ManualRecalc => "manual_recalc",
             Self::ForcedRecalc => "forced_recalc",
             Self::ReplayCapture => "replay_capture",
+            Self::ObservationCapture => "observation_capture",
             Self::ExtensionRegistration => "extension_registration",
             Self::RtdUpdate => "rtd_update",
         }
@@ -121,6 +124,7 @@ const OC_H1_PACKET_KINDS: &[HostPacketKind] = &[
     HostPacketKind::ManualRecalc,
     HostPacketKind::ForcedRecalc,
     HostPacketKind::ReplayCapture,
+    HostPacketKind::ObservationCapture,
 ];
 
 const OC_H2_PACKET_KINDS: &[HostPacketKind] = &[
@@ -129,6 +133,7 @@ const OC_H2_PACKET_KINDS: &[HostPacketKind] = &[
     HostPacketKind::ManualRecalc,
     HostPacketKind::ForcedRecalc,
     HostPacketKind::ReplayCapture,
+    HostPacketKind::ObservationCapture,
     HostPacketKind::ExtensionRegistration,
     HostPacketKind::RtdUpdate,
 ];
@@ -993,6 +998,24 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn capture_windows_observation(
+        &self,
+        store: &RetainedScenarioStore,
+        output_root: impl AsRef<Path>,
+    ) -> Result<PersistedObservation, String> {
+        let source = invoke_live_windows_capture(output_root)?;
+        self.persist_observation_from_source(store, source)
+    }
+
+    pub fn persist_observation_from_existing_source(
+        &self,
+        store: &RetainedScenarioStore,
+        source_root: impl AsRef<Path>,
+    ) -> Result<PersistedObservation, String> {
+        let source = load_observation_source_bundle(source_root)?;
+        self.persist_observation_from_source(store, source)
+    }
+
     pub fn persist_capability_snapshot(
         &self,
         store: &RetainedScenarioStore,
@@ -1597,8 +1620,16 @@ impl RuntimeAdapter {
             ),
             mode_availability: vec![
                 capability_mode("DNA-only", "available", None),
-                capability_mode("Excel-observed", "blocked", Some("Windows observation path not yet integrated")),
-                capability_mode("Twin compare", "blocked", Some("retained run comparison exists, observation compare path not yet integrated")),
+                capability_mode(
+                    "Excel-observed",
+                    "available",
+                    Some("Windows OxXlObs capture-run integration persists retained Observation artifacts"),
+                ),
+                capability_mode(
+                    "Twin compare",
+                    "blocked",
+                    Some("retained Observation capture is available; Observation comparison path not yet integrated"),
+                ),
                 capability_mode(
                     "Replay",
                     "available",
@@ -1623,7 +1654,7 @@ impl RuntimeAdapter {
             ],
             provisional_seams: vec![
                 "browser_and_secondary_hosts_not_admitted".to_string(),
-                "observation_path_not_integrated".to_string(),
+                "observation_compare_path_not_integrated".to_string(),
             ],
             capability_ceilings: vec![
                 "single_formula_scope_only".to_string(),
@@ -1633,6 +1664,109 @@ impl RuntimeAdapter {
             lossiness: vec!["capability_snapshot_uses_current_local_dependency_identity_only".to_string()],
             diff_base_refs,
         })
+    }
+
+    fn persist_observation_from_source(
+        &self,
+        store: &RetainedScenarioStore,
+        source: crate::LoadedObservationSourceBundle,
+    ) -> Result<PersistedObservation, String> {
+        let capability_snapshot =
+            self.emit_capability_snapshot(HostPacketKind::ObservationCapture.id(), None)?;
+        let persisted_capability = store.persist_capability_snapshot(&capability_snapshot)?;
+        let observation_id = format!("observation-{}", sanitize_slug(&source.provenance.run_id));
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let source_artifact_ref = StableArtifactRef {
+            artifact_kind: "oxxlobs_bundle".to_string(),
+            logical_id: source
+                .bundle_path
+                .as_ref()
+                .unwrap_or(&source.capture_path)
+                .display()
+                .to_string(),
+            content_hash: None,
+        };
+        let replay_manifest_ref =
+            source
+                .replay_manifest_path
+                .as_ref()
+                .map(|path| StableArtifactRef {
+                    artifact_kind: "oxxlobs_replay_manifest".to_string(),
+                    logical_id: path.display().to_string(),
+                    content_hash: None,
+                });
+        let normalized_replay_ref =
+            source
+                .normalized_replay_path
+                .as_ref()
+                .map(|path| StableArtifactRef {
+                    artifact_kind: "oxxlobs_normalized_replay".to_string(),
+                    logical_id: path.display().to_string(),
+                    content_hash: None,
+                });
+        let projection_status = if normalized_replay_ref.is_some() {
+            "lossy_normalized_replay_available"
+        } else {
+            "source_bundle_only"
+        };
+        let lossiness = observation_lossiness(&source);
+        let capture_body =
+            serde_json::to_string(&source.capture).map_err(|error| error.to_string())?;
+        let provenance_body =
+            serde_json::to_string(&source.provenance).map_err(|error| error.to_string())?;
+        let content_hash = stable_hash(&(
+            &observation_id,
+            &source.provenance.scenario_id,
+            &source.provenance.run_id,
+            &capture_body,
+            &provenance_body,
+            projection_status,
+            lossiness.as_slice(),
+        ));
+        let observation = ObservationRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.observation".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::Observation.id().to_string(),
+                logical_id: observation_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: HostPacketKind::ObservationCapture.id().to_string(),
+                seam_pin_set_id: "onecalc:ws-08:observation".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(persisted_capability.snapshot.envelope.stable_ref()),
+            },
+            observation_id,
+            scenario_id: source.provenance.scenario_id.clone(),
+            source_lane_id: "OxXlObs/Excel-observed".to_string(),
+            source_schema_id: "oxxlobs.capture_surface_basic.v1".to_string(),
+            source_artifact_ref,
+            capture_mode: "capture-run".to_string(),
+            projection_status: projection_status.to_string(),
+            provenance_ref: StableArtifactRef {
+                artifact_kind: "oxxlobs_provenance".to_string(),
+                logical_id: source.provenance_path.display().to_string(),
+                content_hash: None,
+            },
+            capture_loss_ref: StableArtifactRef {
+                artifact_kind: "oxxlobs_capture".to_string(),
+                logical_id: source.capture_path.display().to_string(),
+                content_hash: None,
+            },
+            platform_scope: "windows_live_capture;cross_platform_retained_consumption".to_string(),
+            replay_manifest_ref,
+            normalized_replay_ref,
+            capture: source.capture,
+            provenance: source.provenance,
+            lossiness,
+        };
+
+        store.persist_observation(&observation)
     }
 
     pub fn compare_retained_driven_runs(
@@ -2083,6 +2217,28 @@ fn mode_changes(
     }
 
     changes
+}
+
+fn observation_lossiness(source: &crate::LoadedObservationSourceBundle) -> Vec<String> {
+    let mut lossiness = Vec::new();
+
+    if source.normalized_replay_path.is_some() {
+        lossiness.push("normalized_replay_projection_is_lossy".to_string());
+    }
+    if source.capture.interpretation.bridge_influenced {
+        lossiness.push("bridge_influenced_capture".to_string());
+    }
+    for item in &source.provenance.capture_loss_summary {
+        lossiness.push(format!("capture_loss:{item}"));
+    }
+    for item in &source.provenance.uncertainty_summary {
+        lossiness.push(format!("uncertainty:{item}"));
+    }
+    if lossiness.is_empty() {
+        lossiness.push("none".to_string());
+    }
+
+    lossiness
 }
 
 fn summarize_eval_value(value: &EvalValue) -> String {

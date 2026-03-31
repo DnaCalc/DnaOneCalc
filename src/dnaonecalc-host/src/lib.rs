@@ -3,6 +3,7 @@ pub mod capsule;
 pub mod conditional_formatting;
 pub mod document;
 pub mod function_surface;
+pub mod observation;
 pub mod retained;
 pub mod runtime;
 pub mod shell;
@@ -34,12 +35,18 @@ pub use document::{
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
+pub use observation::{
+    invoke_live_windows_capture, load_observation_source_bundle, LoadedObservationSourceBundle,
+    ObservationBridgePayload, ObservationCapturePayload, ObservationInterpretation,
+    ObservationProvenancePayload, ObservationSurfaceDescriptor, ObservationSurfaceValue,
+};
 pub use retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
-    HandoffReadinessRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
-    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReopenedScenarioRun,
-    ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
-    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
+    HandoffReadinessRecord, ObservationRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
+    PersistedObservation, PersistedReplayCapture, PersistedScenarioRun, PersistedWitness,
+    ReopenedScenarioRun, ReplayCaptureRecord, RetainedProvenanceRecord,
+    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+    WitnessRecord,
 };
 pub use runtime::{
     CapabilitySnapshotDiffSummary, CompletionProposalSummary, DocumentRoundTripInvariantReport,
@@ -134,6 +141,7 @@ pub fn run_dependency_probe() -> Result<DependencyProbeReport, DependencyProbeEr
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use super::*;
 
@@ -686,6 +694,10 @@ mod tests {
         assert!(snapshot
             .mode_availability
             .iter()
+            .any(|mode| mode.mode_id == "Excel-observed" && mode.state == "available"));
+        assert!(snapshot
+            .mode_availability
+            .iter()
             .any(|mode| mode.mode_id == "Replay" && mode.state == "available"));
         assert!(snapshot
             .mode_availability
@@ -693,7 +705,7 @@ mod tests {
             .any(|mode| mode.mode_id == "Diff" && mode.state == "available"));
         assert!(!snapshot
             .provisional_seams
-            .contains(&"observation_and_replay_paths_not_integrated".to_string()));
+            .contains(&"observation_path_not_integrated".to_string()));
     }
 
     #[test]
@@ -739,6 +751,49 @@ mod tests {
         assert!(diff.packet_kinds_added.is_empty());
         assert!(!diff.function_surface_policy_changed);
         assert_eq!(diff.diff_floor, "immutable_capability_snapshot_diff");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn observation_artifact_persists_from_upstream_source_bundle() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-observation-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("OxXlObs")
+            .join("states/excel/xlobs_capture_values_formulae_001");
+
+        let persisted = adapter
+            .persist_observation_from_existing_source(&store, &source_root)
+            .expect("observation artifact should persist");
+
+        assert!(persisted.observation_path.exists());
+        assert_eq!(persisted.observation.envelope.artifact_kind, "observation");
+        assert_eq!(
+            persisted.observation.capture.surfaces[0].surface.surface_id,
+            "sheet1_a1_value"
+        );
+        assert!(persisted
+            .observation
+            .lossiness
+            .contains(&"normalized_replay_projection_is_lossy".to_string()));
+        assert_eq!(
+            persisted.observation.provenance.bridge.bridge_kind,
+            "external_process"
+        );
+
+        let reopened = store
+            .read_observation(&persisted.observation.observation_id)
+            .expect("observation artifact should reopen");
+        assert_eq!(reopened.scenario_id, "xlobs_capture_values_formulae_001");
 
         let _ = fs::remove_dir_all(&root);
     }
