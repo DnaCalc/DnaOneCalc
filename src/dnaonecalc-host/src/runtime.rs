@@ -281,6 +281,27 @@ pub struct ReopenedOneCalcDocument {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentRoundTripInvariantReport {
+    pub document_id_preserved: bool,
+    pub formula_identity_preserved: bool,
+    pub structure_context_preserved: bool,
+    pub library_context_snapshot_ref_preserved: bool,
+    pub artifact_index_preserved: bool,
+    pub effective_display_status_preserved: bool,
+}
+
+impl DocumentRoundTripInvariantReport {
+    pub const fn all_preserved(&self) -> bool {
+        self.document_id_preserved
+            && self.formula_identity_preserved
+            && self.structure_context_preserved
+            && self.library_context_snapshot_ref_preserved
+            && self.artifact_index_preserved
+            && self.effective_display_status_preserved
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrivenRunComparison {
     pub left_run_id: String,
     pub right_run_id: String,
@@ -762,6 +783,65 @@ impl RuntimeAdapter {
             document,
             driven_host,
         })
+    }
+
+    pub fn verify_isolated_document_roundtrip_invariants(
+        &self,
+        persisted_document: &PersistedOneCalcDocument,
+    ) -> Result<DocumentRoundTripInvariantReport, String> {
+        let reopened = self.reopen_isolated_document(&persisted_document.document_path)?;
+        let report = DocumentRoundTripInvariantReport {
+            document_id_preserved: reopened.document.document_id
+                == persisted_document.document.document_id,
+            formula_identity_preserved: reopened.document.formula_stable_id
+                == persisted_document.document.formula_stable_id
+                && reopened.document.formula_text == persisted_document.document.formula_text
+                && reopened.document.formula_text_version
+                    == persisted_document.document.formula_text_version
+                && reopened.document.formula_channel_kind
+                    == persisted_document.document.formula_channel_kind
+                && reopened.driven_host.formula_text() == persisted_document.document.formula_text
+                && reopened.driven_host.formula_text_version()
+                    == persisted_document.document.formula_text_version,
+            structure_context_preserved: reopened.document.structure_context_version
+                == persisted_document.document.structure_context_version
+                && reopened.driven_host.structure_context_version()
+                    == persisted_document.document.structure_context_version,
+            library_context_snapshot_ref_preserved: reopened.document.library_context_snapshot_ref
+                == persisted_document.document.library_context_snapshot_ref,
+            artifact_index_preserved: reopened.document.artifact_index
+                == persisted_document.document.artifact_index,
+            effective_display_status_preserved: reopened.document.effective_display_status
+                == persisted_document.document.effective_display_status,
+        };
+
+        if report.all_preserved() {
+            Ok(report)
+        } else {
+            let mut failed = Vec::new();
+            if !report.document_id_preserved {
+                failed.push("document_id");
+            }
+            if !report.formula_identity_preserved {
+                failed.push("formula_identity");
+            }
+            if !report.structure_context_preserved {
+                failed.push("structure_context");
+            }
+            if !report.library_context_snapshot_ref_preserved {
+                failed.push("library_context_snapshot_ref");
+            }
+            if !report.artifact_index_preserved {
+                failed.push("artifact_index");
+            }
+            if !report.effective_display_status_preserved {
+                failed.push("effective_display_status");
+            }
+            Err(format!(
+                "document round-trip invariants failed: {}",
+                failed.join(", ")
+            ))
+        }
     }
 
     pub fn emit_capability_snapshot(

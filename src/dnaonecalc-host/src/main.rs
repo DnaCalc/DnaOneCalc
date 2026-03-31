@@ -282,6 +282,9 @@ fn run_document_roundtrip_smoke() {
             Some(&retained),
         )
         .expect("isolated document should persist");
+    let invariants = adapter
+        .verify_isolated_document_roundtrip_invariants(&persisted_document)
+        .expect("document invariants should survive round-trip");
     let mut reopened = adapter
         .reopen_isolated_document(&persisted_document.document_path)
         .expect("isolated document should reopen");
@@ -303,6 +306,15 @@ fn run_document_roundtrip_smoke() {
         reopened.document.document_scope,
         reopened.document.persistence_format_id,
         reopened.document.artifact_index.len()
+    );
+    println!(
+        "invariants=document_id:{};formula_identity:{};structure_context:{};library_context_snapshot_ref:{};artifact_index:{};effective_display_status:{}",
+        invariants.document_id_preserved,
+        invariants.formula_identity_preserved,
+        invariants.structure_context_preserved,
+        invariants.library_context_snapshot_ref_preserved,
+        invariants.artifact_index_preserved,
+        invariants.effective_display_status_preserved
     );
     println!(
         "reopened=host_profile:{};formula_text_version:{};worksheet_value:{}",

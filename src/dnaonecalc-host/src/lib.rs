@@ -29,10 +29,11 @@ pub use retained::{
     RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
 };
 pub use runtime::{
-    CompletionProposalSummary, DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost,
-    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
-    HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate, RecalcContext,
-    RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RuntimeAdapter,
+    CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
+    DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
+    FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
+    ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
+    ReopenedOneCalcDocument, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -482,6 +483,57 @@ mod tests {
             reopened_summary.evaluation.worksheet_value_summary,
             "Number(6)"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn spreadsheetml_document_round_trip_preserves_identity_and_current_formatting_invariants() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.document.invariants", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context)
+            .expect("document recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-document-invariants-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(root.join("retained"));
+        let persisted_run = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM document invariant",
+            )
+            .expect("retained run should persist");
+        let persisted_document = adapter
+            .persist_isolated_document(
+                root.join("sum-document-invariants.xml"),
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM document invariant",
+                Some(&persisted_run),
+            )
+            .expect("isolated document should persist");
+
+        let invariants = adapter
+            .verify_isolated_document_roundtrip_invariants(&persisted_document)
+            .expect("document invariants should survive round-trip");
+
+        assert!(invariants.document_id_preserved);
+        assert!(invariants.formula_identity_preserved);
+        assert!(invariants.structure_context_preserved);
+        assert!(invariants.library_context_snapshot_ref_preserved);
+        assert!(invariants.artifact_index_preserved);
+        assert!(invariants.effective_display_status_preserved);
 
         let _ = fs::remove_dir_all(&root);
     }
