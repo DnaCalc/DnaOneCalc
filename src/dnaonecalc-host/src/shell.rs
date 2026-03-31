@@ -49,6 +49,7 @@ pub struct OneCalcShellApp {
     edit_session: FormulaEditorSession,
     latest_edit_packet: FormulaEditPacketSummary,
     latest_evaluation: Option<FormulaEvaluationSummary>,
+    completion_items: Vec<String>,
     rendered_diagnostics: Vec<String>,
     host_profile_id: String,
     packet_register_text: String,
@@ -89,6 +90,11 @@ impl OneCalcShellApp {
         let mut edit_session = FormulaEditorSession::new("onecalc.editor");
         let latest_edit_packet =
             adapter.apply_formula_edit_packet(&mut edit_session, &formula_text);
+        let completion_items = adapter
+            .collect_completion_proposals(&edit_session, formula_text.chars().count())
+            .into_iter()
+            .map(|proposal| format!("{} {}", proposal.proposal_kind, proposal.display_text))
+            .collect();
         let rendered_diagnostics = Self::render_live_diagnostics(&edit_session);
         let result_text = "result: not evaluated yet".to_string();
         let diagnostics_text = match &probe {
@@ -107,6 +113,7 @@ impl OneCalcShellApp {
             edit_session,
             latest_edit_packet,
             latest_evaluation: None,
+            completion_items,
             rendered_diagnostics,
             host_profile_id,
             packet_register_text,
@@ -135,7 +142,17 @@ impl OneCalcShellApp {
         self.latest_edit_packet = self
             .runtime_adapter
             .apply_formula_edit_packet(&mut self.edit_session, self.editor_state.buffer.clone());
+        self.refresh_completion_proposals();
         self.rendered_diagnostics = Self::render_live_diagnostics(&self.edit_session);
+    }
+
+    fn refresh_completion_proposals(&mut self) {
+        self.completion_items = self
+            .runtime_adapter
+            .collect_completion_proposals(&self.edit_session, self.editor_state.cursor_index)
+            .into_iter()
+            .map(|proposal| format!("{} {}", proposal.proposal_kind, proposal.display_text))
+            .collect();
     }
 
     fn evaluate_current_formula(&mut self) {
@@ -215,6 +232,15 @@ impl eframe::App for OneCalcShellApp {
             }
             if ui.button("Evaluate").clicked() {
                 self.evaluate_current_formula();
+            }
+            ui.separator();
+            ui.label("Completions");
+            if self.completion_items.is_empty() {
+                ui.small("No deterministic proposals at the current cursor.");
+            } else {
+                for proposal in self.completion_items.iter().take(6) {
+                    ui.monospace(proposal);
+                }
             }
             ui.small(format!(
                 "cursor={} selection={}..{} selected_text=\"{}\"",
@@ -391,5 +417,19 @@ mod tests {
         assert!(!app.rendered_diagnostics.is_empty());
         assert!(app.rendered_diagnostics[0].contains("Syntax"));
         assert!(app.rendered_diagnostics[0].contains(".."));
+    }
+
+    #[test]
+    fn shell_app_projects_function_completion_into_editor_flow() {
+        let app = OneCalcShellApp::with_formula(
+            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
+            "=SU".to_string(),
+            false,
+        );
+
+        assert!(app
+            .completion_items
+            .iter()
+            .any(|proposal| proposal == "Function SUM"));
     }
 }

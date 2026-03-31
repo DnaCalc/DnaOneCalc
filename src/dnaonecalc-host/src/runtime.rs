@@ -1,8 +1,9 @@
 use oxfml_core::{
-    apply_formula_edit, parse_formula, BindContext, EditFollowOnStage, EvaluationBackend,
-    FormulaChannelKind, FormulaEditRequest, FormulaEditResult, FormulaSourceRecord,
-    FormulaTextChangeRange, InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost,
-    StructureContextVersion, TypedContextQueryBundle,
+    apply_formula_edit, collect_completion_proposals, parse_formula, BindContext,
+    CompletionRequest, EditFollowOnStage, EvaluationBackend, FormulaChannelKind,
+    FormulaEditRequest, FormulaEditResult, FormulaSourceRecord, FormulaTextChangeRange,
+    InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost, StructureContextVersion,
+    TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
 
@@ -148,6 +149,12 @@ pub struct FormulaEvaluationSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionProposalSummary {
+    pub proposal_kind: String,
+    pub display_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeAdapter {
     host_profile: OneCalcHostProfile,
 }
@@ -228,6 +235,38 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn collect_completion_proposals(
+        &self,
+        session: &FormulaEditorSession,
+        cursor_offset: usize,
+    ) -> Vec<CompletionProposalSummary> {
+        let Some(result) = session.latest_result() else {
+            return Vec::new();
+        };
+
+        let snapshot = self
+            .load_function_surface_catalog()
+            .admitted_execution_snapshot();
+        let bind_context = build_bind_context(&result.source);
+        let completion = collect_completion_proposals(CompletionRequest {
+            source: &result.source,
+            green_tree: &result.green_tree,
+            red_projection: &result.red_projection,
+            bind_context: &bind_context,
+            library_context_snapshot: Some(&snapshot),
+            cursor_offset,
+        });
+
+        completion
+            .proposals
+            .into_iter()
+            .map(|proposal| CompletionProposalSummary {
+                proposal_kind: format!("{:?}", proposal.proposal_kind),
+                display_text: proposal.display_text,
+            })
+            .collect()
+    }
+
     pub fn apply_formula_edit_packet(
         &self,
         session: &mut FormulaEditorSession,
@@ -240,10 +279,7 @@ impl RuntimeAdapter {
         )
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
 
-        let mut bind_context = BindContext::default();
-        bind_context.formula_token = source.formula_token();
-        bind_context.structure_context_version =
-            StructureContextVersion("onecalc:single_formula:v1".to_string());
+        let bind_context = build_bind_context(&source);
 
         let previous_result = session.latest_result.as_ref();
         let result = apply_formula_edit(FormulaEditRequest {
@@ -271,6 +307,14 @@ impl RuntimeAdapter {
         session.latest_result = Some(result);
         summary
     }
+}
+
+fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
+    let mut bind_context = BindContext::default();
+    bind_context.formula_token = source.formula_token();
+    bind_context.structure_context_version =
+        StructureContextVersion("onecalc:single_formula:v1".to_string());
+    bind_context
 }
 
 fn summarize_eval_value(value: &EvalValue) -> String {

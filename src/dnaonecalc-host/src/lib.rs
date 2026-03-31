@@ -13,8 +13,9 @@ pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
 pub use runtime::{
-    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, HostPacketKind,
-    OneCalcHostProfile, ParseSnapshot, PlatformGate, RuntimeAdapter,
+    CompletionProposalSummary, FormulaEditPacketSummary, FormulaEditorSession,
+    FormulaEvaluationSummary, HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate,
+    RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
