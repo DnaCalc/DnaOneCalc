@@ -140,7 +140,9 @@ pub struct FormulaEditPacketSummary {
 pub struct FormulaEvaluationSummary {
     pub formula_token: String,
     pub worksheet_value_summary: String,
+    pub payload_summary: String,
     pub returned_value_surface_kind: String,
+    pub effective_display_status: String,
     pub commit_decision_kind: String,
     pub trace_event_count: usize,
 }
@@ -213,7 +215,11 @@ impl RuntimeAdapter {
         Ok(FormulaEvaluationSummary {
             formula_token: output.source.formula_token().0,
             worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
+            payload_summary: output.returned_value_surface.payload_summary.clone(),
             returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
+            effective_display_status: summarize_presentation_hint(
+                output.returned_value_surface.presentation_hint,
+            ),
             commit_decision_kind: match output.commit_decision {
                 oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
                 oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
@@ -279,5 +285,22 @@ fn summarize_eval_value(value: &EvalValue) -> String {
         }
         EvalValue::Reference(reference) => format!("Reference({})", reference.target),
         EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
+    }
+}
+
+fn summarize_presentation_hint(hint: Option<oxfunc_core::value::PresentationHint>) -> String {
+    match hint {
+        Some(hint) => {
+            let number_format = hint
+                .number_format
+                .map(|value| format!("{value:?}"))
+                .unwrap_or_else(|| "none".to_string());
+            let style = hint
+                .style
+                .map(|value| format!("{value:?}"))
+                .unwrap_or_else(|| "none".to_string());
+            format!("number_format:{number_format};style:{style}")
+        }
+        None => "none".to_string(),
     }
 }

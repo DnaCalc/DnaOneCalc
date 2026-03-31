@@ -134,9 +134,11 @@ impl OneCalcShellApp {
         {
             Ok(summary) => {
                 self.result_text = format!(
-                    "worksheet_value: {}\nreturned_surface: {}\ncommit_decision: {}",
+                    "worksheet_value: {}\npayload_summary: {}\nreturned_surface: {}\neffective_display: {}\ncommit_decision: {}",
                     summary.worksheet_value_summary,
+                    summary.payload_summary,
                     summary.returned_value_surface_kind,
+                    summary.effective_display_status,
                     summary.commit_decision_kind
                 );
                 self.latest_evaluation = Some(summary);
@@ -278,10 +280,12 @@ impl eframe::App for OneCalcShellApp {
             println!("live_diagnostic_lines={}", self.rendered_diagnostics.len());
             if let Some(summary) = &self.latest_evaluation {
                 println!(
-                    "evaluation_truth=formula_token:{};worksheet_value:{};returned_surface:{};commit_decision:{};trace_event_count:{}",
+                    "evaluation_truth=formula_token:{};worksheet_value:{};payload_summary:{};returned_surface:{};effective_display:{};commit_decision:{};trace_event_count:{}",
                     summary.formula_token,
                     summary.worksheet_value_summary,
+                    summary.payload_summary,
                     summary.returned_value_surface_kind,
+                    summary.effective_display_status,
                     summary.commit_decision_kind,
                     summary.trace_event_count
                 );
@@ -339,6 +343,8 @@ mod tests {
 
         assert!(app.editor_state.buffer.contains("SUM"));
         assert!(app.result_text.contains("worksheet_value: Number(6"));
+        assert!(app.result_text.contains("payload_summary: Number"));
+        assert!(app.result_text.contains("effective_display: none"));
         assert!(app
             .diagnostics_text
             .contains("edit_packet_diagnostic_count"));

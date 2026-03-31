@@ -134,6 +134,8 @@ mod tests {
 
         assert!(!summary.formula_token.is_empty());
         assert_eq!(summary.worksheet_value_summary, "Number(6)");
+        assert_eq!(summary.payload_summary, "Number");
+        assert_eq!(summary.effective_display_status, "none");
         assert_eq!(summary.commit_decision_kind, "accepted");
     }
 }
