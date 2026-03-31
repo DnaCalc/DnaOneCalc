@@ -10,6 +10,10 @@ use oxfml_core::{
 };
 use oxfunc_core::value::EvalValue;
 use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
+use oxreplay_abstractions::{CapabilityLevel, LaneId, RegistryRef};
+use oxreplay_core::{
+    is_replay_ready, load_replay_scenario_from_path, ReplayEvent, ReplayScenario, ReplayView,
+};
 
 use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
@@ -21,9 +25,9 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::retained::{
-    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedScenarioRun,
-    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
-    ScenarioRunRecord,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedReplayCapture,
+    PersistedScenarioRun, ReplayCaptureRecord, RetainedProvenanceRecord,
+    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
 };
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -289,6 +293,18 @@ pub struct DocumentRoundTripInvariantReport {
     pub library_context_snapshot_ref_preserved: bool,
     pub artifact_index_preserved: bool,
     pub effective_display_status_preserved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedReplayCaptureSummary {
+    pub replay_capture_id: String,
+    pub scenario_id: String,
+    pub replay_floor: String,
+    pub replay_ready: bool,
+    pub event_count: usize,
+    pub registry_ref_count: usize,
+    pub view_family: String,
+    pub artifact_path: String,
 }
 
 impl DocumentRoundTripInvariantReport {
@@ -862,6 +878,113 @@ impl RuntimeAdapter {
         crate::capsule::import_scenario_capsule(store, capsule_root)
     }
 
+    pub fn emit_replay_capture_for_run(
+        &self,
+        store: &RetainedScenarioStore,
+        scenario_run_id: &str,
+    ) -> Result<PersistedReplayCapture, String> {
+        let reopened = store.reopen_run(scenario_run_id)?;
+        let capability_snapshot_ref = reopened
+            .run
+            .envelope
+            .capability_snapshot_ref
+            .clone()
+            .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?;
+        let replay_scenario = build_replay_scenario(&reopened.scenario, &reopened.run);
+        let replay_capture_id = format!("replay-capture-{scenario_run_id}");
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let replay_floor = format!(
+            "{} ({})",
+            CapabilityLevel::C1ReplayValid.registry_id(),
+            "normalized_replay_open"
+        );
+        let replay_artifact_path = store
+            .root()
+            .join("replay-captures")
+            .join(format!("{replay_capture_id}.replay.json"));
+        let replay_body =
+            serde_json::to_string(&replay_scenario).map_err(|error| error.to_string())?;
+        let content_hash = stable_hash(&(
+            &replay_capture_id,
+            &reopened.scenario.scenario_id,
+            &reopened.run.scenario_run_id,
+            &replay_floor,
+            &replay_body,
+        ));
+        let capture = ReplayCaptureRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.replay_capture".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::ReplayCapture.id().to_string(),
+                logical_id: replay_capture_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: HostPacketKind::ReplayCapture.id().to_string(),
+                seam_pin_set_id: "onecalc:ws-06:replay".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: vec![ArtifactLineageRef {
+                    relation: "scenario_run".to_string(),
+                    artifact_ref: reopened.run.envelope.stable_ref(),
+                }],
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            replay_capture_id: replay_capture_id.clone(),
+            scenario_id: reopened.scenario.scenario_id.clone(),
+            scenario_run_id: reopened.run.scenario_run_id.clone(),
+            scenario_run_ref: reopened.run.envelope.stable_ref(),
+            capability_snapshot_ref,
+            replay_floor,
+            replay_artifact: oxreplay_abstractions::ReplayArtifactRef {
+                path: replay_artifact_path.display().to_string(),
+            },
+            emitted_at_unix_ms,
+        };
+        let persisted = store.persist_replay_capture(&capture, &replay_scenario)?;
+
+        let mut updated_run = reopened.run;
+        updated_run.replay_capture_ref = Some(capture.envelope.stable_ref());
+        store.overwrite_run(&updated_run)?;
+
+        Ok(persisted)
+    }
+
+    pub fn open_replay_capture(
+        &self,
+        store: &RetainedScenarioStore,
+        replay_capture_id: &str,
+    ) -> Result<OpenedReplayCaptureSummary, String> {
+        let capture = store.read_replay_capture(replay_capture_id)?;
+        let replay_scenario = load_replay_scenario_from_path(&capture.replay_artifact.path)
+            .map_err(|error| {
+                format!(
+                    "failed to open replay capture {}: {}",
+                    replay_capture_id, error
+                )
+            })?;
+        let replay_ready = is_replay_ready(&replay_scenario);
+        let event_count = replay_scenario.events.len();
+        let registry_ref_count = replay_scenario.registry_refs.len();
+        let view = ReplayView {
+            view_family: "normalized_replay".to_string(),
+            artifact_path: capture.replay_artifact.path.clone(),
+        };
+
+        Ok(OpenedReplayCaptureSummary {
+            replay_capture_id: capture.replay_capture_id,
+            scenario_id: replay_scenario.scenario_id,
+            replay_floor: capture.replay_floor,
+            replay_ready,
+            event_count,
+            registry_ref_count,
+            view_family: view.view_family,
+            artifact_path: view.artifact_path,
+        })
+    }
+
     pub fn emit_capability_snapshot(
         &self,
         packet_kind: &str,
@@ -954,7 +1077,11 @@ impl RuntimeAdapter {
                 capability_mode("DNA-only", "available", None),
                 capability_mode("Excel-observed", "blocked", Some("Windows observation path not yet integrated")),
                 capability_mode("Twin compare", "blocked", Some("retained run comparison exists, observation compare path not yet integrated")),
-                capability_mode("Replay", "blocked", Some("replay capture from retained runs not yet integrated")),
+                capability_mode(
+                    "Replay",
+                    "available",
+                    Some("retained run replay capture and open path available at cap.C1.replay_valid"),
+                ),
                 capability_mode("Diff", "blocked", Some("artifact diff surface not yet integrated")),
                 capability_mode("Explain", "blocked", Some("explain or witness generation not yet integrated")),
                 capability_mode("Distill", "blocked", Some("distill path not yet integrated")),
@@ -1244,6 +1371,48 @@ fn document_artifact_index_from_retained_run(
             embedded: false,
         },
     ]
+}
+
+fn build_replay_scenario(scenario: &ScenarioRecord, run: &ScenarioRunRecord) -> ReplayScenario {
+    let mut events = vec![
+        ReplayEvent {
+            event_id: format!("{}-packet", run.scenario_run_id),
+            source_label: scenario.host_driving_packet_kind.clone(),
+            normalized_family: "packet.received".to_string(),
+        },
+        ReplayEvent {
+            event_id: format!("{}-payload", run.scenario_run_id),
+            source_label: run.payload_summary.clone(),
+            normalized_family: "publication.payload".to_string(),
+        },
+    ];
+
+    let terminal_family = if run.commit_decision_kind == "accepted" {
+        "publication.committed"
+    } else {
+        "reject.issued"
+    };
+    events.push(ReplayEvent {
+        event_id: format!("{}-terminal", run.scenario_run_id),
+        source_label: run.commit_decision_kind.clone(),
+        normalized_family: terminal_family.to_string(),
+    });
+
+    ReplayScenario {
+        scenario_id: scenario.scenario_id.clone(),
+        lane_id: LaneId("dnaonecalc".to_string()),
+        events,
+        registry_refs: vec![
+            RegistryRef {
+                family: "dnaonecalc-host".to_string(),
+                version: scenario.host_profile_id.clone(),
+            },
+            RegistryRef {
+                family: "replay_floor".to_string(),
+                version: CapabilityLevel::C1ReplayValid.registry_id().to_string(),
+            },
+        ],
+    }
 }
 
 fn sanitize_slug(value: &str) -> String {

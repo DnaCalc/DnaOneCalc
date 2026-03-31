@@ -13,6 +13,7 @@ fn main() {
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
+        Some("--replay-capture-smoke") => run_replay_capture_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
@@ -20,7 +21,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -253,6 +254,45 @@ fn run_h1_compare_smoke() {
         comparison.formula_text_changed,
         comparison.worksheet_value_match,
         comparison.reliability_badge
+    );
+}
+
+fn run_replay_capture_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-replay-capture-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.replay", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let edit_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let edit = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", edit_context)
+        .expect("replay source recalc should succeed");
+    let retained = adapter
+        .persist_driven_scenario_run(&store, &host, &edit_context, &edit, "SUM replay")
+        .expect("retained run should persist");
+    let replay_capture = adapter
+        .emit_replay_capture_for_run(&store, &retained.run.scenario_run_id)
+        .expect("replay capture should emit");
+    let opened = adapter
+        .open_replay_capture(&store, &replay_capture.capture.replay_capture_id)
+        .expect("replay capture should open");
+
+    println!("dnaonecalc-host replay capture smoke");
+    println!(
+        "replay_capture_id={}",
+        replay_capture.capture.replay_capture_id
+    );
+    println!("replay_path={}", replay_capture.replay_path.display());
+    println!(
+        "open=floor:{};ready:{};events:{};registry_refs:{};view_family:{}",
+        opened.replay_floor,
+        opened.replay_ready,
+        opened.event_count,
+        opened.registry_ref_count,
+        opened.view_family
     );
 }
 

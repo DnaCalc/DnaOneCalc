@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use oxreplay_abstractions::ReplayArtifactRef;
+use oxreplay_core::ReplayScenario;
 use serde::{Deserialize, Serialize};
 
 use crate::{ArtifactEnvelope, StableArtifactRef};
@@ -97,6 +99,19 @@ pub struct CapabilityLedgerSnapshotRecord {
     pub diff_base_refs: Vec<StableArtifactRef>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayCaptureRecord {
+    pub envelope: ArtifactEnvelope,
+    pub replay_capture_id: String,
+    pub scenario_id: String,
+    pub scenario_run_id: String,
+    pub scenario_run_ref: StableArtifactRef,
+    pub capability_snapshot_ref: StableArtifactRef,
+    pub replay_floor: String,
+    pub replay_artifact: ReplayArtifactRef,
+    pub emitted_at_unix_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedCapabilitySnapshot {
     pub snapshot: CapabilityLedgerSnapshotRecord,
@@ -110,6 +125,13 @@ pub struct PersistedScenarioRun {
     pub run: ScenarioRunRecord,
     pub scenario_path: PathBuf,
     pub run_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedReplayCapture {
+    pub capture: ReplayCaptureRecord,
+    pub capture_path: PathBuf,
+    pub replay_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +207,34 @@ impl RetainedScenarioStore {
         )
     }
 
+    pub fn read_replay_capture(
+        &self,
+        replay_capture_id: &str,
+    ) -> Result<ReplayCaptureRecord, String> {
+        read_json::<ReplayCaptureRecord>(&self.replay_capture_path(replay_capture_id))
+    }
+
+    pub fn persist_replay_capture(
+        &self,
+        capture: &ReplayCaptureRecord,
+        replay_scenario: &ReplayScenario,
+    ) -> Result<PersistedReplayCapture, String> {
+        fs::create_dir_all(self.replay_captures_dir()).map_err(|error| error.to_string())?;
+        let capture_path = self.replay_capture_path(&capture.replay_capture_id);
+        let replay_path = self.replay_scenario_path(&capture.replay_capture_id);
+        write_json(&capture_path, capture)?;
+        write_json(&replay_path, replay_scenario)?;
+        Ok(PersistedReplayCapture {
+            capture: capture.clone(),
+            capture_path,
+            replay_path,
+        })
+    }
+
+    pub fn overwrite_run(&self, run: &ScenarioRunRecord) -> Result<(), String> {
+        write_json(&self.run_path(&run.scenario_run_id), run)
+    }
+
     fn scenarios_dir(&self) -> PathBuf {
         self.root.join("scenarios")
     }
@@ -195,6 +245,10 @@ impl RetainedScenarioStore {
 
     fn capability_snapshots_dir(&self) -> PathBuf {
         self.root.join("capability-snapshots")
+    }
+
+    fn replay_captures_dir(&self) -> PathBuf {
+        self.root.join("replay-captures")
     }
 
     fn scenario_path(&self, scenario_id: &str) -> PathBuf {
@@ -208,6 +262,16 @@ impl RetainedScenarioStore {
     fn capability_snapshot_path(&self, capability_snapshot_id: &str) -> PathBuf {
         self.capability_snapshots_dir()
             .join(format!("{capability_snapshot_id}.json"))
+    }
+
+    fn replay_capture_path(&self, replay_capture_id: &str) -> PathBuf {
+        self.replay_captures_dir()
+            .join(format!("{replay_capture_id}.json"))
+    }
+
+    fn replay_scenario_path(&self, replay_capture_id: &str) -> PathBuf {
+        self.replay_captures_dir()
+            .join(format!("{replay_capture_id}.replay.json"))
     }
 }
 

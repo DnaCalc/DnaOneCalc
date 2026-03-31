@@ -30,15 +30,16 @@ pub use function_surface::{
 };
 pub use retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedCapabilitySnapshot,
-    PersistedScenarioRun, ReopenedScenarioRun, RetainedProvenanceRecord,
-    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+    PersistedReplayCapture, PersistedScenarioRun, ReopenedScenarioRun, ReplayCaptureRecord,
+    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
+    ScenarioRunRecord,
 };
 pub use runtime::{
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
-    ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
-    ReopenedOneCalcDocument, RuntimeAdapter,
+    OpenedReplayCaptureSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
+    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -332,6 +333,73 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn retained_runs_emit_replay_capture_outputs_and_open_them_through_oxreplay() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.replay", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context)
+            .expect("replay source recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-replay-capture-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let persisted = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM replay",
+            )
+            .expect("retained run should persist");
+        let replay_capture = adapter
+            .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
+            .expect("replay capture should emit");
+
+        assert!(replay_capture.capture_path.exists());
+        assert!(replay_capture.replay_path.exists());
+        assert_eq!(
+            replay_capture.capture.envelope.artifact_kind,
+            "replay_capture"
+        );
+        assert_eq!(
+            replay_capture.capture.scenario_run_ref.logical_id,
+            persisted.run.scenario_run_id
+        );
+
+        let reopened_run = store
+            .read_run(&persisted.run.scenario_run_id)
+            .expect("run should be rewritten with replay capture ref");
+        assert_eq!(
+            reopened_run
+                .replay_capture_ref
+                .as_ref()
+                .expect("replay capture ref should be set")
+                .logical_id,
+            replay_capture.capture.replay_capture_id
+        );
+
+        let opened = adapter
+            .open_replay_capture(&store, &replay_capture.capture.replay_capture_id)
+            .expect("replay capture should open");
+        assert!(opened.replay_ready);
+        assert_eq!(
+            opened.replay_floor,
+            "cap.C1.replay_valid (normalized_replay_open)"
+        );
+        assert!(opened.event_count >= 3);
+        assert_eq!(opened.view_family, "normalized_replay");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
