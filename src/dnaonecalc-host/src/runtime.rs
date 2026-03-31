@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oxfml_core::{
@@ -13,6 +14,10 @@ use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
 use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
+};
+use crate::document::{
+    read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
+    DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedScenarioRun,
@@ -269,6 +274,12 @@ pub struct ReopenedDrivenSingleFormulaRun {
     pub driven_host: DrivenSingleFormulaHost,
 }
 
+#[derive(Debug)]
+pub struct ReopenedOneCalcDocument {
+    pub document: OneCalcDocumentRecord,
+    pub driven_host: DrivenSingleFormulaHost,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrivenRunComparison {
     pub left_run_id: String,
@@ -453,8 +464,8 @@ impl RuntimeAdapter {
             .admitted_execution_snapshot();
         let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
         let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
-        let capability_snapshot =
-            self.emit_capability_snapshot(recalc_summary.packet_kind.as_str(), Some(&snapshot_ref))?;
+        let capability_snapshot = self
+            .emit_capability_snapshot(recalc_summary.packet_kind.as_str(), Some(&snapshot_ref))?;
         let capability_snapshot_ref = capability_snapshot.envelope.stable_ref();
         let scenario_content_hash = stable_hash(&(
             driven_host.formula_stable_id(),
@@ -612,14 +623,19 @@ impl RuntimeAdapter {
                 function_surface_policy_id, snapshot_ref
             ),
             projection_status: "direct".to_string(),
-            provisionality_status: if recalc_summary.packet_kind == HostPacketKind::ForcedRecalc.id() {
+            provisionality_status: if recalc_summary.packet_kind
+                == HostPacketKind::ForcedRecalc.id()
+            {
                 "forced".to_string()
             } else {
                 "stable".to_string()
             },
             worksheet_value_summary: recalc_summary.evaluation.worksheet_value_summary.clone(),
             payload_summary: recalc_summary.evaluation.payload_summary.clone(),
-            returned_value_surface_kind: recalc_summary.evaluation.returned_value_surface_kind.clone(),
+            returned_value_surface_kind: recalc_summary
+                .evaluation
+                .returned_value_surface_kind
+                .clone(),
             effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
             commit_decision_kind: recalc_summary.evaluation.commit_decision_kind.clone(),
             executed_at_unix_ms,
@@ -639,13 +655,111 @@ impl RuntimeAdapter {
             retained.run.authored_formula_text.clone(),
         )?;
         driven_host.host.formula_text_version = retained.run.formula_text_version;
-        driven_host.host.structure_context_version =
-            retained.scenario.provenance.structure_context_version.clone();
+        driven_host.host.structure_context_version = retained
+            .scenario
+            .provenance
+            .structure_context_version
+            .clone();
         driven_host.host.formula_channel_kind =
             parse_formula_channel_kind(&retained.scenario.formula_channel_kind)?;
 
         Ok(ReopenedDrivenSingleFormulaRun {
             retained,
+            driven_host,
+        })
+    }
+
+    pub fn persist_isolated_document(
+        &self,
+        path: impl AsRef<Path>,
+        driven_host: &DrivenSingleFormulaHost,
+        recalc_context: &RecalcContext,
+        recalc_summary: &DrivenRecalcSummary,
+        scenario_slug: impl Into<String>,
+        retained_run: Option<&PersistedScenarioRun>,
+    ) -> Result<PersistedOneCalcDocument, String> {
+        if !self.host_profile.supports_driven_host() {
+            return Err(format!(
+                "{} does not admit persisted isolated documents",
+                self.host_profile.id()
+            ));
+        }
+
+        let scenario_slug = sanitize_slug(&scenario_slug.into());
+        let stable_slug = sanitize_slug(driven_host.formula_stable_id());
+        let saved_at_unix_ms = unix_time_millis()?;
+        let snapshot = self
+            .load_function_surface_catalog()
+            .admitted_execution_snapshot();
+        let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
+        let document_id = format!("document-{stable_slug}-{saved_at_unix_ms}");
+        let artifact_index = retained_run
+            .map(document_artifact_index_from_retained_run)
+            .unwrap_or_default();
+
+        let document = OneCalcDocumentRecord {
+            document_id,
+            document_title: format!("OneCalc {}", scenario_slug.replace('-', " ")),
+            document_scope: "isolated_single_formula_instance".to_string(),
+            persistence_format_id: "spreadsheetml2003.onecalc.single_instance.v1".to_string(),
+            worksheet_name: "OneCalc".to_string(),
+            saved_at_unix_ms,
+            host_profile_id: self.host_profile.id().to_string(),
+            scenario_slug,
+            formula_stable_id: driven_host.formula_stable_id().to_string(),
+            formula_text: driven_host.formula_text().to_string(),
+            formula_channel_kind: format!("{:?}", driven_host.formula_channel_kind()),
+            formula_text_version: driven_host.formula_text_version(),
+            structure_context_version: driven_host.structure_context_version().to_string(),
+            host_driving_packet_kind: recalc_context.packet_kind().id().to_string(),
+            host_driving_block: "driven_single_formula_host".to_string(),
+            recalc_trigger_kind: recalc_context.trigger_kind.id().to_string(),
+            display_context: "formula_workbench".to_string(),
+            effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
+            function_surface_policy_id: "onecalc:admitted_execution:supported+preview".to_string(),
+            library_context_snapshot_ref: Some(snapshot_ref),
+            view_state: DocumentViewStateRecord {
+                active_surface: "formula_workbench".to_string(),
+                cursor_offset: driven_host.formula_text().len(),
+                selection_anchor: driven_host.formula_text().len(),
+                selection_focus: driven_host.formula_text().len(),
+            },
+            artifact_index,
+        };
+
+        write_spreadsheetml_document(path, &document)
+    }
+
+    pub fn reopen_isolated_document(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<ReopenedOneCalcDocument, String> {
+        let document = read_spreadsheetml_document(path)?;
+        if document.document_scope != "isolated_single_formula_instance" {
+            return Err(format!(
+                "document scope {} is not admitted for isolated OneCalc reopen",
+                document.document_scope
+            ));
+        }
+        if document.host_profile_id != self.host_profile.id() {
+            return Err(format!(
+                "document host profile {} does not match runtime {}",
+                document.host_profile_id,
+                self.host_profile.id()
+            ));
+        }
+
+        let mut driven_host = self.new_driven_single_formula_host(
+            document.formula_stable_id.clone(),
+            document.formula_text.clone(),
+        )?;
+        driven_host.host.formula_text_version = document.formula_text_version;
+        driven_host.host.formula_channel_kind =
+            parse_formula_channel_kind(&document.formula_channel_kind)?;
+        driven_host.host.structure_context_version = document.structure_context_version.clone();
+
+        Ok(ReopenedOneCalcDocument {
+            document,
             driven_host,
         })
     }
@@ -971,7 +1085,9 @@ fn parse_formula_channel_kind(value: &str) -> Result<FormulaChannelKind, String>
         "WorksheetR1C1" => Ok(FormulaChannelKind::WorksheetR1C1),
         "ConditionalFormatting" => Ok(FormulaChannelKind::ConditionalFormatting),
         "DataValidation" => Ok(FormulaChannelKind::DataValidation),
-        _ => Err(format!("unsupported retained formula channel kind: {value}")),
+        _ => Err(format!(
+            "unsupported retained formula channel kind: {value}"
+        )),
     }
 }
 
@@ -985,6 +1101,51 @@ fn capability_mode(
         state: state.to_string(),
         reason: reason.map(|value| value.to_string()),
     }
+}
+
+fn document_artifact_index_from_retained_run(
+    retained_run: &PersistedScenarioRun,
+) -> Vec<DocumentArtifactIndexEntry> {
+    vec![
+        DocumentArtifactIndexEntry {
+            artifact_kind: ArtifactKind::Scenario.id().to_string(),
+            logical_id: retained_run.scenario.scenario_id.clone(),
+            path_hint: format!("scenarios/{}.json", retained_run.scenario.scenario_id),
+            content_hash: Some(retained_run.scenario.envelope.content_hash.clone()),
+            embedded: false,
+        },
+        DocumentArtifactIndexEntry {
+            artifact_kind: ArtifactKind::ScenarioRun.id().to_string(),
+            logical_id: retained_run.run.scenario_run_id.clone(),
+            path_hint: format!("scenario-runs/{}.json", retained_run.run.scenario_run_id),
+            content_hash: Some(retained_run.run.envelope.content_hash.clone()),
+            embedded: false,
+        },
+        DocumentArtifactIndexEntry {
+            artifact_kind: ArtifactKind::CapabilityLedgerSnapshot.id().to_string(),
+            logical_id: retained_run
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
+                .clone(),
+            path_hint: format!(
+                "capability-snapshots/{}.json",
+                retained_run
+                    .capability_snapshot
+                    .snapshot
+                    .capability_snapshot_id
+            ),
+            content_hash: Some(
+                retained_run
+                    .capability_snapshot
+                    .snapshot
+                    .envelope
+                    .content_hash
+                    .clone(),
+            ),
+            embedded: false,
+        },
+    ]
 }
 
 fn sanitize_slug(value: &str) -> String {

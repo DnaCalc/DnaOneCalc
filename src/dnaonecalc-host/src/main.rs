@@ -13,12 +13,13 @@ fn main() {
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
+        Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --document-roundtrip-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -224,11 +225,21 @@ fn run_h1_compare_smoke() {
         .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
         .expect("second retained run should succeed");
     let second = adapter
-        .persist_driven_scenario_run(&store, &host, &second_context, &second_summary, "SUM compare")
+        .persist_driven_scenario_run(
+            &store,
+            &host,
+            &second_context,
+            &second_summary,
+            "SUM compare",
+        )
         .expect("second retained run should persist");
 
     let comparison = adapter
-        .compare_retained_driven_runs(&store, &first.run.scenario_run_id, &second.run.scenario_run_id)
+        .compare_retained_driven_runs(
+            &store,
+            &first.run.scenario_run_id,
+            &second.run.scenario_run_id,
+        )
         .expect("retained driven runs should compare");
 
     println!("dnaonecalc-host h1 compare smoke");
@@ -241,6 +252,63 @@ fn run_h1_compare_smoke() {
         comparison.formula_text_changed,
         comparison.worksheet_value_match,
         comparison.reliability_badge
+    );
+}
+
+fn run_document_roundtrip_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-document-roundtrip-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(root.join("retained"));
+    let document_path = root.join("sum-document.xml");
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.document", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let edit_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let edit = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", edit_context)
+        .expect("document recalc should succeed");
+    let retained = adapter
+        .persist_driven_scenario_run(&store, &host, &edit_context, &edit, "SUM document")
+        .expect("retained run should persist");
+    let persisted_document = adapter
+        .persist_isolated_document(
+            &document_path,
+            &host,
+            &edit_context,
+            &edit,
+            "SUM document",
+            Some(&retained),
+        )
+        .expect("isolated document should persist");
+    let mut reopened = adapter
+        .reopen_isolated_document(&persisted_document.document_path)
+        .expect("isolated document should reopen");
+    let reopened_summary = adapter
+        .manual_recalc(
+            &mut reopened.driven_host,
+            RecalcContext::manual(Some(46_000.0), Some(0.25)),
+        )
+        .expect("reopened document should recalc");
+
+    println!("dnaonecalc-host document roundtrip smoke");
+    println!("document_id={}", reopened.document.document_id);
+    println!(
+        "document_path={}",
+        persisted_document.document_path.display()
+    );
+    println!(
+        "document_scope={};format={};artifacts={}",
+        reopened.document.document_scope,
+        reopened.document.persistence_format_id,
+        reopened.document.artifact_index.len()
+    );
+    println!(
+        "reopened=host_profile:{};formula_text_version:{};worksheet_value:{}",
+        reopened_summary.host_profile_id,
+        reopened_summary.formula_text_version,
+        reopened_summary.evaluation.worksheet_value_summary
     );
 }
 

@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod document;
 pub mod function_surface;
 pub mod retained;
 pub mod runtime;
@@ -15,6 +16,10 @@ pub use artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
 };
+pub use document::{
+    read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
+    DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
+};
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
@@ -25,9 +30,9 @@ pub use retained::{
 };
 pub use runtime::{
     CompletionProposalSummary, DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost,
-    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary,
-    FunctionHelpSummary, HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate,
-    RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, RuntimeAdapter,
+    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
+    HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate, RecalcContext,
+    RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -179,26 +184,26 @@ mod tests {
         assert_eq!(edit_summary.evaluation.worksheet_value_summary, "Number(6)");
 
         let manual_summary = adapter
-            .manual_recalc(
-                &mut host,
-                RecalcContext::manual(Some(46_000.0), Some(0.25)),
-            )
+            .manual_recalc(&mut host, RecalcContext::manual(Some(46_000.0), Some(0.25)))
             .expect("manual recalc should succeed");
         assert_eq!(manual_summary.trigger_kind, "manual");
         assert_eq!(manual_summary.packet_kind, "manual_recalc");
         assert_eq!(manual_summary.formula_text_version, 2);
-        assert_eq!(manual_summary.evaluation.worksheet_value_summary, "Number(6)");
+        assert_eq!(
+            manual_summary.evaluation.worksheet_value_summary,
+            "Number(6)"
+        );
 
         let forced_summary = adapter
-            .forced_recalc(
-                &mut host,
-                RecalcContext::forced(Some(46_000.0), Some(0.25)),
-            )
+            .forced_recalc(&mut host, RecalcContext::forced(Some(46_000.0), Some(0.25)))
             .expect("forced recalc should succeed");
         assert_eq!(forced_summary.trigger_kind, "forced");
         assert_eq!(forced_summary.packet_kind, "forced_recalc");
         assert_eq!(forced_summary.formula_text_version, 2);
-        assert_eq!(forced_summary.evaluation.worksheet_value_summary, "Number(6)");
+        assert_eq!(
+            forced_summary.evaluation.worksheet_value_summary,
+            "Number(6)"
+        );
     }
 
     #[test]
@@ -247,13 +252,22 @@ mod tests {
         assert_eq!(persisted.scenario.envelope.artifact_kind, "scenario");
         assert_eq!(persisted.run.envelope.artifact_kind, "scenario_run");
         assert_eq!(
-            persisted.capability_snapshot.snapshot.envelope.artifact_kind,
+            persisted
+                .capability_snapshot
+                .snapshot
+                .envelope
+                .artifact_kind,
             "capability_ledger_snapshot"
         );
-        assert_eq!(persisted.run.scenario_ref.logical_id, persisted.scenario.scenario_id);
+        assert_eq!(
+            persisted.run.scenario_ref.logical_id,
+            persisted.scenario.scenario_id
+        );
         assert_eq!(persisted.run.envelope.lineage_refs.len(), 1);
         assert_eq!(
-            persisted.run.envelope.lineage_refs[0].artifact_ref.logical_id,
+            persisted.run.envelope.lineage_refs[0]
+                .artifact_ref
+                .logical_id,
             persisted.scenario.scenario_id
         );
         assert_eq!(
@@ -264,7 +278,10 @@ mod tests {
                 .as_ref()
                 .expect("run should point to the capability snapshot")
                 .logical_id,
-            persisted.capability_snapshot.snapshot.capability_snapshot_id
+            persisted
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
         );
         assert_eq!(
             persisted
@@ -274,7 +291,10 @@ mod tests {
                 .as_ref()
                 .expect("scenario should point to the capability snapshot")
                 .logical_id,
-            persisted.capability_snapshot.snapshot.capability_snapshot_id
+            persisted
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
         );
 
         let mut reopened = adapter
@@ -300,7 +320,10 @@ mod tests {
             )
             .expect("reopened driven host should recalc");
         assert_eq!(reopened_summary.host_profile_id, "OC-H1");
-        assert_eq!(reopened_summary.evaluation.worksheet_value_summary, "Number(6)");
+        assert_eq!(
+            reopened_summary.evaluation.worksheet_value_summary,
+            "Number(6)"
+        );
 
         let _ = fs::remove_dir_all(store.root());
     }
@@ -312,7 +335,10 @@ mod tests {
             .emit_capability_snapshot("edit_accept_recalc", None)
             .expect("capability snapshot should emit");
 
-        assert_eq!(snapshot.envelope.artifact_kind, "capability_ledger_snapshot");
+        assert_eq!(
+            snapshot.envelope.artifact_kind,
+            "capability_ledger_snapshot"
+        );
         assert_eq!(snapshot.host_kind, "dnaonecalc-host");
         assert_eq!(snapshot.capability_floor, "OC-H1");
         assert!(snapshot
@@ -330,10 +356,8 @@ mod tests {
         let mut host = adapter
             .new_driven_single_formula_host("onecalc.h1.compare", "=SUM(1,2,3)")
             .expect("OC-H1 should admit the driven host model");
-        let store_root = std::env::temp_dir().join(format!(
-            "dnaonecalc-h1-compare-test-{}",
-            std::process::id()
-        ));
+        let store_root =
+            std::env::temp_dir().join(format!("dnaonecalc-h1-compare-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&store_root);
         let store = RetainedScenarioStore::new(&store_root);
 
@@ -342,7 +366,13 @@ mod tests {
             .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
             .expect("first run should succeed");
         let first = adapter
-            .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM compare")
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &first_context,
+                &first_summary,
+                "SUM compare",
+            )
             .expect("first run should persist");
 
         let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
@@ -350,11 +380,21 @@ mod tests {
             .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
             .expect("second run should succeed");
         let second = adapter
-            .persist_driven_scenario_run(&store, &host, &second_context, &second_summary, "SUM compare")
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &second_context,
+                &second_summary,
+                "SUM compare",
+            )
             .expect("second run should persist");
 
         let comparison = adapter
-            .compare_retained_driven_runs(&store, &first.run.scenario_run_id, &second.run.scenario_run_id)
+            .compare_retained_driven_runs(
+                &store,
+                &first.run.scenario_run_id,
+                &second.run.scenario_run_id,
+            )
             .expect("retained driven runs should compare");
 
         assert!(comparison.same_scenario);
@@ -364,5 +404,85 @@ mod tests {
         assert_eq!(comparison.reliability_badge, "direct");
 
         let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn spreadsheetml_document_round_trip_reopens_into_the_h1_host() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.document", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context)
+            .expect("document recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-document-roundtrip-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(root.join("retained"));
+        let persisted_run = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM document",
+            )
+            .expect("retained run should persist");
+        let document_path = root.join("sum-document.xml");
+        let persisted_document = adapter
+            .persist_isolated_document(
+                &document_path,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM document",
+                Some(&persisted_run),
+            )
+            .expect("isolated document should persist");
+
+        assert!(persisted_document.document_path.exists());
+        assert_eq!(
+            persisted_document.document.document_scope,
+            "isolated_single_formula_instance"
+        );
+        assert_eq!(
+            persisted_document.document.persistence_format_id,
+            "spreadsheetml2003.onecalc.single_instance.v1"
+        );
+        assert_eq!(persisted_document.document.artifact_index.len(), 3);
+
+        let mut reopened = adapter
+            .reopen_isolated_document(&persisted_document.document_path)
+            .expect("isolated document should reopen");
+        assert_eq!(
+            reopened.document.formula_stable_id,
+            persisted_document.document.formula_stable_id
+        );
+        assert_eq!(
+            reopened.driven_host.formula_text(),
+            persisted_document.document.formula_text
+        );
+        assert_eq!(
+            reopened.driven_host.formula_text_version(),
+            persisted_document.document.formula_text_version
+        );
+
+        let reopened_summary = adapter
+            .manual_recalc(
+                &mut reopened.driven_host,
+                RecalcContext::manual(Some(46_000.0), Some(0.25)),
+            )
+            .expect("reopened document should recalc");
+        assert_eq!(reopened_summary.host_profile_id, "OC-H1");
+        assert_eq!(
+            reopened_summary.evaluation.worksheet_value_summary,
+            "Number(6)"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
