@@ -57,6 +57,8 @@ pub struct OneCalcShellApp {
     platform_gate_text: String,
     function_policy_text: String,
     editor_state: FormulaEditorState,
+    returned_presentation_hint_text: String,
+    host_style_state_text: String,
     result_text: String,
     diagnostics_text: String,
     editor_focus_requested: bool,
@@ -122,6 +124,8 @@ impl OneCalcShellApp {
             platform_gate_text,
             function_policy_text,
             editor_state: FormulaEditorState::new(formula_text),
+            returned_presentation_hint_text: "none".to_string(),
+            host_style_state_text: "none".to_string(),
             result_text,
             diagnostics_text,
             editor_focus_requested: false,
@@ -182,17 +186,24 @@ impl OneCalcShellApp {
             .evaluate_formula(self.editor_state.buffer.clone())
         {
             Ok(summary) => {
+                self.returned_presentation_hint_text =
+                    summary.returned_presentation_hint_status.clone();
+                self.host_style_state_text = summary.host_style_state_status.clone();
                 self.result_text = format!(
-                    "worksheet_value: {}\npayload_summary: {}\nreturned_surface: {}\neffective_display: {}\ncommit_decision: {}",
+                    "worksheet_value: {}\npayload_summary: {}\nreturned_surface: {}\nreturned_presentation_hint: {}\nhost_style_state: {}\neffective_display: {}\ncommit_decision: {}",
                     summary.worksheet_value_summary,
                     summary.payload_summary,
                     summary.returned_value_surface_kind,
+                    summary.returned_presentation_hint_status,
+                    summary.host_style_state_status,
                     summary.effective_display_status,
                     summary.commit_decision_kind
                 );
                 self.latest_evaluation = Some(summary);
             }
             Err(error) => {
+                self.returned_presentation_hint_text = "none".to_string();
+                self.host_style_state_text = "none".to_string();
                 self.result_text = format!("evaluation failed: {error}");
                 self.latest_evaluation = None;
             }
@@ -315,6 +326,11 @@ impl eframe::App for OneCalcShellApp {
             ui.push_id(RESULT_REGION_ID, |ui| {
                 ui.heading("Result");
                 ui.separator();
+                ui.small(format!(
+                    "returned_presentation_hint={} | host_style_state={}",
+                    self.returned_presentation_hint_text, self.host_style_state_text
+                ));
+                ui.separator();
                 ui.code(&self.result_text);
             });
         });
@@ -349,11 +365,13 @@ impl eframe::App for OneCalcShellApp {
             println!("live_diagnostic_lines={}", self.rendered_diagnostics.len());
             if let Some(summary) = &self.latest_evaluation {
                 println!(
-                    "evaluation_truth=formula_token:{};worksheet_value:{};payload_summary:{};returned_surface:{};effective_display:{};commit_decision:{};trace_event_count:{}",
+                    "evaluation_truth=formula_token:{};worksheet_value:{};payload_summary:{};returned_surface:{};returned_presentation_hint:{};host_style_state:{};effective_display:{};commit_decision:{};trace_event_count:{}",
                     summary.formula_token,
                     summary.worksheet_value_summary,
                     summary.payload_summary,
                     summary.returned_value_surface_kind,
+                    summary.returned_presentation_hint_status,
+                    summary.host_style_state_status,
                     summary.effective_display_status,
                     summary.commit_decision_kind,
                     summary.trace_event_count
@@ -413,6 +431,8 @@ mod tests {
         assert!(app.editor_state.buffer.contains("SUM"));
         assert!(app.result_text.contains("worksheet_value: Number(6"));
         assert!(app.result_text.contains("payload_summary: Number"));
+        assert!(app.result_text.contains("returned_presentation_hint: none"));
+        assert!(app.result_text.contains("host_style_state: none"));
         assert!(app.result_text.contains("effective_display: none"));
         assert!(app
             .diagnostics_text
@@ -431,6 +451,8 @@ mod tests {
         );
         assert!(!app.latest_edit_packet.formula_token.is_empty());
         assert!(app.latest_evaluation.is_some());
+        assert_eq!(app.returned_presentation_hint_text, "none");
+        assert_eq!(app.host_style_state_text, "none");
         assert!(app.rendered_diagnostics.is_empty());
     }
 

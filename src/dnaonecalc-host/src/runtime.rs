@@ -170,6 +170,8 @@ pub struct FormulaEvaluationSummary {
     pub worksheet_value_summary: String,
     pub payload_summary: String,
     pub returned_value_surface_kind: String,
+    pub returned_presentation_hint_status: String,
+    pub host_style_state_status: String,
     pub effective_display_status: String,
     pub commit_decision_kind: String,
     pub trace_event_count: usize,
@@ -1654,13 +1656,20 @@ fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
 }
 
 fn summarize_host_output(output: oxfml_core::HostRecalcOutput) -> FormulaEvaluationSummary {
+    let returned_presentation_hint_status =
+        summarize_presentation_hint(output.returned_value_surface.presentation_hint);
+    let host_style_state_status = summarize_host_style_state();
+
     FormulaEvaluationSummary {
         formula_token: output.source.formula_token().0,
         worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
         payload_summary: output.returned_value_surface.payload_summary.clone(),
         returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
-        effective_display_status: summarize_presentation_hint(
-            output.returned_value_surface.presentation_hint,
+        returned_presentation_hint_status: returned_presentation_hint_status.clone(),
+        host_style_state_status: host_style_state_status.clone(),
+        effective_display_status: derive_effective_display_status(
+            &returned_presentation_hint_status,
+            &host_style_state_status,
         ),
         commit_decision_kind: match output.commit_decision {
             oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
@@ -1858,5 +1867,26 @@ fn summarize_presentation_hint(hint: Option<oxfunc_core::value::PresentationHint
             format!("number_format:{number_format};style:{style}")
         }
         None => "none".to_string(),
+    }
+}
+
+fn summarize_host_style_state() -> String {
+    "none".to_string()
+}
+
+fn derive_effective_display_status(
+    returned_presentation_hint_status: &str,
+    host_style_state_status: &str,
+) -> String {
+    match (
+        returned_presentation_hint_status == "none",
+        host_style_state_status == "none",
+    ) {
+        (true, true) => "none".to_string(),
+        (false, true) => returned_presentation_hint_status.to_string(),
+        (true, false) => format!("host_style:{host_style_state_status}"),
+        (false, false) => format!(
+            "presentation_hint:{returned_presentation_hint_status};host_style:{host_style_state_status}"
+        ),
     }
 }
