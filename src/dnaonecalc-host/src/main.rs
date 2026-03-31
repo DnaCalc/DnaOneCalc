@@ -343,21 +343,27 @@ fn run_xray_diff_smoke() {
 
     println!("dnaonecalc-host xray diff smoke");
     println!(
-        "xray=run:{};worksheet_value:{};capability_snapshot:{};replay_capture:{};replay_floor:{}",
+        "xray=run:{};worksheet_value:{};capability_snapshot:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};replay_capture:{};replay_floor:{}",
         xray.scenario_run_id,
         xray.worksheet_value_summary,
         xray.capability_snapshot_id,
+        xray.formatting_truth_plane,
+        xray.conditional_formatting_scope.replace(": ", "=").replace(" ", "_"),
+        xray.blocked_dimensions.join(","),
         xray.replay_capture_id.as_deref().unwrap_or("none"),
         xray.replay_floor.as_deref().unwrap_or("none")
     );
     println!(
-        "diff=left:{};right:{};formula_text_changed:{};worksheet_value_match:{};capability_snapshot_changed:{};replay_pair_openable:{};floor:{}",
+        "diff=left:{};right:{};formula_text_changed:{};worksheet_value_match:{};capability_snapshot_changed:{};replay_pair_openable:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};floor:{}",
         diff.left_run_id,
         diff.right_run_id,
         diff.formula_text_changed,
         diff.worksheet_value_match,
         diff.capability_snapshot_changed,
         diff.replay_pair_openable,
+        diff.formatting_truth_plane,
+        diff.conditional_formatting_scope.replace(": ", "=").replace(" ", "_"),
+        diff.blocked_dimensions.join(","),
         diff.diff_floor
     );
     println!(

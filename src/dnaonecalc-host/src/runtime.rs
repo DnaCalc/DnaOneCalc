@@ -19,6 +19,7 @@ use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
 };
+use crate::conditional_formatting::IsolatedConditionalFormattingCarrier;
 use crate::capsule::{ImportedScenarioCapsule, PersistedScenarioCapsule};
 use crate::document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
@@ -321,6 +322,9 @@ pub struct RetainedRunXRaySummary {
     pub worksheet_value_summary: String,
     pub payload_summary: String,
     pub effective_display_status: String,
+    pub formatting_truth_plane: String,
+    pub conditional_formatting_scope: String,
+    pub blocked_dimensions: Vec<String>,
     pub capability_snapshot_id: String,
     pub replay_capture_id: Option<String>,
     pub replay_floor: Option<String>,
@@ -336,6 +340,9 @@ pub struct RetainedRunDiffSummary {
     pub payload_match: bool,
     pub capability_snapshot_changed: bool,
     pub replay_pair_openable: bool,
+    pub formatting_truth_plane: String,
+    pub conditional_formatting_scope: String,
+    pub blocked_dimensions: Vec<String>,
     pub diff_floor: String,
 }
 
@@ -1074,6 +1081,11 @@ impl RuntimeAdapter {
             worksheet_value_summary: reopened.run.worksheet_value_summary,
             payload_summary: reopened.run.payload_summary,
             effective_display_status: reopened.run.effective_display_status,
+            formatting_truth_plane: formatting_truth_plane().to_string(),
+            conditional_formatting_scope: conditional_formatting_truth_plane(),
+            blocked_dimensions: vec![
+                "conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+            ],
             capability_snapshot_id,
             replay_capture_id,
             replay_floor,
@@ -1112,6 +1124,11 @@ impl RuntimeAdapter {
             payload_match: comparison.payload_match,
             capability_snapshot_changed,
             replay_pair_openable,
+            formatting_truth_plane: formatting_truth_plane().to_string(),
+            conditional_formatting_scope: conditional_formatting_truth_plane(),
+            blocked_dimensions: vec![
+                "conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+            ],
             diff_floor: "retained_artifact_direct_diff".to_string(),
         })
     }
@@ -1889,4 +1906,12 @@ fn derive_effective_display_status(
             "presentation_hint:{returned_presentation_hint_status};host_style:{host_style_state_status}"
         ),
     }
+}
+
+fn formatting_truth_plane() -> &'static str {
+    "returned_presentation_hint+host_style_state=>effective_display"
+}
+
+fn conditional_formatting_truth_plane() -> String {
+    IsolatedConditionalFormattingCarrier::policy_text()
 }

@@ -463,6 +463,16 @@ mod tests {
             xray.replay_floor.as_deref(),
             Some("cap.C1.replay_valid (normalized_replay_open)")
         );
+        assert_eq!(
+            xray.formatting_truth_plane,
+            "returned_presentation_hint+host_style_state=>effective_display"
+        );
+        assert!(xray
+            .conditional_formatting_scope
+            .contains("Conditional Formatting: admitted="));
+        assert!(xray
+            .blocked_dimensions
+            .contains(&"conditional_formatting_rules_not_attached_to_retained_run".to_string()));
 
         let diff = adapter
             .diff_retained_run_xray(
@@ -476,6 +486,16 @@ mod tests {
         assert!(!diff.worksheet_value_match);
         assert!(diff.capability_snapshot_changed);
         assert!(diff.replay_pair_openable);
+        assert_eq!(
+            diff.formatting_truth_plane,
+            "returned_presentation_hint+host_style_state=>effective_display"
+        );
+        assert!(diff
+            .conditional_formatting_scope
+            .contains("Conditional Formatting: admitted="));
+        assert!(diff
+            .blocked_dimensions
+            .contains(&"conditional_formatting_rules_not_attached_to_retained_run".to_string()));
         assert_eq!(diff.diff_floor, "retained_artifact_direct_diff");
         assert!(!first_replay.capture.replay_capture_id.is_empty());
         assert!(!second_replay.capture.replay_capture_id.is_empty());
