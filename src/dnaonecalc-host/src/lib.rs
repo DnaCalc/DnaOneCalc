@@ -6,6 +6,7 @@ pub mod function_surface;
 pub mod retained;
 pub mod runtime;
 pub mod shell;
+pub mod workspace;
 
 use oxfml_core::{parse_formula, FormulaChannelKind, FormulaSourceRecord, ParseRequest};
 use oxfunc_core::functions::sum::eval_sum_surface;
@@ -44,11 +45,16 @@ pub use runtime::{
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
-    OpenedHandoffPacketSummary, OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot,
-    PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
-    ReopenedOneCalcDocument, RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
+    OpenedHandoffPacketSummary, OpenedOneCalcWorkspace, OpenedReplayCaptureSummary,
+    OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
+    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
+    RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
+pub use workspace::{
+    read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
+    PersistedOneCalcWorkspace, WorkspaceDocumentEntry,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DependencyProbeReport {
@@ -963,6 +969,102 @@ mod tests {
                 .artifact_ref
                 .logical_id,
             persisted_run.scenario.scenario_id
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_manifest_groups_multiple_isolated_documents_without_merging_them() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-workspace-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(root.join("retained"));
+
+        let mut first_host = adapter
+            .new_driven_single_formula_host("onecalc.h1.workspace.left", "=SUM(1,2,3)")
+            .expect("first workspace host should initialize");
+        let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let first_summary = adapter
+            .edit_accept_recalc(&mut first_host, "=SUM(1,2,3)", first_context)
+            .expect("first workspace recalc should succeed");
+        let first_retained = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &first_host,
+                &first_context,
+                &first_summary,
+                "SUM workspace left",
+            )
+            .expect("first retained run should persist");
+        let first_document = adapter
+            .persist_isolated_document(
+                root.join("left.xml"),
+                &first_host,
+                &first_context,
+                &first_summary,
+                "SUM workspace left",
+                Some(&first_retained),
+            )
+            .expect("first document should persist");
+
+        let mut second_host = adapter
+            .new_driven_single_formula_host("onecalc.h1.workspace.right", "=SUM(1,2,4)")
+            .expect("second workspace host should initialize");
+        let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+        let second_summary = adapter
+            .edit_accept_recalc(&mut second_host, "=SUM(1,2,4)", second_context)
+            .expect("second workspace recalc should succeed");
+        let second_retained = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &second_host,
+                &second_context,
+                &second_summary,
+                "SUM workspace right",
+            )
+            .expect("second retained run should persist");
+        let second_document = adapter
+            .persist_isolated_document(
+                root.join("right.xml"),
+                &second_host,
+                &second_context,
+                &second_summary,
+                "SUM workspace right",
+                Some(&second_retained),
+            )
+            .expect("second document should persist");
+
+        let persisted = adapter
+            .persist_workspace_manifest(
+                root.join("workspace.onecalc.json"),
+                "Workspace Test",
+                &[&first_document.document_path, &second_document.document_path],
+            )
+            .expect("workspace manifest should persist");
+        let opened = adapter
+            .open_workspace(&persisted.manifest_path)
+            .expect("workspace should reopen");
+
+        assert_eq!(opened.reopened_documents.len(), 2);
+        assert_eq!(
+            opened.manifest.active_document_id,
+            first_document.document.document_id
+        );
+        assert_ne!(
+            opened.reopened_documents[0].document.document_id,
+            opened.reopened_documents[1].document.document_id
+        );
+        assert_eq!(
+            opened.reopened_documents[0].document.formula_text,
+            "=SUM(1,2,3)"
+        );
+        assert_eq!(
+            opened.reopened_documents[1].document.formula_text,
+            "=SUM(1,2,4)"
         );
 
         let _ = fs::remove_dir_all(&root);

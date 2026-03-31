@@ -18,13 +18,14 @@ fn main() {
         Some("--witness-smoke") => run_witness_smoke(),
         Some("--handoff-smoke") => run_handoff_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
+        Some("--workspace-smoke") => run_workspace_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -607,6 +608,82 @@ fn run_scenario_capsule_smoke() {
         imported.deduped_paths.len(),
         imported.conflict_paths.len(),
         imported.manifest_copy_path.display()
+    );
+}
+
+fn run_workspace_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-workspace-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(root.join("retained"));
+    let workspace_path = root.join("workspace.onecalc.json");
+
+    let mut first_host = adapter
+        .new_driven_single_formula_host("onecalc.h1.workspace.left", "=SUM(1,2,3)")
+        .expect("first workspace host should initialize");
+    let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let first_summary = adapter
+        .edit_accept_recalc(&mut first_host, "=SUM(1,2,3)", first_context)
+        .expect("first workspace recalc should succeed");
+    let first_retained = adapter
+        .persist_driven_scenario_run(&store, &first_host, &first_context, &first_summary, "SUM workspace left")
+        .expect("first retained run should persist");
+    let first_document = adapter
+        .persist_isolated_document(
+            root.join("left.xml"),
+            &first_host,
+            &first_context,
+            &first_summary,
+            "SUM workspace left",
+            Some(&first_retained),
+        )
+        .expect("first document should persist");
+
+    let mut second_host = adapter
+        .new_driven_single_formula_host("onecalc.h1.workspace.right", "=SUM(1,2,4)")
+        .expect("second workspace host should initialize");
+    let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+    let second_summary = adapter
+        .edit_accept_recalc(&mut second_host, "=SUM(1,2,4)", second_context)
+        .expect("second workspace recalc should succeed");
+    let second_retained = adapter
+        .persist_driven_scenario_run(&store, &second_host, &second_context, &second_summary, "SUM workspace right")
+        .expect("second retained run should persist");
+    let second_document = adapter
+        .persist_isolated_document(
+            root.join("right.xml"),
+            &second_host,
+            &second_context,
+            &second_summary,
+            "SUM workspace right",
+            Some(&second_retained),
+        )
+        .expect("second document should persist");
+
+    let persisted = adapter
+        .persist_workspace_manifest(
+            &workspace_path,
+            "OneCalc Workspace Smoke",
+            &[&first_document.document_path, &second_document.document_path],
+        )
+        .expect("workspace manifest should persist");
+    let opened = adapter
+        .open_workspace(&persisted.manifest_path)
+        .expect("workspace should reopen");
+
+    println!("dnaonecalc-host workspace smoke");
+    println!("workspace_id={}", opened.manifest.workspace_id);
+    println!("workspace_path={}", persisted.manifest_path.display());
+    println!(
+        "documents=active:{};count:{};ids:{}",
+        opened.manifest.active_document_id,
+        opened.reopened_documents.len(),
+        opened
+            .reopened_documents
+            .iter()
+            .map(|document| document.document.document_id.clone())
+            .collect::<Vec<_>>()
+            .join(",")
     );
 }
 

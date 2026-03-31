@@ -31,6 +31,10 @@ use crate::retained::{
     PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
+use crate::workspace::{
+    read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
+    PersistedOneCalcWorkspace,
+};
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
 
@@ -287,6 +291,12 @@ pub struct ReopenedDrivenSingleFormulaRun {
 pub struct ReopenedOneCalcDocument {
     pub document: OneCalcDocumentRecord,
     pub driven_host: DrivenSingleFormulaHost,
+}
+
+#[derive(Debug)]
+pub struct OpenedOneCalcWorkspace {
+    pub manifest: OneCalcWorkspaceManifest,
+    pub reopened_documents: Vec<ReopenedOneCalcDocument>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -917,6 +927,32 @@ impl RuntimeAdapter {
                 failed.join(", ")
             ))
         }
+    }
+
+    pub fn persist_workspace_manifest(
+        &self,
+        manifest_path: impl AsRef<Path>,
+        workspace_name: impl Into<String>,
+        document_paths: &[impl AsRef<Path>],
+    ) -> Result<PersistedOneCalcWorkspace, String> {
+        write_workspace_manifest(manifest_path, workspace_name, document_paths)
+    }
+
+    pub fn open_workspace(
+        &self,
+        manifest_path: impl AsRef<Path>,
+    ) -> Result<OpenedOneCalcWorkspace, String> {
+        let manifest = read_workspace_manifest(manifest_path)?;
+        let reopened_documents = manifest
+            .document_entries
+            .iter()
+            .map(|entry| self.reopen_isolated_document(&entry.document_path))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(OpenedOneCalcWorkspace {
+            manifest,
+            reopened_documents,
+        })
     }
 
     pub fn export_scenario_capsule(
