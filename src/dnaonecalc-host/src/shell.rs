@@ -1,7 +1,10 @@
 use eframe::egui;
 use egui::TextBuffer as _;
 
-use crate::{FormulaEditPacketSummary, FormulaEditorSession, OneCalcHostProfile, RuntimeAdapter};
+use crate::{
+    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, OneCalcHostProfile,
+    RuntimeAdapter,
+};
 
 pub const FORMULA_REGION_ID: &str = "formula";
 pub const RESULT_REGION_ID: &str = "result";
@@ -45,6 +48,7 @@ pub struct OneCalcShellApp {
     runtime_adapter: RuntimeAdapter,
     edit_session: FormulaEditorSession,
     latest_edit_packet: FormulaEditPacketSummary,
+    latest_evaluation: Option<FormulaEvaluationSummary>,
     rendered_diagnostics: Vec<String>,
     host_profile_id: String,
     packet_register_text: String,
@@ -76,13 +80,7 @@ impl OneCalcShellApp {
         let latest_edit_packet =
             adapter.apply_formula_edit_packet(&mut edit_session, &formula_text);
         let rendered_diagnostics = Self::render_live_diagnostics(&edit_session);
-        let result_text = match &probe {
-            Some(report) => format!(
-                "result: {}\nformula_token: {}\nhost_profile: {}",
-                report.sum_result, report.formula_token, host_profile_id
-            ),
-            None => format!("result: unavailable\nhost_profile: {}", host_profile_id),
-        };
+        let result_text = "result: not evaluated yet".to_string();
         let diagnostics_text = match &probe {
             Some(report) => format!(
                 "probe_parse_diagnostic_count: {}\nedit_packet_diagnostic_count: {}\nreplay_ready: {}\npacket_kinds: {}",
@@ -94,10 +92,11 @@ impl OneCalcShellApp {
             None => "dependency probe failed before shell render".to_string(),
         };
 
-        Self {
+        let mut app = Self {
             runtime_adapter: adapter,
             edit_session,
             latest_edit_packet,
+            latest_evaluation: None,
             rendered_diagnostics,
             host_profile_id,
             packet_register_text,
@@ -108,7 +107,13 @@ impl OneCalcShellApp {
             editor_focus_requested: false,
             smoke_mode,
             smoke_reported: false,
+        };
+
+        if smoke_mode {
+            app.evaluate_current_formula();
         }
+
+        app
     }
 
     pub const fn region_ids() -> &'static [&'static str] {
@@ -120,6 +125,27 @@ impl OneCalcShellApp {
             .runtime_adapter
             .apply_formula_edit_packet(&mut self.edit_session, self.editor_state.buffer.clone());
         self.rendered_diagnostics = Self::render_live_diagnostics(&self.edit_session);
+    }
+
+    fn evaluate_current_formula(&mut self) {
+        match self
+            .runtime_adapter
+            .evaluate_formula(self.editor_state.buffer.clone())
+        {
+            Ok(summary) => {
+                self.result_text = format!(
+                    "worksheet_value: {}\nreturned_surface: {}\ncommit_decision: {}",
+                    summary.worksheet_value_summary,
+                    summary.returned_value_surface_kind,
+                    summary.commit_decision_kind
+                );
+                self.latest_evaluation = Some(summary);
+            }
+            Err(error) => {
+                self.result_text = format!("evaluation failed: {error}");
+                self.latest_evaluation = None;
+            }
+        }
     }
 
     fn render_live_diagnostics(edit_session: &FormulaEditorSession) -> Vec<String> {
@@ -171,6 +197,9 @@ impl eframe::App for OneCalcShellApp {
             self.editor_state.sync_from_output(&output);
             if output.response.changed() {
                 self.sync_edit_packet();
+            }
+            if ui.button("Evaluate").clicked() {
+                self.evaluate_current_formula();
             }
             ui.small(format!(
                 "cursor={} selection={}..{} selected_text=\"{}\"",
@@ -247,6 +276,16 @@ impl eframe::App for OneCalcShellApp {
                 self.latest_edit_packet.reused_bound_formula
             );
             println!("live_diagnostic_lines={}", self.rendered_diagnostics.len());
+            if let Some(summary) = &self.latest_evaluation {
+                println!(
+                    "evaluation_truth=formula_token:{};worksheet_value:{};returned_surface:{};commit_decision:{};trace_event_count:{}",
+                    summary.formula_token,
+                    summary.worksheet_value_summary,
+                    summary.returned_value_surface_kind,
+                    summary.commit_decision_kind,
+                    summary.trace_event_count
+                );
+            }
             self.smoke_reported = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -299,7 +338,7 @@ mod tests {
         let app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), true);
 
         assert!(app.editor_state.buffer.contains("SUM"));
-        assert!(app.result_text.contains("result: 6"));
+        assert!(app.result_text.contains("worksheet_value: Number(6"));
         assert!(app
             .diagnostics_text
             .contains("edit_packet_diagnostic_count"));
@@ -311,6 +350,7 @@ mod tests {
             app.editor_state.buffer.chars().count()
         );
         assert!(!app.latest_edit_packet.formula_token.is_empty());
+        assert!(app.latest_evaluation.is_some());
         assert!(app.rendered_diagnostics.is_empty());
     }
 

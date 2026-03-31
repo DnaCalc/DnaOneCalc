@@ -1,5 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use oxfml_core::{
+    LibraryAvailabilityState, LibraryContextSnapshot, LibraryContextSnapshotEntry,
+    RegistrationSourceKind,
+};
+
 const SNAPSHOT_EXPORT: &str = include_str!(
     "../../../../OxFunc/docs/function-lane/OXFUNC_LIBRARY_CONTEXT_SNAPSHOT_EXPORT_V1.csv"
 );
@@ -35,10 +40,17 @@ impl AdmissionCategory {
 pub struct FunctionSurfaceEntry {
     pub canonical_surface_name: String,
     pub surface_stable_id: String,
+    pub name_resolution_table_ref: Option<String>,
+    pub semantic_trait_profile_ref: Option<String>,
+    pub gating_profile_ref: Option<String>,
     pub category: String,
     pub metadata_status: String,
     pub special_interface_kind: String,
     pub admission_interface_kind: String,
+    pub preparation_owner: Option<String>,
+    pub runtime_boundary_kind: Option<String>,
+    pub interface_contract_ref: Option<String>,
+    pub registration_source_kind: RegistrationSourceKind,
     pub admission_category: AdmissionCategory,
 }
 
@@ -53,6 +65,8 @@ pub struct SurfaceLabelSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSurfaceCatalog {
+    snapshot_id: String,
+    snapshot_version: String,
     entries: BTreeMap<String, FunctionSurfaceEntry>,
 }
 
@@ -65,9 +79,13 @@ impl FunctionSurfaceCatalog {
             .has_headers(true)
             .from_reader(SNAPSHOT_EXPORT.as_bytes());
 
+        let mut snapshot_id = None;
+        let mut snapshot_version = None;
         let mut entries = BTreeMap::new();
         for row in reader.deserialize::<SnapshotRow>() {
             let row = row.expect("snapshot export rows should deserialize");
+            snapshot_id.get_or_insert_with(|| row.snapshot_id.clone());
+            snapshot_version.get_or_insert_with(|| row.snapshot_generation.clone());
             let admission_category = if deferred.contains(&row.canonical_surface_name) {
                 AdmissionCategory::Deferred
             } else if let Some(notes) = w51.get(&row.canonical_surface_name) {
@@ -87,16 +105,30 @@ impl FunctionSurfaceCatalog {
                 FunctionSurfaceEntry {
                     canonical_surface_name: row.canonical_surface_name,
                     surface_stable_id: row.surface_stable_id,
+                    name_resolution_table_ref: some_if_non_empty(&row.name_resolution_table_ref),
+                    semantic_trait_profile_ref: some_if_non_empty(&row.semantic_trait_profile_ref),
+                    gating_profile_ref: some_if_non_empty(&row.gating_profile_ref),
                     category: row.category,
                     metadata_status: row.metadata_status,
                     special_interface_kind: row.special_interface_kind,
                     admission_interface_kind: row.admission_interface_kind,
+                    preparation_owner: some_if_non_empty(&row.preparation_owner),
+                    runtime_boundary_kind: some_if_non_empty(&row.runtime_boundary_kind),
+                    interface_contract_ref: some_if_non_empty(&row.interface_contract_ref),
+                    registration_source_kind: parse_registration_source_kind(
+                        &row.registration_source_kind,
+                    ),
                     admission_category,
                 },
             );
         }
 
-        Self { entries }
+        Self {
+            snapshot_id: snapshot_id.expect("snapshot export should have at least one row"),
+            snapshot_version: snapshot_version
+                .expect("snapshot export should have at least one row"),
+            entries,
+        }
     }
 
     pub fn get(&self, canonical_surface_name: &str) -> Option<&FunctionSurfaceEntry> {
@@ -124,16 +156,70 @@ impl FunctionSurfaceCatalog {
 
         summary
     }
+
+    pub fn admitted_execution_snapshot(&self) -> LibraryContextSnapshot {
+        LibraryContextSnapshot {
+            snapshot_id: self.snapshot_id.clone(),
+            snapshot_version: self.snapshot_version.clone(),
+            entries: self
+                .entries
+                .values()
+                .filter(|entry| entry.is_execution_admitted())
+                .map(FunctionSurfaceEntry::to_snapshot_entry)
+                .collect(),
+        }
+    }
+}
+
+impl FunctionSurfaceEntry {
+    pub const fn is_execution_admitted(&self) -> bool {
+        matches!(
+            self.admission_category,
+            AdmissionCategory::Supported | AdmissionCategory::Preview
+        )
+    }
+
+    fn to_snapshot_entry(&self) -> LibraryContextSnapshotEntry {
+        LibraryContextSnapshotEntry {
+            surface_name: self.canonical_surface_name.clone(),
+            canonical_id: Some(self.surface_stable_id.clone()),
+            surface_stable_id: Some(self.surface_stable_id.clone()),
+            name_resolution_table_ref: self.name_resolution_table_ref.clone(),
+            semantic_trait_profile_ref: self.semantic_trait_profile_ref.clone(),
+            gating_profile_ref: self.gating_profile_ref.clone(),
+            metadata_status: Some(self.metadata_status.clone()),
+            special_interface_kind: Some(self.special_interface_kind.clone()),
+            admission_interface_kind: Some(self.admission_interface_kind.clone()),
+            preparation_owner: self.preparation_owner.clone(),
+            runtime_boundary_kind: self.runtime_boundary_kind.clone(),
+            arity_shape_note: None,
+            interface_contract_ref: self.interface_contract_ref.clone(),
+            registration_source_kind: self.registration_source_kind,
+            parse_bind_state: LibraryAvailabilityState::CatalogKnown,
+            semantic_plan_state: LibraryAvailabilityState::CatalogKnown,
+            runtime_capability_state: Some(LibraryAvailabilityState::CatalogKnown),
+            post_dispatch_state: Some(LibraryAvailabilityState::CatalogKnown),
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct SnapshotRow {
+    snapshot_id: String,
+    snapshot_generation: String,
+    registration_source_kind: String,
     surface_stable_id: String,
     canonical_surface_name: String,
+    name_resolution_table_ref: String,
+    semantic_trait_profile_ref: String,
+    gating_profile_ref: String,
     category: String,
     metadata_status: String,
     special_interface_kind: String,
     admission_interface_kind: String,
+    preparation_owner: String,
+    runtime_boundary_kind: String,
+    interface_contract_ref: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -182,6 +268,24 @@ fn notes_indicate_real_runtime(notes: &str) -> bool {
         || notes.contains("coverage is now real")
         || notes.contains("coverage are real")
         || notes.contains("typed request normalization")
+}
+
+fn some_if_non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_registration_source_kind(value: &str) -> RegistrationSourceKind {
+    match value {
+        "built_in_catalog_function" | "built_in_operator_export" | "doc_modeled_operator" => {
+            RegistrationSourceKind::BuiltIn
+        }
+        other => panic!("unsupported registration source kind {other}"),
+    }
 }
 
 #[cfg(test)]

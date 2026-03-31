@@ -13,8 +13,8 @@ pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
 pub use runtime::{
-    FormulaEditPacketSummary, FormulaEditorSession, HostPacketKind, OneCalcHostProfile,
-    ParseSnapshot, PlatformGate, RuntimeAdapter,
+    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, HostPacketKind,
+    OneCalcHostProfile, ParseSnapshot, PlatformGate, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -123,5 +123,17 @@ mod tests {
                 HostPacketKind::ReplayCapture,
             ]
         );
+    }
+
+    #[test]
+    fn runtime_adapter_evaluates_admitted_formula_through_upstream_host() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+        let summary = adapter
+            .evaluate_formula("=SUM(1,2,3)")
+            .expect("admitted SUM formula should evaluate");
+
+        assert!(!summary.formula_token.is_empty());
+        assert_eq!(summary.worksheet_value_summary, "Number(6)");
+        assert_eq!(summary.commit_decision_kind, "accepted");
     }
 }

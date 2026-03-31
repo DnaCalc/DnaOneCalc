@@ -1,8 +1,10 @@
 use oxfml_core::{
-    apply_formula_edit, parse_formula, BindContext, EditFollowOnStage, FormulaChannelKind,
-    FormulaEditRequest, FormulaEditResult, FormulaSourceRecord, FormulaTextChangeRange,
-    ParseRequest, StructureContextVersion,
+    apply_formula_edit, parse_formula, BindContext, EditFollowOnStage, EvaluationBackend,
+    FormulaChannelKind, FormulaEditRequest, FormulaEditResult, FormulaSourceRecord,
+    FormulaTextChangeRange, InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost,
+    StructureContextVersion, TypedContextQueryBundle,
 };
+use oxfunc_core::value::EvalValue;
 
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -135,6 +137,15 @@ pub struct FormulaEditPacketSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaEvaluationSummary {
+    pub formula_token: String,
+    pub worksheet_value_summary: String,
+    pub returned_value_surface_kind: String,
+    pub commit_decision_kind: String,
+    pub trace_event_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeAdapter {
     host_profile: OneCalcHostProfile,
 }
@@ -183,6 +194,34 @@ impl RuntimeAdapter {
         self.load_function_surface_catalog().label_summary()
     }
 
+    pub fn evaluate_formula(
+        &self,
+        formula_text: impl Into<String>,
+    ) -> Result<FormulaEvaluationSummary, String> {
+        let catalog = self.load_function_surface_catalog();
+        let snapshot = catalog.admitted_execution_snapshot();
+        let provider = InMemoryLibraryContextProvider::new(snapshot);
+        let query_bundle =
+            TypedContextQueryBundle::new(None, None, None, Some(46_000.0), Some(0.25));
+        let mut host = SingleFormulaHost::new("onecalc.eval", formula_text);
+        let output = host.recalc_with_interfaces(
+            EvaluationBackend::OxFuncBacked,
+            query_bundle,
+            Some(&provider),
+        )?;
+
+        Ok(FormulaEvaluationSummary {
+            formula_token: output.source.formula_token().0,
+            worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
+            returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
+            commit_decision_kind: match output.commit_decision {
+                oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
+                oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
+            },
+            trace_event_count: output.trace_events.len(),
+        })
+    }
+
     pub fn apply_formula_edit_packet(
         &self,
         session: &mut FormulaEditorSession,
@@ -225,5 +264,20 @@ impl RuntimeAdapter {
 
         session.latest_result = Some(result);
         summary
+    }
+}
+
+fn summarize_eval_value(value: &EvalValue) -> String {
+    match value {
+        EvalValue::Number(n) => format!("Number({n})"),
+        EvalValue::Text(text) => format!("Text({})", text.to_string_lossy()),
+        EvalValue::Logical(value) => format!("Logical({value})"),
+        EvalValue::Error(code) => format!("Error({code:?})"),
+        EvalValue::Array(array) => {
+            let shape = array.shape();
+            format!("Array({}x{})", shape.rows, shape.cols)
+        }
+        EvalValue::Reference(reference) => format!("Reference({})", reference.target),
+        EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
     }
 }
