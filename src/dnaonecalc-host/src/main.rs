@@ -14,12 +14,13 @@ fn main() {
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
+        Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --document-roundtrip-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -321,6 +322,63 @@ fn run_document_roundtrip_smoke() {
         reopened_summary.host_profile_id,
         reopened_summary.formula_text_version,
         reopened_summary.evaluation.worksheet_value_summary
+    );
+}
+
+fn run_scenario_capsule_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-scenario-capsule-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let export_store = RetainedScenarioStore::new(root.join("retained-export"));
+    let import_store = RetainedScenarioStore::new(root.join("retained-import"));
+    let capsule_root = root.join("capsule");
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.capsule", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let edit_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let edit = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", edit_context)
+        .expect("capsule source recalc should succeed");
+    let retained = adapter
+        .persist_driven_scenario_run(&export_store, &host, &edit_context, &edit, "SUM capsule")
+        .expect("retained run should persist");
+    let exported = adapter
+        .export_scenario_capsule(
+            &export_store,
+            &capsule_root,
+            &[&retained.run.scenario_run_id],
+        )
+        .expect("ScenarioCapsule export should succeed");
+    let imported = adapter
+        .import_scenario_capsule(&import_store, &exported.capsule_root)
+        .expect("ScenarioCapsule intake should succeed");
+
+    println!("dnaonecalc-host scenario capsule smoke");
+    println!("capsule_id={}", exported.manifest.capsule_id);
+    println!("manifest_path={}", exported.manifest_path.display());
+    println!(
+        "inventory=scenario:{};runs:{};capabilities:{}",
+        exported
+            .manifest
+            .included_artifacts
+            .iter()
+            .filter(|entry| entry.artifact_kind == "scenario")
+            .count(),
+        exported
+            .manifest
+            .included_artifacts
+            .iter()
+            .filter(|entry| entry.artifact_kind == "scenario_run")
+            .count(),
+        exported.manifest.capability_snapshot_refs.len()
+    );
+    println!(
+        "intake=imported:{};deduped:{};conflicts:{};manifest_copy:{}",
+        imported.imported_paths.len(),
+        imported.deduped_paths.len(),
+        imported.conflict_paths.len(),
+        imported.manifest_copy_path.display()
     );
 }
 

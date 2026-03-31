@@ -168,6 +168,23 @@ impl RetainedScenarioStore {
         Ok(ReopenedScenarioRun { scenario, run })
     }
 
+    pub fn read_scenario(&self, scenario_id: &str) -> Result<ScenarioRecord, String> {
+        read_json::<ScenarioRecord>(&self.scenario_path(scenario_id))
+    }
+
+    pub fn read_run(&self, scenario_run_id: &str) -> Result<ScenarioRunRecord, String> {
+        read_json::<ScenarioRunRecord>(&self.run_path(scenario_run_id))
+    }
+
+    pub fn read_capability_snapshot(
+        &self,
+        capability_snapshot_id: &str,
+    ) -> Result<CapabilityLedgerSnapshotRecord, String> {
+        read_json::<CapabilityLedgerSnapshotRecord>(
+            &self.capability_snapshot_path(capability_snapshot_id),
+        )
+    }
+
     fn scenarios_dir(&self) -> PathBuf {
         self.root.join("scenarios")
     }

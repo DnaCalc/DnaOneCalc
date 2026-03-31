@@ -15,6 +15,7 @@ use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
 };
+use crate::capsule::{ImportedScenarioCapsule, PersistedScenarioCapsule};
 use crate::document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
@@ -842,6 +843,23 @@ impl RuntimeAdapter {
                 failed.join(", ")
             ))
         }
+    }
+
+    pub fn export_scenario_capsule(
+        &self,
+        store: &RetainedScenarioStore,
+        capsule_root: impl AsRef<Path>,
+        selected_run_ids: &[&str],
+    ) -> Result<PersistedScenarioCapsule, String> {
+        crate::capsule::export_scenario_capsule(store, capsule_root, selected_run_ids)
+    }
+
+    pub fn import_scenario_capsule(
+        &self,
+        store: &RetainedScenarioStore,
+        capsule_root: impl AsRef<Path>,
+    ) -> Result<ImportedScenarioCapsule, String> {
+        crate::capsule::import_scenario_capsule(store, capsule_root)
     }
 
     pub fn emit_capability_snapshot(

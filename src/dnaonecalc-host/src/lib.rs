@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod capsule;
 pub mod document;
 pub mod function_surface;
 pub mod retained;
@@ -15,6 +16,10 @@ use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 pub use artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
     StableArtifactRef,
+};
+pub use capsule::{
+    ImportedScenarioCapsule, PersistedScenarioCapsule, ScenarioCapsuleArtifactEntry,
+    ScenarioCapsuleAttachmentEntry, ScenarioCapsuleManifest,
 };
 pub use document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
@@ -534,6 +539,97 @@ mod tests {
         assert!(invariants.library_context_snapshot_ref_preserved);
         assert!(invariants.artifact_index_preserved);
         assert!(invariants.effective_display_status_preserved);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scenario_capsule_export_and_intake_preserve_lineage_and_capability_refs() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.capsule", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context)
+            .expect("capsule source recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-scenario-capsule-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let export_store = RetainedScenarioStore::new(root.join("retained-export"));
+        let import_store = RetainedScenarioStore::new(root.join("retained-import"));
+        let persisted_run = adapter
+            .persist_driven_scenario_run(
+                &export_store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM capsule",
+            )
+            .expect("retained run should persist");
+        let exported = adapter
+            .export_scenario_capsule(
+                &export_store,
+                root.join("capsule"),
+                &[&persisted_run.run.scenario_run_id],
+            )
+            .expect("ScenarioCapsule export should succeed");
+
+        assert_eq!(
+            exported.manifest.root_scenario_id,
+            persisted_run.scenario.scenario_id
+        );
+        assert_eq!(exported.manifest.lineage_roots.len(), 1);
+        assert_eq!(exported.manifest.capability_snapshot_refs.len(), 1);
+        assert_eq!(
+            exported.manifest.capability_snapshot_refs[0].logical_id,
+            persisted_run
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
+        );
+
+        let imported = adapter
+            .import_scenario_capsule(&import_store, &exported.capsule_root)
+            .expect("ScenarioCapsule intake should succeed");
+
+        assert_eq!(imported.imported_paths.len(), 3);
+        assert!(imported.deduped_paths.is_empty());
+        assert!(imported.conflict_paths.is_empty());
+        assert!(imported.manifest_copy_path.exists());
+
+        let imported_run_body = fs::read_to_string(
+            import_store
+                .root()
+                .join("imports")
+                .join("scenario-runs")
+                .join(format!("{}.json", persisted_run.run.scenario_run_id)),
+        )
+        .expect("imported run should exist");
+        let imported_run: ScenarioRunRecord =
+            serde_json::from_str(&imported_run_body).expect("imported run should deserialize");
+        assert_eq!(
+            imported_run
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .expect("imported run should preserve capability snapshot ref")
+                .logical_id,
+            persisted_run
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
+        );
+        assert_eq!(imported_run.envelope.lineage_refs.len(), 1);
+        assert_eq!(
+            imported_run.envelope.lineage_refs[0]
+                .artifact_ref
+                .logical_id,
+            persisted_run.scenario.scenario_id
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
