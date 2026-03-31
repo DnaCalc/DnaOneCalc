@@ -29,7 +29,8 @@ pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
 pub use retained::{
-    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedCapabilitySnapshot,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
+    HandoffReadinessRecord, PersistedCapabilitySnapshot, PersistedHandoffPacket,
     PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReopenedScenarioRun,
     ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
@@ -38,9 +39,9 @@ pub use runtime::{
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
-    OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext,
-    RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
-    RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
+    OpenedHandoffPacketSummary, OpenedReplayCaptureSummary, OpenedWitnessSummary, ParseSnapshot,
+    PlatformGate, RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun,
+    ReopenedOneCalcDocument, RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -546,6 +547,79 @@ mod tests {
         assert!(opened
             .blocked_dimensions
             .contains(&"no_oxreplay_explain_adapter_invocation_yet".to_string()));
+
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn handoff_packets_are_generated_from_retained_evidence_and_gated_by_capability_truth() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1.handoff", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let store_root =
+            std::env::temp_dir().join(format!("dnaonecalc-handoff-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&store_root);
+        let store = RetainedScenarioStore::new(&store_root);
+
+        let left_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let left_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", left_context)
+            .expect("left handoff run should succeed");
+        let left = adapter
+            .persist_driven_scenario_run(&store, &host, &left_context, &left_summary, "SUM handoff")
+            .expect("left retained run should persist");
+        adapter
+            .emit_replay_capture_for_run(&store, &left.run.scenario_run_id)
+            .expect("left replay capture should emit");
+
+        let right_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+        let right_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", right_context)
+            .expect("right handoff run should succeed");
+        let right = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &right_context,
+                &right_summary,
+                "SUM handoff",
+            )
+            .expect("right retained run should persist");
+        adapter
+            .emit_replay_capture_for_run(&store, &right.run.scenario_run_id)
+            .expect("right replay capture should emit");
+
+        let witness = adapter
+            .generate_retained_witness(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("witness should generate");
+        let handoff = adapter
+            .generate_handoff_packet(&store, &witness.witness.witness_id)
+            .expect("handoff should generate");
+        assert!(handoff.handoff_path.exists());
+        assert_eq!(handoff.handoff.envelope.artifact_kind, "handoff_packet");
+        assert_eq!(handoff.handoff.status, "ready");
+
+        let opened = adapter
+            .open_handoff_packet(&store, &handoff.handoff.handoff_id)
+            .expect("handoff should open");
+        assert_eq!(opened.target_lane, "OxReplay/DnaOneCalc");
+        assert_eq!(opened.requested_action_kind, "clarify_contract");
+        assert_eq!(opened.status, "ready");
+        assert!(opened.readiness.iter().all(|item| item.satisfied));
+        assert_eq!(
+            opened.capability_snapshot_id,
+            left.run
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .expect("left run should have capability snapshot")
+                .logical_id
+        );
 
         let _ = fs::remove_dir_all(store.root());
     }

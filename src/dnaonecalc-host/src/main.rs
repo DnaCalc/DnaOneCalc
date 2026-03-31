@@ -16,6 +16,7 @@ fn main() {
         Some("--replay-capture-smoke") => run_replay_capture_smoke(),
         Some("--xray-diff-smoke") => run_xray_diff_smoke(),
         Some("--witness-smoke") => run_witness_smoke(),
+        Some("--handoff-smoke") => run_handoff_smoke(),
         Some("--document-roundtrip-smoke") => run_document_roundtrip_smoke(),
         Some("--scenario-capsule-smoke") => run_scenario_capsule_smoke(),
         Some("--shell-smoke") => run_shell(true),
@@ -23,7 +24,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -413,6 +414,68 @@ fn run_witness_smoke() {
     println!("explain_floor={}", opened.explain_floor);
     println!("lines={}", opened.explanation_lines.join(" | "));
     println!("blocked={}", opened.blocked_dimensions.join(","));
+}
+
+fn run_handoff_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-handoff-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.handoff", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+
+    let left_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let left_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", left_context)
+        .expect("left handoff recalc should succeed");
+    let left = adapter
+        .persist_driven_scenario_run(&store, &host, &left_context, &left_summary, "SUM handoff")
+        .expect("left retained run should persist");
+    adapter
+        .emit_replay_capture_for_run(&store, &left.run.scenario_run_id)
+        .expect("left replay capture should emit");
+
+    let right_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
+    let right_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,4)", right_context)
+        .expect("right handoff recalc should succeed");
+    let right = adapter
+        .persist_driven_scenario_run(&store, &host, &right_context, &right_summary, "SUM handoff")
+        .expect("right retained run should persist");
+    adapter
+        .emit_replay_capture_for_run(&store, &right.run.scenario_run_id)
+        .expect("right replay capture should emit");
+
+    let witness = adapter
+        .generate_retained_witness(
+            &store,
+            &left.run.scenario_run_id,
+            &right.run.scenario_run_id,
+        )
+        .expect("witness should generate");
+    let handoff = adapter
+        .generate_handoff_packet(&store, &witness.witness.witness_id)
+        .expect("handoff should generate");
+    let opened = adapter
+        .open_handoff_packet(&store, &handoff.handoff.handoff_id)
+        .expect("handoff should open");
+
+    println!("dnaonecalc-host handoff smoke");
+    println!("handoff_id={}", opened.handoff_id);
+    println!("target_lane={}", opened.target_lane);
+    println!("requested_action_kind={}", opened.requested_action_kind);
+    println!("status={}", opened.status);
+    println!("capability_snapshot_id={}", opened.capability_snapshot_id);
+    println!(
+        "readiness={}",
+        opened
+            .readiness
+            .iter()
+            .map(|item| format!("{}:{}", item.item_id, item.satisfied))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
 }
 
 fn run_document_roundtrip_smoke() {

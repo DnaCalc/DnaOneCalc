@@ -14,6 +14,7 @@ pub enum ArtifactKind {
     ExecutionTrace,
     ReplayCapture,
     Witness,
+    HandoffPacket,
     CapabilityLedgerSnapshot,
 }
 
@@ -29,6 +30,7 @@ impl ArtifactKind {
             Self::ExecutionTrace => "execution_trace",
             Self::ReplayCapture => "replay_capture",
             Self::Witness => "witness",
+            Self::HandoffPacket => "handoff_packet",
             Self::CapabilityLedgerSnapshot => "capability_ledger_snapshot",
         }
     }

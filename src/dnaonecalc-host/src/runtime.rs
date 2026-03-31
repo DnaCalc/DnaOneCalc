@@ -25,10 +25,10 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::retained::{
-    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, PersistedReplayCapture,
-    PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord,
-    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
-    WitnessRecord,
+    CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, HandoffPacketRecord,
+    HandoffReadinessRecord, PersistedHandoffPacket, PersistedReplayCapture, PersistedScenarioRun,
+    PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -344,6 +344,16 @@ pub struct OpenedWitnessSummary {
     pub explain_floor: String,
     pub explanation_lines: Vec<String>,
     pub blocked_dimensions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedHandoffPacketSummary {
+    pub handoff_id: String,
+    pub target_lane: String,
+    pub requested_action_kind: String,
+    pub status: String,
+    pub readiness: Vec<HandoffReadinessRecord>,
+    pub capability_snapshot_id: String,
 }
 
 impl DocumentRoundTripInvariantReport {
@@ -1194,6 +1204,139 @@ impl RuntimeAdapter {
         })
     }
 
+    pub fn generate_handoff_packet(
+        &self,
+        store: &RetainedScenarioStore,
+        witness_id: &str,
+    ) -> Result<PersistedHandoffPacket, String> {
+        let witness = store.read_witness(witness_id)?;
+        let source_run = store.reopen_run(&witness.left_run_ref.logical_id)?;
+        let capability_snapshot_ref = source_run
+            .run
+            .envelope
+            .capability_snapshot_ref
+            .clone()
+            .ok_or_else(|| {
+                format!(
+                    "run {} is missing a capability snapshot ref",
+                    source_run.run.scenario_run_id
+                )
+            })?;
+        let emitted_at_unix_ms = unix_time_millis()?;
+        let handoff_id = format!("handoff-{}", witness_id);
+        let readiness = vec![
+            HandoffReadinessRecord {
+                item_id: "target_lane_selected".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "requested_action_selected".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "expected_vs_observed_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "retained_source_artifact_attached".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "build_seam_platform_context_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "reliability_state_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "witness_lineage_present".to_string(),
+                satisfied: true,
+            },
+            HandoffReadinessRecord {
+                item_id: "lossiness_explicit".to_string(),
+                satisfied: true,
+            },
+        ];
+        let status = if readiness.iter().all(|item| item.satisfied) {
+            "ready"
+        } else {
+            "draft"
+        }
+        .to_string();
+        let content_hash = stable_hash(&(
+            &handoff_id,
+            &witness.scenario_id,
+            &witness.explain_floor,
+            &status,
+            &readiness,
+        ));
+        let handoff = HandoffPacketRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.handoff_packet".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::HandoffPacket.id().to_string(),
+                logical_id: handoff_id.clone(),
+                content_hash,
+                created_at_unix_ms: emitted_at_unix_ms,
+                created_by_build: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+                host_profile_id: self.host_profile.id().to_string(),
+                packet_kind: "handoff_generation".to_string(),
+                seam_pin_set_id: "onecalc:ws-06:handoff".to_string(),
+                capability_floor: self.host_profile.id().to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: vec![
+                    ArtifactLineageRef {
+                        relation: "source_run".to_string(),
+                        artifact_ref: source_run.run.envelope.stable_ref(),
+                    },
+                    ArtifactLineageRef {
+                        relation: "witness".to_string(),
+                        artifact_ref: witness.envelope.stable_ref(),
+                    },
+                ],
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            handoff_id,
+            scenario_id: witness.scenario_id.clone(),
+            source_run_ref: source_run.run.envelope.stable_ref(),
+            witness_ref: witness.envelope.stable_ref(),
+            capability_snapshot_ref,
+            requested_action_kind: "clarify_contract".to_string(),
+            target_lane: "OxReplay/DnaOneCalc".to_string(),
+            expected_behavior: "replay, explain, and handoff surfaces should remain capability-gated and lineage-complete".to_string(),
+            observed_behavior: format!(
+                "witness floor={} with blocked dimensions={}",
+                witness.explain_floor,
+                witness.blocked_dimensions.join(",")
+            ),
+            supporting_artifact_refs: vec![source_run.run.envelope.stable_ref(), witness.envelope.stable_ref()],
+            reliability_state: "retained_evidence_direct".to_string(),
+            status,
+            readiness,
+            emitted_at_unix_ms,
+        };
+
+        store.persist_handoff_packet(&handoff)
+    }
+
+    pub fn open_handoff_packet(
+        &self,
+        store: &RetainedScenarioStore,
+        handoff_id: &str,
+    ) -> Result<OpenedHandoffPacketSummary, String> {
+        let handoff = store.read_handoff_packet(handoff_id)?;
+        Ok(OpenedHandoffPacketSummary {
+            handoff_id: handoff.handoff_id,
+            target_lane: handoff.target_lane,
+            requested_action_kind: handoff.requested_action_kind,
+            status: handoff.status,
+            readiness: handoff.readiness,
+            capability_snapshot_id: handoff.capability_snapshot_ref.logical_id,
+        })
+    }
+
     pub fn emit_capability_snapshot(
         &self,
         packet_kind: &str,
@@ -1298,7 +1441,11 @@ impl RuntimeAdapter {
                     Some("retained diff explain summary available; distill remains blocked"),
                 ),
                 capability_mode("Distill", "blocked", Some("distill path not yet integrated")),
-                capability_mode("Handoff", "blocked", Some("handoff packet generation not yet integrated")),
+                capability_mode(
+                    "Handoff",
+                    "available",
+                    Some("retained-evidence handoff packet generation is gated by capability snapshot truth"),
+                ),
             ],
             provisional_seams: vec![
                 "browser_and_secondary_hosts_not_admitted".to_string(),

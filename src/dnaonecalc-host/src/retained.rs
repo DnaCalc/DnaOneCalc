@@ -125,6 +125,31 @@ pub struct WitnessRecord {
     pub emitted_at_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HandoffReadinessRecord {
+    pub item_id: String,
+    pub satisfied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffPacketRecord {
+    pub envelope: ArtifactEnvelope,
+    pub handoff_id: String,
+    pub scenario_id: String,
+    pub source_run_ref: StableArtifactRef,
+    pub witness_ref: StableArtifactRef,
+    pub capability_snapshot_ref: StableArtifactRef,
+    pub requested_action_kind: String,
+    pub target_lane: String,
+    pub expected_behavior: String,
+    pub observed_behavior: String,
+    pub supporting_artifact_refs: Vec<StableArtifactRef>,
+    pub reliability_state: String,
+    pub status: String,
+    pub readiness: Vec<HandoffReadinessRecord>,
+    pub emitted_at_unix_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedCapabilitySnapshot {
     pub snapshot: CapabilityLedgerSnapshotRecord,
@@ -151,6 +176,12 @@ pub struct PersistedReplayCapture {
 pub struct PersistedWitness {
     pub witness: WitnessRecord,
     pub witness_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedHandoffPacket {
+    pub handoff: HandoffPacketRecord,
+    pub handoff_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +268,10 @@ impl RetainedScenarioStore {
         read_json::<WitnessRecord>(&self.witness_path(witness_id))
     }
 
+    pub fn read_handoff_packet(&self, handoff_id: &str) -> Result<HandoffPacketRecord, String> {
+        read_json::<HandoffPacketRecord>(&self.handoff_path(handoff_id))
+    }
+
     pub fn persist_replay_capture(
         &self,
         capture: &ReplayCaptureRecord,
@@ -264,6 +299,19 @@ impl RetainedScenarioStore {
         })
     }
 
+    pub fn persist_handoff_packet(
+        &self,
+        handoff: &HandoffPacketRecord,
+    ) -> Result<PersistedHandoffPacket, String> {
+        fs::create_dir_all(self.handoffs_dir()).map_err(|error| error.to_string())?;
+        let handoff_path = self.handoff_path(&handoff.handoff_id);
+        write_json(&handoff_path, handoff)?;
+        Ok(PersistedHandoffPacket {
+            handoff: handoff.clone(),
+            handoff_path,
+        })
+    }
+
     pub fn overwrite_run(&self, run: &ScenarioRunRecord) -> Result<(), String> {
         write_json(&self.run_path(&run.scenario_run_id), run)
     }
@@ -286,6 +334,10 @@ impl RetainedScenarioStore {
 
     fn witnesses_dir(&self) -> PathBuf {
         self.root.join("witnesses")
+    }
+
+    fn handoffs_dir(&self) -> PathBuf {
+        self.root.join("handoffs")
     }
 
     fn scenario_path(&self, scenario_id: &str) -> PathBuf {
@@ -313,6 +365,10 @@ impl RetainedScenarioStore {
 
     fn witness_path(&self, witness_id: &str) -> PathBuf {
         self.witnesses_dir().join(format!("{witness_id}.json"))
+    }
+
+    fn handoff_path(&self, handoff_id: &str) -> PathBuf {
+        self.handoffs_dir().join(format!("{handoff_id}.json"))
     }
 }
 
