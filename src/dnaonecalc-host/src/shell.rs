@@ -50,6 +50,7 @@ pub struct OneCalcShellApp {
     latest_edit_packet: FormulaEditPacketSummary,
     latest_evaluation: Option<FormulaEvaluationSummary>,
     completion_items: Vec<String>,
+    function_help_text: String,
     rendered_diagnostics: Vec<String>,
     host_profile_id: String,
     packet_register_text: String,
@@ -114,6 +115,7 @@ impl OneCalcShellApp {
             latest_edit_packet,
             latest_evaluation: None,
             completion_items,
+            function_help_text: "Current Help: unavailable at cursor".to_string(),
             rendered_diagnostics,
             host_profile_id,
             packet_register_text,
@@ -130,6 +132,7 @@ impl OneCalcShellApp {
         if smoke_mode {
             app.evaluate_current_formula();
         }
+        app.refresh_function_help();
 
         app
     }
@@ -153,6 +156,24 @@ impl OneCalcShellApp {
             .into_iter()
             .map(|proposal| format!("{} {}", proposal.proposal_kind, proposal.display_text))
             .collect();
+        self.refresh_function_help();
+    }
+
+    fn refresh_function_help(&mut self) {
+        self.function_help_text = match self
+            .runtime_adapter
+            .current_function_help(&self.edit_session, self.editor_state.cursor_index)
+        {
+            Some(help) => format!(
+                "Current Help: {}\nsignature: {}\nactive_argument: {}\navailability: {}\nprovisional: {}",
+                help.display_name,
+                help.display_signature,
+                help.active_argument_index,
+                help.availability_summary,
+                help.provisional
+            ),
+            None => "Current Help: unavailable at cursor".to_string(),
+        };
     }
 
     fn evaluate_current_formula(&mut self) {
@@ -242,6 +263,9 @@ impl eframe::App for OneCalcShellApp {
                     ui.monospace(proposal);
                 }
             }
+            ui.separator();
+            ui.label("Current Help");
+            ui.monospace(&self.function_help_text);
             ui.small(format!(
                 "cursor={} selection={}..{} selected_text=\"{}\"",
                 self.editor_state.cursor_index,
@@ -397,6 +421,7 @@ mod tests {
         assert!(app
             .function_policy_text
             .contains("executable=supported+preview only"));
+        assert!(app.function_help_text.contains("Current Help"));
         assert_eq!(
             app.editor_state.cursor_index,
             app.editor_state.buffer.chars().count()
@@ -431,5 +456,18 @@ mod tests {
             .completion_items
             .iter()
             .any(|proposal| proposal == "Function SUM"));
+    }
+
+    #[test]
+    fn shell_app_projects_current_function_help_into_editor_flow() {
+        let app = OneCalcShellApp::with_formula(
+            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
+            "=SUM(1,2,3".to_string(),
+            false,
+        );
+
+        assert!(app.function_help_text.contains("Current Help: SUM"));
+        assert!(app.function_help_text.contains("signature: SUM(1..255)"));
+        assert!(app.function_help_text.contains("availability: supported"));
     }
 }

@@ -1,11 +1,12 @@
 use oxfml_core::{
-    apply_formula_edit, collect_completion_proposals, parse_formula, BindContext,
-    CompletionRequest, EditFollowOnStage, EvaluationBackend, FormulaChannelKind,
-    FormulaEditRequest, FormulaEditResult, FormulaSourceRecord, FormulaTextChangeRange,
-    InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost, StructureContextVersion,
-    TypedContextQueryBundle,
+    apply_formula_edit, build_function_help_lookup_request, collect_completion_proposals,
+    parse_formula, BindContext, CompletionRequest, EditFollowOnStage, EvaluationBackend,
+    FormulaChannelKind, FormulaEditRequest, FormulaEditResult, FormulaSourceRecord,
+    FormulaTextChangeRange, InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost,
+    StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
+use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
 
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
@@ -155,6 +156,15 @@ pub struct CompletionProposalSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionHelpSummary {
+    pub display_name: String,
+    pub display_signature: String,
+    pub active_argument_index: usize,
+    pub availability_summary: String,
+    pub provisional: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeAdapter {
     host_profile: OneCalcHostProfile,
 }
@@ -267,6 +277,43 @@ impl RuntimeAdapter {
             .collect()
     }
 
+    pub fn current_function_help(
+        &self,
+        session: &FormulaEditorSession,
+        cursor_offset: usize,
+    ) -> Option<FunctionHelpSummary> {
+        let result = session.latest_result()?;
+        let catalog = self.load_function_surface_catalog();
+        let snapshot = catalog.admitted_execution_snapshot();
+        let request = build_function_help_lookup_request(
+            &result.source,
+            &result.green_tree,
+            cursor_offset,
+            Some(&snapshot),
+        )?;
+        let function_meta = lookup_function_meta_by_surface_name(&request.lookup_key)?;
+        let entry = catalog.get(&request.lookup_key)?;
+        let display_signature = format!(
+            "{}({})",
+            request.lookup_key,
+            summarize_arity(function_meta.arity.min, function_meta.arity.max)
+        );
+        let availability_summary =
+            format!("{} ({})", entry.admission_category.id(), entry.category);
+
+        Some(FunctionHelpSummary {
+            display_name: request.lookup_key,
+            display_signature,
+            active_argument_index: signature_help_argument_index(
+                &result.source,
+                &result.green_tree,
+                cursor_offset,
+            ),
+            availability_summary,
+            provisional: matches!(entry.admission_category, crate::AdmissionCategory::Preview),
+        })
+    }
+
     pub fn apply_formula_edit_packet(
         &self,
         session: &mut FormulaEditorSession,
@@ -315,6 +362,24 @@ fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
     bind_context.structure_context_version =
         StructureContextVersion("onecalc:single_formula:v1".to_string());
     bind_context
+}
+
+fn summarize_arity(min: usize, max: usize) -> String {
+    if min == max {
+        min.to_string()
+    } else {
+        format!("{min}..{max}")
+    }
+}
+
+fn signature_help_argument_index(
+    source: &FormulaSourceRecord,
+    green_tree: &oxfml_core::GreenTreeRoot,
+    cursor_offset: usize,
+) -> usize {
+    oxfml_core::signature_help_context_at_cursor(source, green_tree, cursor_offset)
+        .map(|context| context.active_argument_index)
+        .unwrap_or(0)
 }
 
 fn summarize_eval_value(value: &EvalValue) -> String {

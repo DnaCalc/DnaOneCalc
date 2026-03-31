@@ -14,8 +14,8 @@ pub use function_surface::{
 };
 pub use runtime::{
     CompletionProposalSummary, FormulaEditPacketSummary, FormulaEditorSession,
-    FormulaEvaluationSummary, HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate,
-    RuntimeAdapter,
+    FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
+    ParseSnapshot, PlatformGate, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
