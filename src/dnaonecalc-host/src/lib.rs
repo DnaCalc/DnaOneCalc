@@ -1,4 +1,5 @@
 pub mod function_surface;
+pub mod retained;
 pub mod runtime;
 pub mod shell;
 
@@ -12,11 +13,15 @@ use oxreplay_core::{is_replay_ready, ReplayEvent, ReplayScenario};
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
 };
+pub use retained::{
+    PersistedScenarioRun, ReopenedScenarioRun, RetainedProvenanceRecord,
+    RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+};
 pub use runtime::{
     CompletionProposalSummary, DrivenRecalcSummary, DrivenSingleFormulaHost,
     FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary,
     FunctionHelpSummary, HostPacketKind, OneCalcHostProfile, ParseSnapshot, PlatformGate,
-    RecalcContext, RecalcTriggerKind, RuntimeAdapter,
+    RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, RuntimeAdapter,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 
@@ -97,6 +102,8 @@ pub fn run_dependency_probe() -> Result<DependencyProbeReport, DependencyProbeEr
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -196,5 +203,66 @@ mod tests {
             .expect_err("OC-H0 should reject the driven host model");
 
         assert!(error.contains("does not admit the driven single-formula host model"));
+    }
+
+    #[test]
+    fn h1_runs_persist_scenario_and_scenario_run_and_reopen_through_runtime() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.h1", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
+            .expect("edit-and-accept recalc should succeed");
+
+        let store_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-h1-retained-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&store_root);
+        let store = RetainedScenarioStore::new(&store_root);
+        let persisted = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "SUM baseline",
+            )
+            .expect("retained scenario and run should persist");
+
+        assert!(persisted.scenario_path.exists());
+        assert!(persisted.run_path.exists());
+        assert_eq!(persisted.scenario.scenario_slug, "sum-baseline");
+        assert_eq!(persisted.scenario.host_profile_id, "OC-H1");
+        assert_eq!(persisted.run.scenario_id, persisted.scenario.scenario_id);
+
+        let mut reopened = adapter
+            .reopen_driven_scenario_run(&store, &persisted.run.scenario_run_id)
+            .expect("retained run should reopen");
+        assert_eq!(
+            reopened.retained.scenario.formula_text,
+            persisted.scenario.formula_text
+        );
+        assert_eq!(
+            reopened.driven_host.formula_text(),
+            persisted.scenario.formula_text
+        );
+        assert_eq!(
+            reopened.driven_host.formula_text_version(),
+            recalc_summary.formula_text_version
+        );
+
+        let reopened_summary = adapter
+            .manual_recalc(
+                &mut reopened.driven_host,
+                RecalcContext::manual(Some(46_000.0), Some(0.25)),
+            )
+            .expect("reopened driven host should recalc");
+        assert_eq!(reopened_summary.host_profile_id, "OC-H1");
+        assert_eq!(reopened_summary.evaluation.worksheet_value_summary, "Number(6)");
+
+        let _ = fs::remove_dir_all(store.root());
     }
 }

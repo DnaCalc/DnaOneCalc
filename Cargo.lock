@@ -822,6 +822,7 @@ dependencies = [
  "oxreplay-abstractions",
  "oxreplay-core",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

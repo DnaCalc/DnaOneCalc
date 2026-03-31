@@ -1,7 +1,8 @@
 use std::env;
 
 use dnaonecalc_host::{
-    launch_shell, launch_shell_with_formula, OneCalcHostProfile, RecalcContext, RuntimeAdapter,
+    launch_shell, launch_shell_with_formula, OneCalcHostProfile, RecalcContext,
+    RetainedScenarioStore, RuntimeAdapter,
 };
 
 fn main() {
@@ -9,12 +10,13 @@ fn main() {
         Some("--probe") => run_probe(),
         Some("--function-surface-smoke") => run_function_surface_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
+        Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--shell-smoke") => run_shell(true),
         Some("--editor-diagnostic-smoke") => run_editor_diagnostic_smoke(),
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --h1-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --h1-smoke, --h1-retained-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -132,6 +134,45 @@ fn run_h1_smoke() {
         forced.packet_kind,
         forced.formula_text_version,
         forced.evaluation.worksheet_value_summary
+    );
+}
+
+fn run_h1_retained_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.h1.retained", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+    let edit_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let edit = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", edit_context.clone())
+        .expect("edit-and-accept recalc should succeed");
+
+    let root = env::temp_dir().join("dnaonecalc-h1-retained-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+    let persisted = adapter
+        .persist_driven_scenario_run(&store, &host, &edit_context, &edit, "SUM retained smoke")
+        .expect("retained scenario and run should persist");
+    let mut reopened = adapter
+        .reopen_driven_scenario_run(&store, &persisted.run.scenario_run_id)
+        .expect("retained run should reopen");
+    let reopened_summary = adapter
+        .manual_recalc(
+            &mut reopened.driven_host,
+            RecalcContext::manual(Some(46_000.0), Some(0.25)),
+        )
+        .expect("reopened driven host should recalc");
+
+    println!("dnaonecalc-host h1 retained smoke");
+    println!("scenario_id={}", persisted.scenario.scenario_id);
+    println!("scenario_run_id={}", persisted.run.scenario_run_id);
+    println!("scenario_path={}", persisted.scenario_path.display());
+    println!("run_path={}", persisted.run_path.display());
+    println!(
+        "reopened=host_profile:{};formula_text_version:{};worksheet_value:{}",
+        reopened_summary.host_profile_id,
+        reopened_summary.formula_text_version,
+        reopened_summary.evaluation.worksheet_value_summary
     );
 }
 

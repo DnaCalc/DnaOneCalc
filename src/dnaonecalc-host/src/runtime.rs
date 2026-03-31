@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use oxfml_core::{
     apply_formula_edit, build_function_help_lookup_request, collect_completion_proposals,
     parse_formula, BindContext, CompletionRequest, EditFollowOnStage, EvaluationBackend,
@@ -8,6 +10,10 @@ use oxfml_core::{
 use oxfunc_core::value::EvalValue;
 use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
 
+use crate::retained::{
+    PersistedScenarioRun, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+};
 use crate::{run_dependency_probe, DependencyProbeError, DependencyProbeReport};
 use crate::{FunctionSurfaceCatalog, SurfaceLabelSummary};
 
@@ -178,7 +184,7 @@ impl RecalcTriggerKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RecalcContext {
     pub trigger_kind: RecalcTriggerKind,
     pub now_serial: Option<f64>,
@@ -221,12 +227,20 @@ pub struct DrivenSingleFormulaHost {
 }
 
 impl DrivenSingleFormulaHost {
+    pub fn formula_stable_id(&self) -> &str {
+        &self.host.formula_stable_id
+    }
+
     pub fn formula_text(&self) -> &str {
         &self.host.formula_text
     }
 
     pub const fn formula_text_version(&self) -> u64 {
         self.host.formula_text_version
+    }
+
+    pub const fn formula_channel_kind(&self) -> FormulaChannelKind {
+        self.host.formula_channel_kind
     }
 
     pub fn structure_context_version(&self) -> &str {
@@ -242,6 +256,12 @@ pub struct DrivenRecalcSummary {
     pub formula_text_version: u64,
     pub structure_context_version: String,
     pub evaluation: FormulaEvaluationSummary,
+}
+
+#[derive(Debug)]
+pub struct ReopenedDrivenSingleFormulaRun {
+    pub retained: crate::ReopenedScenarioRun,
+    pub driven_host: DrivenSingleFormulaHost,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,6 +400,124 @@ impl RuntimeAdapter {
         }
 
         self.run_driven_recalc(driven_host, recalc_context)
+    }
+
+    pub fn persist_driven_scenario_run(
+        &self,
+        store: &RetainedScenarioStore,
+        driven_host: &DrivenSingleFormulaHost,
+        recalc_context: &RecalcContext,
+        recalc_summary: &DrivenRecalcSummary,
+        scenario_slug: impl Into<String>,
+    ) -> Result<PersistedScenarioRun, String> {
+        if !self.host_profile.supports_driven_host() {
+            return Err(format!(
+                "{} does not admit retained H1 runs",
+                self.host_profile.id()
+            ));
+        }
+
+        let scenario_slug = sanitize_slug(&scenario_slug.into());
+        let stable_slug = sanitize_slug(driven_host.formula_stable_id());
+        let scenario_id = format!("scenario-{stable_slug}");
+        let executed_at_unix_ms = unix_time_millis()?;
+        let scenario_run_id = format!(
+            "scenario-run-{}-{}-{}",
+            stable_slug,
+            sanitize_slug(&recalc_summary.packet_kind),
+            executed_at_unix_ms
+        );
+        let snapshot = self
+            .load_function_surface_catalog()
+            .admitted_execution_snapshot();
+        let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
+        let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
+
+        let scenario = ScenarioRecord {
+            scenario_id: scenario_id.clone(),
+            scenario_slug,
+            formula_text: driven_host.formula_text().to_string(),
+            formula_channel_kind: format!("{:?}", driven_host.formula_channel_kind()),
+            host_profile_id: self.host_profile.id().to_string(),
+            host_driving_packet_kind: recalc_summary.packet_kind.clone(),
+            host_driving_block: "driven_single_formula_host".to_string(),
+            recalc_context: RetainedRecalcContextRecord {
+                trigger_kind: recalc_context.trigger_kind.id().to_string(),
+                packet_kind: recalc_context.packet_kind().id().to_string(),
+                now_serial: recalc_context.now_serial.map(|value| value.to_string()),
+                random_value: recalc_context.random_value.map(|value| value.to_string()),
+            },
+            display_context: "returned_value_surface".to_string(),
+            library_context_snapshot_ref: Some(snapshot_ref.clone()),
+            function_surface_policy_id: function_surface_policy_id.to_string(),
+            retained_notes: Vec::new(),
+            provenance: RetainedProvenanceRecord {
+                formula_stable_id: driven_host.formula_stable_id().to_string(),
+                formula_text_version: recalc_summary.formula_text_version,
+                structure_context_version: recalc_summary.structure_context_version.clone(),
+            },
+        };
+        let run = ScenarioRunRecord {
+            scenario_run_id,
+            scenario_id,
+            build_id: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
+            runtime_platform: std::env::consts::OS.to_string(),
+            seam_pin_set_id: "onecalc:ws-04:h1".to_string(),
+            effective_capability_floor: self.host_profile.id().to_string(),
+            result_surface_ref: format!("result-surface:{}", recalc_summary.evaluation.formula_token),
+            candidate_ref: Some(format!(
+                "candidate:{}",
+                recalc_summary.evaluation.formula_token
+            )),
+            commit_ref: if recalc_summary.evaluation.commit_decision_kind == "accepted" {
+                Some(format!("commit:{}", recalc_summary.evaluation.formula_token))
+            } else {
+                None
+            },
+            reject_ref: if recalc_summary.evaluation.commit_decision_kind == "rejected" {
+                Some(format!("reject:{}", recalc_summary.evaluation.formula_token))
+            } else {
+                None
+            },
+            trace_ref: Some(format!("trace:{}", recalc_summary.evaluation.formula_token)),
+            replay_capture_ref: None,
+            function_surface_effective_id: format!(
+                "{}:{}",
+                function_surface_policy_id, snapshot_ref
+            ),
+            projection_status: "direct".to_string(),
+            provisionality_status: if recalc_summary.packet_kind == HostPacketKind::ForcedRecalc.id()
+            {
+                "forced".to_string()
+            } else {
+                "stable".to_string()
+            },
+            executed_at_unix_ms,
+        };
+
+        store.persist_scenario_and_run(&scenario, &run)
+    }
+
+    pub fn reopen_driven_scenario_run(
+        &self,
+        store: &RetainedScenarioStore,
+        scenario_run_id: &str,
+    ) -> Result<ReopenedDrivenSingleFormulaRun, String> {
+        let retained = store.reopen_run(scenario_run_id)?;
+        let mut driven_host = self.new_driven_single_formula_host(
+            retained.scenario.provenance.formula_stable_id.clone(),
+            retained.scenario.formula_text.clone(),
+        )?;
+        driven_host.host.formula_text_version = retained.scenario.provenance.formula_text_version;
+        driven_host.host.structure_context_version =
+            retained.scenario.provenance.structure_context_version.clone();
+        driven_host.host.formula_channel_kind =
+            parse_formula_channel_kind(&retained.scenario.formula_channel_kind)?;
+
+        Ok(ReopenedDrivenSingleFormulaRun {
+            retained,
+            driven_host,
+        })
     }
 
     pub fn collect_completion_proposals(
@@ -556,6 +694,46 @@ fn summarize_host_output(output: oxfml_core::HostRecalcOutput) -> FormulaEvaluat
         },
         trace_event_count: output.trace_events.len(),
     }
+}
+
+fn parse_formula_channel_kind(value: &str) -> Result<FormulaChannelKind, String> {
+    match value {
+        "WorksheetA1" => Ok(FormulaChannelKind::WorksheetA1),
+        "WorksheetR1C1" => Ok(FormulaChannelKind::WorksheetR1C1),
+        "ConditionalFormatting" => Ok(FormulaChannelKind::ConditionalFormatting),
+        "DataValidation" => Ok(FormulaChannelKind::DataValidation),
+        _ => Err(format!("unsupported retained formula channel kind: {value}")),
+    }
+}
+
+fn sanitize_slug(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in value.chars() {
+        let normalized = ch.to_ascii_lowercase();
+        if normalized.is_ascii_alphanumeric() {
+            slug.push(normalized);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "scenario".to_string()
+    } else {
+        slug
+    }
+}
+
+fn unix_time_millis() -> Result<u64, String> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?;
+    Ok(duration.as_millis() as u64)
 }
 
 fn summarize_arity(min: usize, max: usize) -> String {
