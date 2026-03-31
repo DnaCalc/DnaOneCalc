@@ -2,8 +2,8 @@ use eframe::egui;
 use egui::TextBuffer as _;
 
 use crate::{
-    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, OneCalcHostProfile,
-    RuntimeAdapter,
+    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary,
+    IsolatedConditionalFormattingCarrier, OneCalcHostProfile, RuntimeAdapter,
 };
 
 pub const FORMULA_REGION_ID: &str = "formula";
@@ -128,6 +128,7 @@ pub struct OneCalcShellApp {
     packet_register_text: String,
     platform_gate_text: String,
     function_policy_text: String,
+    conditional_formatting_policy_text: String,
     editor_state: FormulaEditorState,
     returned_presentation_hint_text: String,
     host_style_state_text: String,
@@ -162,6 +163,8 @@ impl OneCalcShellApp {
             function_summary.deferred,
             function_summary.catalog_only
         );
+        let conditional_formatting_policy_text =
+            IsolatedConditionalFormattingCarrier::policy_text();
         let probe = adapter.dependency_probe().ok();
         let mut edit_session = FormulaEditorSession::new("onecalc.editor");
         let latest_edit_packet =
@@ -196,6 +199,7 @@ impl OneCalcShellApp {
             packet_register_text,
             platform_gate_text,
             function_policy_text,
+            conditional_formatting_policy_text,
             editor_state: FormulaEditorState::new(formula_text),
             returned_presentation_hint_text: "none".to_string(),
             host_style_state_text: "none".to_string(),
@@ -324,6 +328,8 @@ impl eframe::App for OneCalcShellApp {
                 );
                 ui.separator();
                 ui.label(&self.function_policy_text);
+                ui.separator();
+                ui.label(&self.conditional_formatting_policy_text);
             });
         });
 
@@ -430,6 +436,10 @@ impl eframe::App for OneCalcShellApp {
                 self.function_policy_text
                     .replace(": ", "=")
                     .replace(" ", "_")
+            );
+            println!(
+                "conditional_formatting_truth={}",
+                self.conditional_formatting_policy_text.replace(": ", "=").replace(" ", "_")
             );
             println!(
                 "editor_truth=buffer_len:{};cursor_index:{};selection:{}..{}",
@@ -560,6 +570,12 @@ mod tests {
         assert!(app
             .function_policy_text
             .contains("executable=supported+preview only"));
+        assert!(app
+            .conditional_formatting_policy_text
+            .contains("Conditional Formatting: admitted="));
+        assert!(app
+            .conditional_formatting_policy_text
+            .contains("blocked=data_bars"));
         assert!(app.function_help_text.contains("Current Help"));
         assert_eq!(
             app.editor_state.cursor_index,

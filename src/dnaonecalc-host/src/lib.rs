@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod capsule;
+pub mod conditional_formatting;
 pub mod document;
 pub mod function_surface;
 pub mod retained;
@@ -20,6 +21,10 @@ pub use artifact::{
 pub use capsule::{
     ImportedScenarioCapsule, PersistedScenarioCapsule, ScenarioCapsuleArtifactEntry,
     ScenarioCapsuleAttachmentEntry, ScenarioCapsuleManifest,
+};
+pub use conditional_formatting::{
+    validate_isolated_conditional_formatting_carrier, ConditionalFormattingCarrierSummary,
+    IsolatedConditionalFormattingCarrier,
 };
 pub use document::{
     read_spreadsheetml_document, write_spreadsheetml_document, DocumentArtifactIndexEntry,
