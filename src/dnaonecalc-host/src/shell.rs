@@ -231,7 +231,10 @@ impl eframe::App for OneCalcShellApp {
                 ui.separator();
                 ui.label(format!("Packet Kinds: {}", self.packet_register_text));
                 ui.separator();
-                ui.colored_label(egui::Color32::YELLOW, &self.platform_gate_text);
+                ui.colored_label(
+                    egui::Color32::from_rgb(140, 88, 0),
+                    &self.platform_gate_text,
+                );
                 ui.separator();
                 ui.label(&self.function_policy_text);
             });
