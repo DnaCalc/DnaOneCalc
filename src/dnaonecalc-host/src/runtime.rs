@@ -14,8 +14,7 @@ use oxfml_core::consumer::runtime::{
     RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult, RuntimeSessionFacade,
 };
 use oxfml_core::{
-    parse_formula, BindContext, FormulaChannelKind, FormulaSourceRecord,
-    LibraryContextSnapshotRef, ParseRequest,
+    BindContext, FormulaChannelKind, FormulaSourceRecord, LibraryContextSnapshotRef,
     StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
@@ -151,13 +150,6 @@ const OC_H2_PACKET_KINDS: &[HostPacketKind] = &[
     HostPacketKind::ExtensionRegistration,
     HostPacketKind::RtdUpdate,
 ];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseSnapshot {
-    pub formula_token: String,
-    pub token_count: usize,
-    pub diagnostic_count: usize,
-}
 
 #[derive(Debug, Clone)]
 pub struct FormulaEditorSession {
@@ -572,17 +564,6 @@ impl RuntimeAdapter {
 
     pub const fn platform_gate(&self) -> PlatformGate {
         PlatformGate::DesktopNativeOnly
-    }
-
-    pub fn parse_formula_source(&self, source: FormulaSourceRecord) -> ParseSnapshot {
-        let formula_token = source.formula_token().0;
-        let parse = parse_formula(ParseRequest { source });
-
-        ParseSnapshot {
-            formula_token,
-            token_count: parse.green_tree.full_fidelity_tokens.len(),
-            diagnostic_count: parse.green_tree.diagnostics.len(),
-        }
     }
 
     pub fn dependency_probe(&self) -> Result<DependencyProbeReport, DependencyProbeError> {

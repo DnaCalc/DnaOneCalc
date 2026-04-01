@@ -59,7 +59,7 @@ pub use runtime::{
     FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
-    OpenedWitnessSummary, ParseSnapshot, PlatformGate, RecalcContext, RecalcTriggerKind,
+    OpenedWitnessSummary, PlatformGate, RecalcContext, RecalcTriggerKind,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
     RetainedRunXRaySummary, RuntimeAdapter,
 };
@@ -102,6 +102,7 @@ impl ReferenceResolver for NoReferenceResolver {
 }
 
 pub fn run_dependency_probe() -> Result<DependencyProbeReport, DependencyProbeError> {
+    // This is a bounded seam probe, not ordinary host execution.
     let source = FormulaSourceRecord::new("onecalc.probe", 1, "=SUM(1,2,3)")
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
     let formula_token = source.formula_token().0;
