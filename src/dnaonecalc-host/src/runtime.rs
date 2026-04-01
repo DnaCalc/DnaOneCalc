@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use oxfml_core::consumer::editor::{
     EditorAnalysisStage, EditorDocument, EditorEditService, EditorEnvironment,
     FormulaTextChangeRange,
@@ -512,6 +514,29 @@ pub struct PromotedScenarioIndex {
     pub rows: Vec<PromotedScenarioIndexRow>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScenarioLibraryFilter {
+    #[serde(default)]
+    pub host_profile_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_required: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioLibrarySavedView {
+    pub view_id: String,
+    pub display_name: String,
+    pub filter: ScenarioLibraryFilter,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -723,6 +748,63 @@ impl RuntimeAdapter {
         }
 
         Ok(PromotedScenarioIndex { rows })
+    }
+
+    pub fn apply_scenario_library_filter(
+        &self,
+        index: &PromotedScenarioIndex,
+        filter: &ScenarioLibraryFilter,
+    ) -> Vec<PromotedScenarioIndexRow> {
+        let _ = self;
+        index
+            .rows
+            .iter()
+            .filter(|row| {
+                (filter.host_profile_ids.is_empty()
+                    || filter.host_profile_ids.iter().any(|id| id == &row.host_profile_id))
+                    && filter
+                        .runtime_platform
+                        .as_ref()
+                        .map(|platform| platform == &row.runtime_platform)
+                        .unwrap_or(true)
+                    && filter
+                        .replay_required
+                        .map(|required| required == !row.replay_capture_ids.is_empty())
+                        .unwrap_or(true)
+                    && filter
+                        .comparison_required
+                        .map(|required| required == !row.comparison_ids.is_empty())
+                        .unwrap_or(true)
+                    && filter
+                        .witness_required
+                        .map(|required| required == !row.witness_ids.is_empty())
+                        .unwrap_or(true)
+                    && filter
+                        .handoff_required
+                        .map(|required| required == !row.handoff_ids.is_empty())
+                        .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    pub fn save_scenario_library_view(
+        &self,
+        path: impl AsRef<Path>,
+        view: &ScenarioLibrarySavedView,
+    ) -> Result<(), String> {
+        let _ = self;
+        let body = serde_json::to_string_pretty(view).map_err(|error| error.to_string())?;
+        fs::write(path, body).map_err(|error| error.to_string())
+    }
+
+    pub fn read_scenario_library_view(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<ScenarioLibrarySavedView, String> {
+        let _ = self;
+        let body = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        serde_json::from_str(&body).map_err(|error| error.to_string())
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

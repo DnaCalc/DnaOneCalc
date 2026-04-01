@@ -18,6 +18,7 @@ fn main() {
         Some("--windows-rtd-smoke") => run_windows_rtd_smoke(),
         Some("--linux-rtd-gate-smoke") => run_linux_rtd_gate_smoke(),
         Some("--scenario-index-smoke") => run_scenario_index_smoke(),
+        Some("--scenario-library-filter-smoke") => run_scenario_library_filter_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -36,7 +37,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --scenario-library-filter-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -689,6 +690,74 @@ fn run_scenario_index_smoke() {
         );
     }
     println!("replay_capture_id={}", replay.capture.replay_capture_id);
+}
+
+fn run_scenario_library_filter_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let index = dnaonecalc_host::PromotedScenarioIndex {
+        rows: vec![
+            dnaonecalc_host::PromotedScenarioIndexRow {
+                row_id: "promoted-scenario:one".to_string(),
+                scenario_id: "scenario-one".to_string(),
+                scenario_slug: "one".to_string(),
+                latest_run_id: "run-one".to_string(),
+                host_profile_id: "OC-H1".to_string(),
+                runtime_platform: std::env::consts::OS.to_string(),
+                formula_text: "=SUM(1,2,3)".to_string(),
+                worksheet_value_summary: "Number(6)".to_string(),
+                replay_capture_ids: vec!["replay-one".to_string()],
+                comparison_ids: vec!["comparison-one".to_string()],
+                witness_ids: vec!["witness-one".to_string()],
+                handoff_ids: vec!["handoff-one".to_string()],
+            },
+            dnaonecalc_host::PromotedScenarioIndexRow {
+                row_id: "promoted-scenario:two".to_string(),
+                scenario_id: "scenario-two".to_string(),
+                scenario_slug: "two".to_string(),
+                latest_run_id: "run-two".to_string(),
+                host_profile_id: "OC-H1".to_string(),
+                runtime_platform: std::env::consts::OS.to_string(),
+                formula_text: "=ABS(-3)".to_string(),
+                worksheet_value_summary: "Number(3)".to_string(),
+                replay_capture_ids: vec!["replay-two".to_string()],
+                comparison_ids: Vec::new(),
+                witness_ids: Vec::new(),
+                handoff_ids: Vec::new(),
+            },
+        ],
+    };
+    let filter = dnaonecalc_host::ScenarioLibraryFilter {
+        host_profile_ids: vec!["OC-H1".to_string()],
+        runtime_platform: Some(std::env::consts::OS.to_string()),
+        replay_required: Some(true),
+        comparison_required: Some(true),
+        witness_required: Some(true),
+        handoff_required: Some(true),
+    };
+    let filtered = adapter.apply_scenario_library_filter(&index, &filter);
+    let view_path = env::temp_dir().join("dnaonecalc-scenario-library-view-smoke.json");
+    let view = dnaonecalc_host::ScenarioLibrarySavedView {
+        view_id: "with-evidence".to_string(),
+        display_name: "With Evidence".to_string(),
+        filter,
+    };
+    adapter
+        .save_scenario_library_view(&view_path, &view)
+        .expect("saved view should persist");
+    let reopened = adapter
+        .read_scenario_library_view(&view_path)
+        .expect("saved view should reopen");
+
+    println!("dnaonecalc-host scenario library filter smoke");
+    println!(
+        "filtered_rows={}",
+        filtered
+            .iter()
+            .map(|row| row.row_id.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!("saved_view_id={}", reopened.view_id);
 }
 
 fn run_h1_smoke() {

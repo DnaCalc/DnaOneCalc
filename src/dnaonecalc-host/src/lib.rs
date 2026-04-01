@@ -67,7 +67,7 @@ pub use runtime::{
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
     OpenedWitnessSummary, PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
-    RecalcContext, RecalcTriggerKind,
+    RecalcContext, RecalcTriggerKind, ScenarioLibraryFilter, ScenarioLibrarySavedView,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
     RetainedRunXRaySummary, RuntimeAdapter,
 };
@@ -822,6 +822,73 @@ mod tests {
         assert_eq!(row.comparison_ids, vec!["comparison-index-smoke".to_string()]);
         assert_eq!(row.witness_ids, vec!["witness-index-smoke".to_string()]);
         assert_eq!(row.handoff_ids, vec!["handoff-index-smoke".to_string()]);
+    }
+
+    #[test]
+    fn scenario_library_filters_and_saved_views_use_promoted_index_fields() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let index = PromotedScenarioIndex {
+            rows: vec![
+                PromotedScenarioIndexRow {
+                    row_id: "promoted-scenario:one".to_string(),
+                    scenario_id: "scenario-one".to_string(),
+                    scenario_slug: "one".to_string(),
+                    latest_run_id: "run-one".to_string(),
+                    host_profile_id: "OC-H1".to_string(),
+                    runtime_platform: std::env::consts::OS.to_string(),
+                    formula_text: "=SUM(1,2,3)".to_string(),
+                    worksheet_value_summary: "Number(6)".to_string(),
+                    replay_capture_ids: vec!["replay-one".to_string()],
+                    comparison_ids: vec!["comparison-one".to_string()],
+                    witness_ids: vec!["witness-one".to_string()],
+                    handoff_ids: vec!["handoff-one".to_string()],
+                },
+                PromotedScenarioIndexRow {
+                    row_id: "promoted-scenario:two".to_string(),
+                    scenario_id: "scenario-two".to_string(),
+                    scenario_slug: "two".to_string(),
+                    latest_run_id: "run-two".to_string(),
+                    host_profile_id: "OC-H1".to_string(),
+                    runtime_platform: std::env::consts::OS.to_string(),
+                    formula_text: "=ABS(-3)".to_string(),
+                    worksheet_value_summary: "Number(3)".to_string(),
+                    replay_capture_ids: vec!["replay-two".to_string()],
+                    comparison_ids: Vec::new(),
+                    witness_ids: Vec::new(),
+                    handoff_ids: Vec::new(),
+                },
+            ],
+        };
+        let filter = ScenarioLibraryFilter {
+            host_profile_ids: vec!["OC-H1".to_string()],
+            runtime_platform: Some(std::env::consts::OS.to_string()),
+            replay_required: Some(true),
+            comparison_required: Some(true),
+            witness_required: Some(true),
+            handoff_required: Some(true),
+        };
+        let filtered = adapter.apply_scenario_library_filter(&index, &filter);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].scenario_id, "scenario-one");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-scenario-library-view-test-{}.json",
+            std::process::id()
+        ));
+        let view = ScenarioLibrarySavedView {
+            view_id: "with-evidence".to_string(),
+            display_name: "With Evidence".to_string(),
+            filter: filter.clone(),
+        };
+        adapter
+            .save_scenario_library_view(&root, &view)
+            .expect("saved view should persist");
+        let reopened = adapter
+            .read_scenario_library_view(&root)
+            .expect("saved view should reopen");
+
+        assert_eq!(reopened, view);
     }
 
     #[test]
