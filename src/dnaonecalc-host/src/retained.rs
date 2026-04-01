@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oxreplay_abstractions::ReplayArtifactRef;
-use oxreplay_core::ReplayScenario;
 use serde::{Deserialize, Serialize};
 
 use crate::observation::{ObservationCapturePayload, ObservationProvenancePayload};
@@ -68,7 +67,32 @@ pub struct ScenarioRunRecord {
     pub returned_value_surface_kind: String,
     pub effective_display_status: String,
     pub commit_decision_kind: String,
+    pub replay_projection: Option<OxfmlReplayProjectionRecord>,
     pub executed_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OxfmlReplayProjectionRecord {
+    pub source_artifact_family: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_case_id: Option<String>,
+    #[serde(default)]
+    pub source_case_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_scenario_alias: Option<String>,
+    pub formula_stable_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_context_snapshot_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_result_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_decision_kind: Option<String>,
+    #[serde(default)]
+    pub trace_event_kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -382,13 +406,13 @@ impl RetainedScenarioStore {
     pub fn persist_replay_capture(
         &self,
         capture: &ReplayCaptureRecord,
-        replay_scenario: &ReplayScenario,
+        replay_projection: &OxfmlReplayProjectionRecord,
     ) -> Result<PersistedReplayCapture, String> {
         fs::create_dir_all(self.replay_captures_dir()).map_err(|error| error.to_string())?;
         let capture_path = self.replay_capture_path(&capture.replay_capture_id);
         let replay_path = self.replay_scenario_path(&capture.replay_capture_id);
         write_json(&capture_path, capture)?;
-        write_json(&replay_path, replay_scenario)?;
+        write_json(&replay_path, replay_projection)?;
         Ok(PersistedReplayCapture {
             capture: capture.clone(),
             capture_path,

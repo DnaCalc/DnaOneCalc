@@ -7,6 +7,9 @@ use oxfml_core::consumer::editor::{
     EditorAnalysisStage, EditorDocument, EditorEditService, EditorEnvironment,
     FormulaTextChangeRange,
 };
+use oxfml_core::consumer::replay::{
+    ReplayProjectionRequest, ReplayProjectionResult, ReplayProjectionService,
+};
 use oxfml_core::consumer::runtime::{
     RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult, RuntimeSessionFacade,
 };
@@ -16,9 +19,9 @@ use oxfml_core::{
     StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
-use oxreplay_abstractions::{CapabilityLevel, LaneId, RegistryRef};
+use oxreplay_abstractions::CapabilityLevel;
 use oxreplay_core::{
-    is_replay_ready, load_replay_scenario_from_path, ReplayEvent, ReplayScenario, ReplayView,
+    is_replay_ready, load_oxfml_v1_replay_projection, ReplayView,
 };
 
 use crate::artifact::{
@@ -39,6 +42,7 @@ use crate::observation::{invoke_live_windows_capture, load_observation_source_bu
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, ComparisonMismatchRecord,
     ComparisonRecord, HandoffPacketRecord, HandoffReadinessRecord, ObservationRecord,
+    OxfmlReplayProjectionRecord,
     PersistedCapabilitySnapshot, PersistedComparison, PersistedHandoffPacket, PersistedObservation,
     PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord,
     RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
@@ -337,6 +341,7 @@ pub struct DrivenRecalcSummary {
     pub formula_text_version: u64,
     pub structure_context_version: String,
     pub library_context_snapshot_ref: Option<String>,
+    pub replay_projection: OxfmlReplayProjectionRecord,
     pub evaluation: FormulaEvaluationSummary,
 }
 
@@ -877,6 +882,7 @@ impl RuntimeAdapter {
                 .clone(),
             effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
             commit_decision_kind: recalc_summary.evaluation.commit_decision_kind.clone(),
+            replay_projection: Some(recalc_summary.replay_projection.clone()),
             executed_at_unix_ms,
         };
 
@@ -1209,7 +1215,11 @@ impl RuntimeAdapter {
             .capability_snapshot_ref
             .clone()
             .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?;
-        let replay_scenario = build_replay_scenario(&reopened.scenario, &reopened.run);
+        let replay_projection = reopened
+            .run
+            .replay_projection
+            .clone()
+            .unwrap_or_else(|| replay_projection_from_retained_run(&reopened.scenario, &reopened.run));
         let replay_capture_id = format!("replay-capture-{scenario_run_id}");
         let emitted_at_unix_ms = unix_time_millis()?;
         let replay_floor = format!(
@@ -1222,7 +1232,7 @@ impl RuntimeAdapter {
             .join("replay-captures")
             .join(format!("{replay_capture_id}.replay.json"));
         let replay_body =
-            serde_json::to_string(&replay_scenario).map_err(|error| error.to_string())?;
+            serde_json::to_string_pretty(&replay_projection).map_err(|error| error.to_string())?;
         let content_hash = stable_hash(&(
             &replay_capture_id,
             &reopened.scenario.scenario_id,
@@ -1262,7 +1272,7 @@ impl RuntimeAdapter {
             },
             emitted_at_unix_ms,
         };
-        let persisted = store.persist_replay_capture(&capture, &replay_scenario)?;
+        let persisted = store.persist_replay_capture(&capture, &replay_projection)?;
 
         let mut updated_run = reopened.run;
         updated_run.replay_capture_ref = Some(capture.envelope.stable_ref());
@@ -1277,7 +1287,7 @@ impl RuntimeAdapter {
         replay_capture_id: &str,
     ) -> Result<OpenedReplayCaptureSummary, String> {
         let capture = store.read_replay_capture(replay_capture_id)?;
-        let replay_scenario = load_replay_scenario_from_path(&capture.replay_artifact.path)
+        let replay_scenario = load_oxfml_v1_replay_projection(&capture.replay_artifact.path)
             .map_err(|error| {
                 format!(
                     "failed to open replay capture {}: {}",
@@ -2266,6 +2276,9 @@ impl RuntimeAdapter {
             driven_host.formula_source(),
             query_bundle,
         ))?;
+        let replay_projection = oxfml_replay_projection_record(
+            ReplayProjectionService::project(ReplayProjectionRequest::runtime_result(&result)),
+        );
         let library_context_snapshot_ref = result
             .library_context_snapshot_ref
             .as_ref()
@@ -2279,6 +2292,7 @@ impl RuntimeAdapter {
             formula_text_version: driven_host.formula_text_version,
             structure_context_version: driven_host.structure_context_version.clone(),
             library_context_snapshot_ref,
+            replay_projection,
             evaluation,
         })
     }
@@ -2307,6 +2321,54 @@ fn build_driven_runtime_environment(
     RuntimeEnvironment::new()
         .with_structure_context_version(StructureContextVersion(structure_context_version.into()))
         .with_inline_library_context_snapshot(snapshot)
+}
+
+fn oxfml_replay_projection_record(
+    projection: ReplayProjectionResult,
+) -> OxfmlReplayProjectionRecord {
+    OxfmlReplayProjectionRecord {
+        source_artifact_family: projection.source_artifact_family,
+        source_case_id: projection.source_case_id,
+        source_case_ids: projection.source_case_ids,
+        shared_scenario_alias: projection.shared_scenario_alias,
+        formula_stable_id: projection.formula_stable_id,
+        session_id: projection.session_id,
+        library_context_snapshot_ref: projection
+            .library_context_snapshot_ref
+            .map(|snapshot_ref| snapshot_ref.compound_ref()),
+        phase: projection.phase,
+        candidate_result_id: projection.candidate_result_id,
+        commit_decision_kind: projection.commit_decision_kind,
+        trace_event_kinds: projection.trace_event_kinds,
+    }
+}
+
+fn replay_projection_from_retained_run(
+    scenario: &ScenarioRecord,
+    run: &ScenarioRunRecord,
+) -> OxfmlReplayProjectionRecord {
+    OxfmlReplayProjectionRecord {
+        source_artifact_family: "runtime_formula_result".to_string(),
+        source_case_id: None,
+        source_case_ids: Vec::new(),
+        shared_scenario_alias: Some(scenario.scenario_slug.clone()),
+        formula_stable_id: scenario.provenance.formula_stable_id.clone(),
+        session_id: run
+            .candidate_ref
+            .as_ref()
+            .map(|candidate| candidate.logical_id.clone()),
+        library_context_snapshot_ref: scenario.library_context_snapshot_ref.clone(),
+        phase: Some("CommittedOrRejected".to_string()),
+        candidate_result_id: run.candidate_ref.as_ref().map(|candidate| candidate.logical_id.clone()),
+        commit_decision_kind: Some(run.commit_decision_kind.clone()),
+        trace_event_kinds: match run.commit_decision_kind.as_str() {
+            "accepted" => vec![
+                "CandidateAccepted".to_string(),
+                "PublicationCommitted".to_string(),
+            ],
+            _ => vec!["RejectIssued".to_string()],
+        },
+    }
 }
 
 fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSummary {
@@ -2400,49 +2462,6 @@ fn document_artifact_index_from_retained_run(
             embedded: false,
         },
     ]
-}
-
-fn build_replay_scenario(scenario: &ScenarioRecord, run: &ScenarioRunRecord) -> ReplayScenario {
-    let mut events = vec![
-        ReplayEvent {
-            event_id: format!("{}-packet", run.scenario_run_id),
-            source_label: scenario.host_driving_packet_kind.clone(),
-            normalized_family: "packet.received".to_string(),
-        },
-        ReplayEvent {
-            event_id: format!("{}-payload", run.scenario_run_id),
-            source_label: run.payload_summary.clone(),
-            normalized_family: "publication.payload".to_string(),
-        },
-    ];
-
-    let terminal_family = if run.commit_decision_kind == "accepted" {
-        "publication.committed"
-    } else {
-        "reject.issued"
-    };
-    events.push(ReplayEvent {
-        event_id: format!("{}-terminal", run.scenario_run_id),
-        source_label: run.commit_decision_kind.clone(),
-        normalized_family: terminal_family.to_string(),
-    });
-
-    ReplayScenario {
-        scenario_id: scenario.scenario_id.clone(),
-        lane_id: LaneId("dnaonecalc".to_string()),
-        events,
-        source_metadata: None,
-        registry_refs: vec![
-            RegistryRef {
-                family: "dnaonecalc-host".to_string(),
-                version: scenario.host_profile_id.clone(),
-            },
-            RegistryRef {
-                family: "replay_floor".to_string(),
-                version: CapabilityLevel::C1ReplayValid.registry_id().to_string(),
-            },
-        ],
-    }
 }
 
 fn sanitize_slug(value: &str) -> String {

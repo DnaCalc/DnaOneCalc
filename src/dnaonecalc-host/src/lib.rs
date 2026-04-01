@@ -471,7 +471,7 @@ mod tests {
             opened.replay_floor,
             "cap.C1.replay_valid (normalized_replay_open)"
         );
-        assert!(opened.event_count >= 3);
+        assert!(opened.event_count >= 2);
         assert_eq!(opened.view_family, "normalized_replay");
 
         let _ = fs::remove_dir_all(&root);
