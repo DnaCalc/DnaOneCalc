@@ -491,6 +491,27 @@ pub struct OpenedTwinCompareSummary {
     pub projection_limitations: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromotedScenarioIndexRow {
+    pub row_id: String,
+    pub scenario_id: String,
+    pub scenario_slug: String,
+    pub latest_run_id: String,
+    pub host_profile_id: String,
+    pub runtime_platform: String,
+    pub formula_text: String,
+    pub worksheet_value_summary: String,
+    pub replay_capture_ids: Vec<String>,
+    pub comparison_ids: Vec<String>,
+    pub witness_ids: Vec<String>,
+    pub handoff_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromotedScenarioIndex {
+    pub rows: Vec<PromotedScenarioIndexRow>,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -628,6 +649,80 @@ impl RuntimeAdapter {
             self.platform_gate().id(),
             std::env::consts::OS,
         )
+    }
+
+    pub fn build_promoted_scenario_index(
+        &self,
+        store: &RetainedScenarioStore,
+    ) -> Result<PromotedScenarioIndex, String> {
+        let _ = self;
+        let scenarios = store
+            .list_scenarios()?
+            .into_iter()
+            .map(|scenario| (scenario.scenario_id.clone(), scenario))
+            .collect::<BTreeMap<_, _>>();
+        let runs = store.list_runs()?;
+        let replay_captures = store.list_replay_captures()?;
+        let comparisons = store.list_comparisons()?;
+        let witnesses = store.list_witnesses()?;
+        let handoffs = store.list_handoff_packets()?;
+
+        let mut latest_runs: BTreeMap<String, ScenarioRunRecord> = BTreeMap::new();
+        for run in runs {
+            match latest_runs.get(&run.scenario_id) {
+                Some(current) if current.executed_at_unix_ms >= run.executed_at_unix_ms => {}
+                _ => {
+                    latest_runs.insert(run.scenario_id.clone(), run);
+                }
+            }
+        }
+
+        let mut rows = Vec::new();
+        for (scenario_id, run) in latest_runs {
+            let scenario = scenarios
+                .get(&scenario_id)
+                .ok_or_else(|| format!("scenario {} is missing for retained run {}", scenario_id, run.scenario_run_id))?;
+            let replay_capture_ids = replay_captures
+                .iter()
+                .filter(|capture| capture.scenario_run_id == run.scenario_run_id)
+                .map(|capture| capture.replay_capture_id.clone())
+                .collect::<Vec<_>>();
+            let comparison_ids = comparisons
+                .iter()
+                .filter(|comparison| {
+                    comparison.left_artifact_ref.logical_id == run.scenario_run_id
+                        || comparison.right_artifact_ref.logical_id == run.scenario_run_id
+                })
+                .map(|comparison| comparison.comparison_id.clone())
+                .collect::<Vec<_>>();
+            let witness_ids = witnesses
+                .iter()
+                .filter(|witness| witness.scenario_id == scenario_id)
+                .map(|witness| witness.witness_id.clone())
+                .collect::<Vec<_>>();
+            let handoff_ids = handoffs
+                .iter()
+                .filter(|handoff| handoff.scenario_id == scenario_id)
+                .map(|handoff| handoff.handoff_id.clone())
+                .collect::<Vec<_>>();
+
+            rows.push(PromotedScenarioIndexRow {
+                row_id: format!("promoted-scenario:{scenario_id}"),
+                scenario_id: scenario_id.clone(),
+                scenario_slug: scenario.scenario_slug.clone(),
+                latest_run_id: run.scenario_run_id.clone(),
+                host_profile_id: run.envelope.host_profile_id.clone(),
+                runtime_platform: run.runtime_platform.clone(),
+                formula_text: run.authored_formula_text.clone(),
+                worksheet_value_summary: run.worksheet_value_summary.clone(),
+                replay_capture_ids,
+                comparison_ids,
+                witness_ids,
+                handoff_ids,
+            });
+        }
+
+        Ok(PromotedScenarioIndex { rows })
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

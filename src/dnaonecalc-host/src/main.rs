@@ -17,6 +17,7 @@ fn main() {
         Some("--extension-rtd-state-smoke") => run_extension_rtd_state_smoke(),
         Some("--windows-rtd-smoke") => run_windows_rtd_smoke(),
         Some("--linux-rtd-gate-smoke") => run_linux_rtd_gate_smoke(),
+        Some("--scenario-index-smoke") => run_scenario_index_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -35,7 +36,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -642,6 +643,52 @@ fn run_linux_rtd_gate_smoke() {
     for entry in &summary.entries {
         println!("entry={} topics={}", entry.provider_id, entry.topic_ids.join(","));
     }
+}
+
+fn run_scenario_index_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-scenario-index-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.index", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+    let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let recalc_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
+        .expect("edit-and-accept recalc should succeed");
+    let persisted = adapter
+        .persist_driven_scenario_run(
+            &store,
+            &host,
+            &recalc_context,
+            &recalc_summary,
+            "index-smoke",
+        )
+        .expect("retained run should persist");
+    let replay = adapter
+        .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
+        .expect("replay capture should persist");
+
+    let index = adapter
+        .build_promoted_scenario_index(&store)
+        .expect("promoted scenario index should build");
+
+    println!("dnaonecalc-host scenario index smoke");
+    for row in &index.rows {
+        println!(
+            "row={} scenario={} run={} replay={} comparisons={} witnesses={} handoffs={}",
+            row.row_id,
+            row.scenario_id,
+            row.latest_run_id,
+            row.replay_capture_ids.join(","),
+            row.comparison_ids.join(","),
+            row.witness_ids.join(","),
+            row.handoff_ids.join(",")
+        );
+    }
+    println!("replay_capture_id={}", replay.capture.replay_capture_id);
 }
 
 fn run_h1_smoke() {

@@ -341,8 +341,16 @@ impl RetainedScenarioStore {
         read_json::<ScenarioRecord>(&self.scenario_path(scenario_id))
     }
 
+    pub fn list_scenarios(&self) -> Result<Vec<ScenarioRecord>, String> {
+        read_json_dir(self.scenarios_dir())
+    }
+
     pub fn read_run(&self, scenario_run_id: &str) -> Result<ScenarioRunRecord, String> {
         read_json::<ScenarioRunRecord>(&self.run_path(scenario_run_id))
+    }
+
+    pub fn list_runs(&self) -> Result<Vec<ScenarioRunRecord>, String> {
+        read_json_dir(self.runs_dir())
     }
 
     pub fn read_capability_snapshot(
@@ -371,6 +379,10 @@ impl RetainedScenarioStore {
         read_json::<ObservationRecord>(&self.observation_path(observation_id))
     }
 
+    pub fn list_observations(&self) -> Result<Vec<ObservationRecord>, String> {
+        read_json_dir(self.observations_dir())
+    }
+
     pub fn persist_comparison(
         &self,
         comparison: &ComparisonRecord,
@@ -388,6 +400,10 @@ impl RetainedScenarioStore {
         read_json::<ComparisonRecord>(&self.comparison_path(comparison_id))
     }
 
+    pub fn list_comparisons(&self) -> Result<Vec<ComparisonRecord>, String> {
+        read_json_dir(self.comparisons_dir())
+    }
+
     pub fn read_replay_capture(
         &self,
         replay_capture_id: &str,
@@ -395,12 +411,52 @@ impl RetainedScenarioStore {
         read_json::<ReplayCaptureRecord>(&self.replay_capture_path(replay_capture_id))
     }
 
+    pub fn list_replay_captures(&self) -> Result<Vec<ReplayCaptureRecord>, String> {
+        let dir = self.replay_captures_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = fs::read_dir(&dir)
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        entries.sort_by_key(|entry| entry.path());
+
+        let mut values = Vec::new();
+        for entry in entries {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.ends_with(".replay.json"))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            values.push(read_json::<ReplayCaptureRecord>(&path)?);
+        }
+
+        Ok(values)
+    }
+
     pub fn read_witness(&self, witness_id: &str) -> Result<WitnessRecord, String> {
         read_json::<WitnessRecord>(&self.witness_path(witness_id))
     }
 
+    pub fn list_witnesses(&self) -> Result<Vec<WitnessRecord>, String> {
+        read_json_dir(self.witnesses_dir())
+    }
+
     pub fn read_handoff_packet(&self, handoff_id: &str) -> Result<HandoffPacketRecord, String> {
         read_json::<HandoffPacketRecord>(&self.handoff_path(handoff_id))
+    }
+
+    pub fn list_handoff_packets(&self) -> Result<Vec<HandoffPacketRecord>, String> {
+        read_json_dir(self.handoffs_dir())
     }
 
     pub fn persist_replay_capture(
@@ -528,4 +584,27 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
     let body = fs::read_to_string(path).map_err(|error| error.to_string())?;
     serde_json::from_str(&body).map_err(|error| error.to_string())
+}
+
+fn read_json_dir<T: for<'de> Deserialize<'de>>(dir: PathBuf) -> Result<Vec<T>, String> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = fs::read_dir(&dir)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    entries.sort_by_key(|entry| entry.path());
+
+    let mut values = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        values.push(read_json::<T>(&path)?);
+    }
+
+    Ok(values)
 }

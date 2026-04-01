@@ -66,7 +66,8 @@ pub use runtime::{
     FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
-    OpenedWitnessSummary, PlatformGate, RecalcContext, RecalcTriggerKind,
+    OpenedWitnessSummary, PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
+    RecalcContext, RecalcTriggerKind,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
     RetainedRunXRaySummary, RuntimeAdapter,
 };
@@ -660,6 +661,167 @@ mod tests {
         } else {
             assert_eq!(summary.gate_state, "blocked_on_host_platform");
         }
+    }
+
+    #[test]
+    fn promoted_scenario_index_links_live_retained_evidence() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.index", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
+            .expect("edit-and-accept recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-scenario-index-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let persisted = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "index-smoke",
+            )
+            .expect("retained run should persist");
+        let replay = adapter
+            .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
+            .expect("replay capture should persist");
+
+        let run_ref = persisted.run.envelope.stable_ref();
+        let capability_snapshot_ref = persisted.capability_snapshot.snapshot.envelope.stable_ref();
+        let witness_ref = StableArtifactRef {
+            artifact_kind: ArtifactKind::Witness.id().to_string(),
+            logical_id: "witness-index-smoke".to_string(),
+            content_hash: None,
+        };
+        let comparison = ComparisonRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.comparison".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::Comparison.id().to_string(),
+                logical_id: "comparison-index-smoke".to_string(),
+                content_hash: stable_hash(&("comparison-index-smoke", persisted.run.scenario_run_id.as_str())),
+                created_at_unix_ms: 1,
+                created_by_build: "dnaonecalc-host@test".to_string(),
+                host_profile_id: "OC-H1".to_string(),
+                packet_kind: "twin_compare".to_string(),
+                seam_pin_set_id: "onecalc:test".to_string(),
+                capability_floor: "OC-H1".to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            comparison_id: "comparison-index-smoke".to_string(),
+            left_artifact_ref: run_ref.clone(),
+            right_artifact_ref: StableArtifactRef {
+                artifact_kind: ArtifactKind::Observation.id().to_string(),
+                logical_id: "observation-index-smoke".to_string(),
+                content_hash: None,
+            },
+            comparison_envelope: vec!["value_surface".to_string()],
+            mismatches: Vec::new(),
+            reliability_badge: "narrow".to_string(),
+            projection_limitations: vec!["observation_envelope_narrow".to_string()],
+            explanation_refs: Vec::new(),
+            witness_candidate_refs: vec![witness_ref.clone()],
+        };
+        let witness = WitnessRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.witness".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::Witness.id().to_string(),
+                logical_id: witness_ref.logical_id.clone(),
+                content_hash: stable_hash(&("witness-index-smoke", persisted.run.scenario_run_id.as_str())),
+                created_at_unix_ms: 2,
+                created_by_build: "dnaonecalc-host@test".to_string(),
+                host_profile_id: "OC-H1".to_string(),
+                packet_kind: "explain".to_string(),
+                seam_pin_set_id: "onecalc:test".to_string(),
+                capability_floor: "OC-H1".to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            witness_id: witness_ref.logical_id.clone(),
+            scenario_id: persisted.scenario.scenario_id.clone(),
+            left_run_ref: run_ref.clone(),
+            right_run_ref: run_ref.clone(),
+            explain_floor: "retained_diff".to_string(),
+            explanation_lines: vec!["stable".to_string()],
+            blocked_dimensions: vec!["excel_observation".to_string()],
+            emitted_at_unix_ms: 2,
+        };
+        let handoff = HandoffPacketRecord {
+            envelope: ArtifactEnvelope {
+                schema_id: "dnaonecalc.artifact.handoff_packet".to_string(),
+                schema_version: "v1".to_string(),
+                artifact_kind: ArtifactKind::HandoffPacket.id().to_string(),
+                logical_id: "handoff-index-smoke".to_string(),
+                content_hash: stable_hash(&("handoff-index-smoke", persisted.run.scenario_run_id.as_str())),
+                created_at_unix_ms: 3,
+                created_by_build: "dnaonecalc-host@test".to_string(),
+                host_profile_id: "OC-H1".to_string(),
+                packet_kind: "handoff".to_string(),
+                seam_pin_set_id: "onecalc:test".to_string(),
+                capability_floor: "OC-H1".to_string(),
+                provisionality_state: "stable".to_string(),
+                lineage_refs: Vec::new(),
+                attachment_refs: Vec::new(),
+                capability_snapshot_ref: Some(capability_snapshot_ref.clone()),
+            },
+            handoff_id: "handoff-index-smoke".to_string(),
+            scenario_id: persisted.scenario.scenario_id.clone(),
+            source_run_ref: run_ref.clone(),
+            witness_ref: witness_ref.clone(),
+            capability_snapshot_ref: capability_snapshot_ref.clone(),
+            requested_action_kind: "widen_compare".to_string(),
+            target_lane: "OxXlObs".to_string(),
+            expected_behavior: "stable".to_string(),
+            observed_behavior: "stable".to_string(),
+            supporting_artifact_refs: vec![replay.capture.envelope.stable_ref()],
+            reliability_state: "narrow".to_string(),
+            status: "ready".to_string(),
+            readiness: vec![HandoffReadinessRecord {
+                item_id: "capability_snapshot".to_string(),
+                satisfied: true,
+            }],
+            emitted_at_unix_ms: 3,
+        };
+
+        store
+            .persist_comparison(&comparison)
+            .expect("comparison should persist");
+        store
+            .persist_witness(&witness)
+            .expect("witness should persist");
+        store
+            .persist_handoff_packet(&handoff)
+            .expect("handoff should persist");
+
+        let index = adapter
+            .build_promoted_scenario_index(&store)
+            .expect("promoted scenario index should build");
+
+        assert_eq!(index.rows.len(), 1);
+        let row = &index.rows[0];
+        assert_eq!(
+            row.row_id,
+            format!("promoted-scenario:{}", persisted.scenario.scenario_id)
+        );
+        assert_eq!(row.scenario_id, persisted.scenario.scenario_id);
+        assert_eq!(row.latest_run_id, persisted.run.scenario_run_id);
+        assert_eq!(row.replay_capture_ids, vec![replay.capture.replay_capture_id.clone()]);
+        assert_eq!(row.comparison_ids, vec!["comparison-index-smoke".to_string()]);
+        assert_eq!(row.witness_ids, vec!["witness-index-smoke".to_string()]);
+        assert_eq!(row.handoff_ids, vec!["handoff-index-smoke".to_string()]);
     }
 
     #[test]
