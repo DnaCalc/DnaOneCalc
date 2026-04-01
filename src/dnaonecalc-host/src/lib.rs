@@ -34,8 +34,9 @@ pub use document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 pub use extension::{
-    admitted_extension_abi, validate_extension_manifest, ExtensionAbiContract,
-    ExtensionProviderManifest, ExtensionValidationResult,
+    admitted_extension_abi, load_extension_root, validate_extension_manifest,
+    ExtensionAbiContract, ExtensionManifestLoadFailure, ExtensionProviderManifest,
+    ExtensionRootLoadSummary, ExtensionValidationResult, LoadedExtensionProvider,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -237,6 +238,76 @@ mod tests {
         );
         assert!(!blocked.admitted);
         assert!(blocked
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("rtd_provider")));
+    }
+
+    #[test]
+    fn extension_root_loading_surfaces_admitted_and_rejected_providers() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-extension-root-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("demo-sum")).expect("demo sum dir should create");
+        fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+        let admitted_manifest = ExtensionProviderManifest {
+            provider_id: "demo.sum.provider".to_string(),
+            display_name: "Demo Sum Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["host_managed_function_registration".to_string()],
+            entrypoint: "providers/demo_sum".to_string(),
+        };
+        let blocked_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "providers/demo_rtd".to_string(),
+        };
+
+        fs::write(
+            root.join("demo-sum").join("provider.json"),
+            serde_json::to_string_pretty(&admitted_manifest)
+                .expect("admitted manifest should serialize"),
+        )
+        .expect("admitted manifest should write");
+        fs::write(
+            root.join("demo-rtd").join("provider.json"),
+            serde_json::to_string_pretty(&blocked_manifest)
+                .expect("blocked manifest should serialize"),
+        )
+        .expect("blocked manifest should write");
+
+        let loaded = adapter
+            .load_extension_root(&root)
+            .expect("extension root should load");
+
+        assert_eq!(loaded.discovered_manifest_count, 2);
+        assert_eq!(loaded.admitted_providers.len(), 1);
+        assert_eq!(loaded.rejected_providers.len(), 1);
+        assert!(loaded.malformed_manifests.is_empty());
+        assert_eq!(
+            loaded.admitted_providers[0].manifest.provider_id,
+            "demo.sum.provider"
+        );
+        assert_eq!(
+            loaded.admitted_providers[0].validation.admitted_capabilities,
+            vec!["host_managed_function_registration".to_string()]
+        );
+        assert_eq!(
+            loaded.rejected_providers[0].manifest.provider_id,
+            "demo.rtd.provider"
+        );
+        assert!(loaded.rejected_providers[0]
+            .validation
             .blocked_reasons
             .iter()
             .any(|reason| reason.contains("rtd_provider")));

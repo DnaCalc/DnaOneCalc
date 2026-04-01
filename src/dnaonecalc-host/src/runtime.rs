@@ -34,8 +34,9 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::extension::{
-    admitted_extension_abi, validate_extension_manifest, ExtensionAbiContract,
-    ExtensionProviderManifest, ExtensionValidationResult,
+    admitted_extension_abi, load_extension_root, validate_extension_manifest,
+    ExtensionAbiContract, ExtensionProviderManifest, ExtensionRootLoadSummary,
+    ExtensionValidationResult,
 };
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
@@ -552,6 +553,13 @@ impl RuntimeAdapter {
         manifest: &ExtensionProviderManifest,
     ) -> ExtensionValidationResult {
         validate_extension_manifest(manifest, self.host_profile.id(), self.platform_gate().id())
+    }
+
+    pub fn load_extension_root(
+        &self,
+        extension_root: impl AsRef<Path>,
+    ) -> Result<ExtensionRootLoadSummary, String> {
+        load_extension_root(extension_root, self.host_profile.id(), self.platform_gate().id())
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {
