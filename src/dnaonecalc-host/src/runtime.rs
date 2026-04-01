@@ -15,7 +15,7 @@ use oxfml_core::consumer::runtime::{
 };
 use oxfml_core::{
     parse_formula, BindContext, FormulaChannelKind, FormulaSourceRecord,
-    InMemoryLibraryContextProvider, LibraryContextSnapshotRef, ParseRequest,
+    LibraryContextSnapshotRef, ParseRequest,
     StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
@@ -604,12 +604,11 @@ impl RuntimeAdapter {
         let catalog = self.load_function_surface_catalog();
         let snapshot = catalog.admitted_execution_snapshot();
         let snapshot_ref = LibraryContextSnapshotRef::from(&snapshot);
-        let provider = InMemoryLibraryContextProvider::new(snapshot);
         let environment = RuntimeEnvironment::new()
             .with_structure_context_version(StructureContextVersion(
                 "onecalc:single_formula:v1".to_string(),
             ))
-            .with_pinned_library_context(&provider, snapshot_ref);
+            .with_resolved_library_context(None, Some(snapshot_ref), Some(snapshot));
         let source =
             FormulaSourceRecord::new("onecalc.eval", 1, formula_text)
                 .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
@@ -2396,9 +2395,10 @@ fn build_driven_runtime_environment(
     structure_context_version: impl Into<String>,
 ) -> RuntimeEnvironment<'static> {
     let snapshot = FunctionSurfaceCatalog::load_current().admitted_execution_snapshot();
+    let snapshot_ref = LibraryContextSnapshotRef::from(&snapshot);
     RuntimeEnvironment::new()
         .with_structure_context_version(StructureContextVersion(structure_context_version.into()))
-        .with_inline_library_context_snapshot(snapshot)
+        .with_resolved_library_context(None, Some(snapshot_ref), Some(snapshot))
 }
 
 fn oxfml_replay_projection_record(
