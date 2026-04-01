@@ -68,6 +68,7 @@ pub use runtime::{
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
     OpenedWitnessSummary, PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
     RecalcContext, RecalcTriggerKind, ScenarioLibraryFilter, ScenarioLibrarySavedView,
+    ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
     RetainedRunXRaySummary, RuntimeAdapter,
 };
@@ -889,6 +890,51 @@ mod tests {
             .expect("saved view should reopen");
 
         assert_eq!(reopened, view);
+    }
+
+    #[test]
+    fn scenario_selection_detail_exposes_only_real_lineage_actions() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let row = PromotedScenarioIndexRow {
+            row_id: "promoted-scenario:one".to_string(),
+            scenario_id: "scenario-one".to_string(),
+            scenario_slug: "one".to_string(),
+            latest_run_id: "run-one".to_string(),
+            host_profile_id: "OC-H1".to_string(),
+            runtime_platform: std::env::consts::OS.to_string(),
+            formula_text: "=SUM(1,2,3)".to_string(),
+            worksheet_value_summary: "Number(6)".to_string(),
+            replay_capture_ids: vec!["replay-one".to_string()],
+            comparison_ids: vec!["comparison-one".to_string()],
+            witness_ids: vec!["witness-one".to_string()],
+            handoff_ids: vec!["handoff-one".to_string()],
+        };
+
+        let detail = adapter.build_scenario_selection_detail(&row);
+
+        assert_eq!(detail.row_id, row.row_id);
+        assert_eq!(detail.scenario_id, row.scenario_id);
+        assert_eq!(detail.latest_run_id, row.latest_run_id);
+        assert!(detail
+            .lineage
+            .iter()
+            .any(|item| item.relation == "replay_capture" && item.artifact_id == "replay-one"));
+        assert!(detail
+            .available_actions
+            .iter()
+            .any(|item| item.action_id == "open_replay" && item.target_id == "replay-one"));
+        assert!(detail
+            .available_actions
+            .iter()
+            .any(|item| item.action_id == "open_compare" && item.target_id == "comparison-one"));
+        assert!(detail
+            .available_actions
+            .iter()
+            .any(|item| item.action_id == "open_witness" && item.target_id == "witness-one"));
+        assert!(detail
+            .available_actions
+            .iter()
+            .any(|item| item.action_id == "open_handoff" && item.target_id == "handoff-one"));
     }
 
     #[test]

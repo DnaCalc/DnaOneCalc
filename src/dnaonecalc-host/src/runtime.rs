@@ -537,6 +537,28 @@ pub struct ScenarioLibrarySavedView {
     pub filter: ScenarioLibraryFilter,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioLineageRef {
+    pub relation: String,
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioSelectionAction {
+    pub action_id: String,
+    pub target_kind: String,
+    pub target_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioSelectionDetail {
+    pub row_id: String,
+    pub scenario_id: String,
+    pub latest_run_id: String,
+    pub lineage: Vec<ScenarioLineageRef>,
+    pub available_actions: Vec<ScenarioSelectionAction>,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -805,6 +827,77 @@ impl RuntimeAdapter {
         let _ = self;
         let body = fs::read_to_string(path).map_err(|error| error.to_string())?;
         serde_json::from_str(&body).map_err(|error| error.to_string())
+    }
+
+    pub fn build_scenario_selection_detail(
+        &self,
+        row: &PromotedScenarioIndexRow,
+    ) -> ScenarioSelectionDetail {
+        let _ = self;
+        let mut lineage = vec![
+            ScenarioLineageRef {
+                relation: "scenario".to_string(),
+                artifact_id: row.scenario_id.clone(),
+            },
+            ScenarioLineageRef {
+                relation: "latest_run".to_string(),
+                artifact_id: row.latest_run_id.clone(),
+            },
+        ];
+        let mut available_actions = Vec::new();
+
+        for replay_capture_id in &row.replay_capture_ids {
+            lineage.push(ScenarioLineageRef {
+                relation: "replay_capture".to_string(),
+                artifact_id: replay_capture_id.clone(),
+            });
+            available_actions.push(ScenarioSelectionAction {
+                action_id: "open_replay".to_string(),
+                target_kind: "replay_capture".to_string(),
+                target_id: replay_capture_id.clone(),
+            });
+        }
+        for comparison_id in &row.comparison_ids {
+            lineage.push(ScenarioLineageRef {
+                relation: "comparison".to_string(),
+                artifact_id: comparison_id.clone(),
+            });
+            available_actions.push(ScenarioSelectionAction {
+                action_id: "open_compare".to_string(),
+                target_kind: "comparison".to_string(),
+                target_id: comparison_id.clone(),
+            });
+        }
+        for witness_id in &row.witness_ids {
+            lineage.push(ScenarioLineageRef {
+                relation: "witness".to_string(),
+                artifact_id: witness_id.clone(),
+            });
+            available_actions.push(ScenarioSelectionAction {
+                action_id: "open_witness".to_string(),
+                target_kind: "witness".to_string(),
+                target_id: witness_id.clone(),
+            });
+        }
+        for handoff_id in &row.handoff_ids {
+            lineage.push(ScenarioLineageRef {
+                relation: "handoff".to_string(),
+                artifact_id: handoff_id.clone(),
+            });
+            available_actions.push(ScenarioSelectionAction {
+                action_id: "open_handoff".to_string(),
+                target_kind: "handoff".to_string(),
+                target_id: handoff_id.clone(),
+            });
+        }
+
+        ScenarioSelectionDetail {
+            row_id: row.row_id.clone(),
+            scenario_id: row.scenario_id.clone(),
+            latest_run_id: row.latest_run_id.clone(),
+            lineage,
+            available_actions,
+        }
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {
