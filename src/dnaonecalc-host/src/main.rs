@@ -393,12 +393,15 @@ fn run_replay_capture_smoke() {
     );
     println!("replay_path={}", replay_capture.replay_path.display());
     println!(
-        "open=floor:{};ready:{};events:{};registry_refs:{};view_family:{}",
+        "open=floor:{};ready:{};events:{};registry_refs:{};view_family:{};projection_family:{};projection_phase:{};projection_alias:{}",
         opened.replay_floor,
         opened.replay_ready,
         opened.event_count,
         opened.registry_ref_count,
-        opened.view_family
+        opened.view_family,
+        opened.projection_source_artifact_family,
+        opened.projection_phase.as_deref().unwrap_or("none"),
+        opened.projection_alias.as_deref().unwrap_or("none")
     );
 }
 
@@ -446,7 +449,7 @@ fn run_xray_diff_smoke() {
 
     println!("dnaonecalc-host xray diff smoke");
     println!(
-        "xray=run:{};worksheet_value:{};capability_snapshot:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};replay_capture:{};replay_floor:{}",
+        "xray=run:{};worksheet_value:{};capability_snapshot:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};replay_capture:{};replay_floor:{};replay_projection_family:{};replay_projection_phase:{};replay_projection_alias:{}",
         xray.scenario_run_id,
         xray.worksheet_value_summary,
         xray.capability_snapshot_id,
@@ -454,7 +457,10 @@ fn run_xray_diff_smoke() {
         xray.conditional_formatting_scope.replace(": ", "=").replace(" ", "_"),
         xray.blocked_dimensions.join(","),
         xray.replay_capture_id.as_deref().unwrap_or("none"),
-        xray.replay_floor.as_deref().unwrap_or("none")
+        xray.replay_floor.as_deref().unwrap_or("none"),
+        xray.replay_projection_source_artifact_family.as_deref().unwrap_or("none"),
+        xray.replay_projection_phase.as_deref().unwrap_or("none"),
+        xray.replay_projection_alias.as_deref().unwrap_or("none")
     );
     println!(
         "diff=left:{};right:{};formula_text_changed:{};worksheet_value_match:{};capability_snapshot_changed:{};replay_pair_openable:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};floor:{}",
@@ -523,6 +529,10 @@ fn run_witness_smoke() {
     println!("explain_floor={}", opened.explain_floor);
     println!("lines={}", opened.explanation_lines.join(" | "));
     println!("blocked={}", opened.blocked_dimensions.join(","));
+    println!(
+        "replay_projection_aliases={}",
+        opened.replay_projection_aliases.join(",")
+    );
 }
 
 fn run_handoff_smoke() {
@@ -576,6 +586,14 @@ fn run_handoff_smoke() {
     println!("requested_action_kind={}", opened.requested_action_kind);
     println!("status={}", opened.status);
     println!("capability_snapshot_id={}", opened.capability_snapshot_id);
+    println!(
+        "replay_projection_alias={}",
+        opened.replay_projection_alias.as_deref().unwrap_or("none")
+    );
+    println!(
+        "replay_projection_phase={}",
+        opened.replay_projection_phase.as_deref().unwrap_or("none")
+    );
     println!(
         "readiness={}",
         opened

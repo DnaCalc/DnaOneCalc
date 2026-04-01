@@ -473,6 +473,15 @@ mod tests {
         );
         assert!(opened.event_count >= 2);
         assert_eq!(opened.view_family, "normalized_replay");
+        assert_eq!(
+            opened.projection_source_artifact_family,
+            "runtime_formula_result"
+        );
+        assert_eq!(
+            opened.projection_phase.as_deref(),
+            Some("CommittedOrRejected")
+        );
+        assert!(opened.projection_alias.is_none());
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -529,6 +538,15 @@ mod tests {
             xray.replay_floor.as_deref(),
             Some("cap.C1.replay_valid (normalized_replay_open)")
         );
+        assert_eq!(
+            xray.replay_projection_source_artifact_family.as_deref(),
+            Some("runtime_formula_result")
+        );
+        assert_eq!(
+            xray.replay_projection_phase.as_deref(),
+            Some("CommittedOrRejected")
+        );
+        assert!(xray.replay_projection_alias.is_none());
         assert_eq!(
             xray.formatting_truth_plane,
             "returned_presentation_hint+host_style_state=>effective_display"
@@ -640,6 +658,7 @@ mod tests {
         assert!(opened
             .blocked_dimensions
             .contains(&"no_oxreplay_explain_adapter_invocation_yet".to_string()));
+        assert!(opened.replay_projection_aliases.is_empty());
 
         let _ = fs::remove_dir_all(store.root());
     }
@@ -712,6 +731,11 @@ mod tests {
                 .as_ref()
                 .expect("left run should have capability snapshot")
                 .logical_id
+        );
+        assert!(opened.replay_projection_alias.is_none());
+        assert_eq!(
+            opened.replay_projection_phase.as_deref(),
+            Some("CommittedOrRejected")
         );
 
         let _ = fs::remove_dir_all(store.root());

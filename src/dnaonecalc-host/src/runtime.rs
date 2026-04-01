@@ -419,6 +419,9 @@ pub struct OpenedReplayCaptureSummary {
     pub registry_ref_count: usize,
     pub view_family: String,
     pub artifact_path: String,
+    pub projection_source_artifact_family: String,
+    pub projection_phase: Option<String>,
+    pub projection_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,6 +441,9 @@ pub struct RetainedRunXRaySummary {
     pub capability_snapshot_id: String,
     pub replay_capture_id: Option<String>,
     pub replay_floor: Option<String>,
+    pub replay_projection_source_artifact_family: Option<String>,
+    pub replay_projection_phase: Option<String>,
+    pub replay_projection_alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -463,6 +469,7 @@ pub struct OpenedWitnessSummary {
     pub explain_floor: String,
     pub explanation_lines: Vec<String>,
     pub blocked_dimensions: Vec<String>,
+    pub replay_projection_aliases: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -473,6 +480,8 @@ pub struct OpenedHandoffPacketSummary {
     pub status: String,
     pub readiness: Vec<HandoffReadinessRecord>,
     pub capability_snapshot_id: String,
+    pub replay_projection_alias: Option<String>,
+    pub replay_projection_phase: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1287,6 +1296,7 @@ impl RuntimeAdapter {
         replay_capture_id: &str,
     ) -> Result<OpenedReplayCaptureSummary, String> {
         let capture = store.read_replay_capture(replay_capture_id)?;
+        let projection = read_replay_projection_record(&capture.replay_artifact.path)?;
         let replay_scenario = load_oxfml_v1_replay_projection(&capture.replay_artifact.path)
             .map_err(|error| {
                 format!(
@@ -1297,6 +1307,8 @@ impl RuntimeAdapter {
         let replay_ready = is_replay_ready(&replay_scenario);
         let event_count = replay_scenario.events.len();
         let registry_ref_count = replay_scenario.registry_refs.len();
+        let projection_alias = replay_projection_alias(&projection).map(str::to_string);
+        let projection_phase = projection.phase.clone();
         let view = ReplayView {
             view_family: "normalized_replay".to_string(),
             artifact_path: capture.replay_artifact.path.clone(),
@@ -1311,6 +1323,9 @@ impl RuntimeAdapter {
             registry_ref_count,
             view_family: view.view_family,
             artifact_path: view.artifact_path,
+            projection_source_artifact_family: projection.source_artifact_family,
+            projection_phase,
+            projection_alias,
         })
     }
 
@@ -1328,7 +1343,7 @@ impl RuntimeAdapter {
             .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?
             .logical_id
             .clone();
-        let (replay_capture_id, replay_floor) = reopened
+        let (replay_capture_id, replay_floor, replay_projection_source_artifact_family, replay_projection_phase, replay_projection_alias) = reopened
             .run
             .replay_capture_ref
             .as_ref()
@@ -1337,10 +1352,13 @@ impl RuntimeAdapter {
                 Ok::<_, String>((
                     Some(replay_ref.logical_id.clone()),
                     Some(opened.replay_floor),
+                    Some(opened.projection_source_artifact_family),
+                    opened.projection_phase,
+                    opened.projection_alias,
                 ))
             })
             .transpose()?
-            .unwrap_or((None, None));
+            .unwrap_or((None, None, None, None, None));
 
         Ok(RetainedRunXRaySummary {
             scenario_id: reopened.scenario.scenario_id,
@@ -1360,6 +1378,9 @@ impl RuntimeAdapter {
             capability_snapshot_id,
             replay_capture_id,
             replay_floor,
+            replay_projection_source_artifact_family,
+            replay_projection_phase,
+            replay_projection_alias,
         })
     }
 
@@ -1431,6 +1452,30 @@ impl RuntimeAdapter {
             "distill_not_integrated".to_string(),
             "no_oxreplay_explain_adapter_invocation_yet".to_string(),
         ];
+        let replay_projection_aliases = [left.run.replay_projection.as_ref(), right.run.replay_projection.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter_map(replay_projection_alias)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut explanation_lines = explanation_lines;
+        if !replay_projection_aliases.is_empty() {
+            explanation_lines.push(format!(
+                "replay_projection_aliases={}",
+                replay_projection_aliases.join("|")
+            ));
+        }
+        let replay_projection_phases = [left.run.replay_projection.as_ref(), right.run.replay_projection.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|projection| projection.phase.clone())
+            .collect::<Vec<_>>();
+        if !replay_projection_phases.is_empty() {
+            explanation_lines.push(format!(
+                "replay_projection_phases={}",
+                replay_projection_phases.join("|")
+            ));
+        }
         let content_hash = stable_hash(&(
             &witness_id,
             &left.scenario.scenario_id,
@@ -1485,12 +1530,19 @@ impl RuntimeAdapter {
         witness_id: &str,
     ) -> Result<OpenedWitnessSummary, String> {
         let witness = store.read_witness(witness_id)?;
+        let replay_projection_aliases = witness
+            .explanation_lines
+            .iter()
+            .find_map(|line| line.strip_prefix("replay_projection_aliases="))
+            .map(|value| value.split('|').map(str::to_string).collect())
+            .unwrap_or_default();
         Ok(OpenedWitnessSummary {
             witness_id: witness.witness_id,
             scenario_id: witness.scenario_id,
             explain_floor: witness.explain_floor,
             explanation_lines: witness.explanation_lines,
             blocked_dimensions: witness.blocked_dimensions,
+            replay_projection_aliases,
         })
     }
 
@@ -1501,6 +1553,17 @@ impl RuntimeAdapter {
     ) -> Result<PersistedHandoffPacket, String> {
         let witness = store.read_witness(witness_id)?;
         let source_run = store.reopen_run(&witness.left_run_ref.logical_id)?;
+        let replay_projection_alias = source_run
+            .run
+            .replay_projection
+            .as_ref()
+            .and_then(replay_projection_alias)
+            .map(str::to_string);
+        let replay_projection_phase = source_run
+            .run
+            .replay_projection
+            .as_ref()
+            .and_then(|projection| projection.phase.clone());
         let capability_snapshot_ref = source_run
             .run
             .envelope
@@ -1597,9 +1660,11 @@ impl RuntimeAdapter {
             target_lane: "OxReplay/DnaOneCalc".to_string(),
             expected_behavior: "replay, explain, and handoff surfaces should remain capability-gated and lineage-complete".to_string(),
             observed_behavior: format!(
-                "witness floor={} with blocked dimensions={}",
+                "witness floor={} with blocked dimensions={} replay_projection_alias={} replay_projection_phase={}",
                 witness.explain_floor,
-                witness.blocked_dimensions.join(",")
+                witness.blocked_dimensions.join(","),
+                replay_projection_alias.as_deref().unwrap_or("none"),
+                replay_projection_phase.as_deref().unwrap_or("none")
             ),
             supporting_artifact_refs: vec![source_run.run.envelope.stable_ref(), witness.envelope.stable_ref()],
             reliability_state: "retained_evidence_direct".to_string(),
@@ -1624,6 +1689,19 @@ impl RuntimeAdapter {
             status: handoff.status,
             readiness: handoff.readiness,
             capability_snapshot_id: handoff.capability_snapshot_ref.logical_id,
+            replay_projection_alias: handoff
+                .observed_behavior
+                .split(" replay_projection_alias=")
+                .nth(1)
+                .and_then(|tail| tail.split(" replay_projection_phase=").next())
+                .filter(|value| *value != "none")
+                .map(str::to_string),
+            replay_projection_phase: handoff
+                .observed_behavior
+                .split(" replay_projection_phase=")
+                .nth(1)
+                .filter(|value| *value != "none")
+                .map(str::to_string),
         })
     }
 
@@ -2369,6 +2447,19 @@ fn replay_projection_from_retained_run(
             _ => vec!["RejectIssued".to_string()],
         },
     }
+}
+
+fn read_replay_projection_record(path: impl AsRef<Path>) -> Result<OxfmlReplayProjectionRecord, String> {
+    let source = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&source).map_err(|error| error.to_string())
+}
+
+fn replay_projection_alias(projection: &OxfmlReplayProjectionRecord) -> Option<&str> {
+    projection
+        .shared_scenario_alias
+        .as_deref()
+        .or(projection.source_case_id.as_deref())
+        .or_else(|| projection.source_case_ids.first().map(String::as_str))
 }
 
 fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSummary {
