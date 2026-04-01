@@ -1,8 +1,8 @@
+use oxfml_core::consumer::editor::{EditorEditService, EditorEnvironment};
 use oxfml_core::{
-    bind_formula, parse_formula, project_red_view, validate_conditional_formatting_formula,
-    BindContext, BindRequest, CarrierRestrictionCode, CarrierValidationDisposition,
-    ConditionalFormattingCarrierSpec, FormulaChannelKind, FormulaSourceRecord, ParseRequest,
-    StructureContextVersion,
+    validate_conditional_formatting_formula, BindContext, CarrierRestrictionCode,
+    CarrierValidationDisposition, ConditionalFormattingCarrierSpec, FormulaChannelKind,
+    FormulaSourceRecord, StructureContextVersion,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,25 +77,13 @@ pub fn validate_isolated_conditional_formatting_carrier(
         carrier.formula_text.clone(),
     )
     .with_formula_channel_kind(FormulaChannelKind::ConditionalFormatting);
-    let parse = parse_formula(ParseRequest {
-        source: source.clone(),
-    });
-    let red = project_red_view(source.formula_stable_id.clone(), &parse.green_tree);
-    let bind = bind_formula(BindRequest {
-        source,
-        green_tree: parse.green_tree,
-        red_projection: red,
-        context: BindContext {
-            caller_row: 1,
-            caller_col: 1,
-            structure_context_version: StructureContextVersion(
-                "onecalc:cf:isolation:v1".to_string(),
-            ),
-            ..BindContext::default()
-        },
-    });
+    let document = build_cf_validation_service().open_document(source, None);
+    let bound_formula = document
+        .bound_formula
+        .as_ref()
+        .ok_or_else(|| "conditional-formatting carrier validation requires a bound formula".to_string())?;
     let validation = validate_conditional_formatting_formula(
-        &bind.bound_formula,
+        bound_formula,
         &ConditionalFormattingCarrierSpec {
             target_ranges: carrier.target_ranges.clone(),
             rule_kind: carrier.rule_kind.clone(),
@@ -119,6 +107,16 @@ pub fn validate_isolated_conditional_formatting_carrier(
         admitted_consequence_kinds: carrier.admitted_consequence_kinds.clone(),
         blocked_scope_kinds: carrier.blocked_scope_kinds.clone(),
     })
+}
+
+fn build_cf_validation_service() -> EditorEditService<'static> {
+    let bind_context = BindContext {
+        caller_row: 1,
+        caller_col: 1,
+        structure_context_version: StructureContextVersion("onecalc:cf:isolation:v1".to_string()),
+        ..BindContext::default()
+    };
+    EditorEditService::new(EditorEnvironment::new(bind_context))
 }
 
 fn restriction_code_id(code: CarrierRestrictionCode) -> String {
