@@ -13,6 +13,7 @@ fn main() {
         Some("--capability-center-smoke") => run_capability_center_smoke(),
         Some("--extension-abi-smoke") => run_extension_abi_smoke(),
         Some("--extension-root-smoke") => run_extension_root_smoke(),
+        Some("--extension-provider-smoke") => run_extension_provider_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -31,7 +32,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -241,7 +242,7 @@ fn run_extension_root_smoke() {
         host_profile_ids: vec!["OC-H1".to_string()],
         platform_gate_ids: vec!["desktop_native_only".to_string()],
         declared_capabilities: vec!["host_managed_function_registration".to_string()],
-        entrypoint: "providers/demo_sum".to_string(),
+        entrypoint: "functions.json".to_string(),
     };
     let blocked_manifest = dnaonecalc_host::ExtensionProviderManifest {
         provider_id: "demo.rtd.provider".to_string(),
@@ -250,7 +251,7 @@ fn run_extension_root_smoke() {
         host_profile_ids: vec!["OC-H1".to_string()],
         platform_gate_ids: vec!["desktop_native_only".to_string()],
         declared_capabilities: vec!["rtd_provider".to_string()],
-        entrypoint: "providers/demo_rtd".to_string(),
+        entrypoint: "functions.json".to_string(),
     };
 
     std::fs::write(
@@ -259,6 +260,17 @@ fn run_extension_root_smoke() {
             .expect("admitted manifest should serialize"),
     )
     .expect("admitted manifest should write");
+    std::fs::write(
+        root.join("demo-sum").join("functions.json"),
+        serde_json::to_string_pretty(&dnaonecalc_host::ExtensionProviderEntrypoint {
+            registered_functions: vec![dnaonecalc_host::RegisteredExtensionFunction {
+                function_name: "DEMOADD".to_string(),
+                behavior: dnaonecalc_host::RegisteredExtensionBehavior::SumNumbers,
+            }],
+        })
+        .expect("entrypoint should serialize"),
+    )
+    .expect("entrypoint should write");
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
         serde_json::to_string_pretty(&blocked_manifest)
@@ -305,6 +317,130 @@ fn run_extension_root_smoke() {
             })
             .collect::<Vec<_>>()
             .join(",")
+    );
+}
+
+fn run_extension_provider_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-extension-provider-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("demo-sum")).expect("demo sum dir should create");
+    std::fs::create_dir_all(root.join("demo-fail")).expect("demo fail dir should create");
+    std::fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+    let admitted_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.sum.provider".to_string(),
+        display_name: "Demo Sum Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["host_managed_function_registration".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+    let failing_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.fail.provider".to_string(),
+        display_name: "Demo Fail Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["host_managed_function_registration".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+    let blocked_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.rtd.provider".to_string(),
+        display_name: "Demo RTD Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["rtd_provider".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+
+    std::fs::write(
+        root.join("demo-sum").join("provider.json"),
+        serde_json::to_string_pretty(&admitted_manifest)
+            .expect("admitted manifest should serialize"),
+    )
+    .expect("admitted manifest should write");
+    std::fs::write(
+        root.join("demo-sum").join("functions.json"),
+        serde_json::to_string_pretty(&dnaonecalc_host::ExtensionProviderEntrypoint {
+            registered_functions: vec![dnaonecalc_host::RegisteredExtensionFunction {
+                function_name: "DEMOADD".to_string(),
+                behavior: dnaonecalc_host::RegisteredExtensionBehavior::SumNumbers,
+            }],
+        })
+        .expect("sum entrypoint should serialize"),
+    )
+    .expect("sum entrypoint should write");
+
+    std::fs::write(
+        root.join("demo-fail").join("provider.json"),
+        serde_json::to_string_pretty(&failing_manifest)
+            .expect("failing manifest should serialize"),
+    )
+    .expect("failing manifest should write");
+    std::fs::write(
+        root.join("demo-fail").join("functions.json"),
+        serde_json::to_string_pretty(&dnaonecalc_host::ExtensionProviderEntrypoint {
+            registered_functions: vec![dnaonecalc_host::RegisteredExtensionFunction {
+                function_name: "DEMOFAIL".to_string(),
+                behavior: dnaonecalc_host::RegisteredExtensionBehavior::AlwaysError {
+                    message: "provider execution failed".to_string(),
+                },
+            }],
+        })
+        .expect("failing entrypoint should serialize"),
+    )
+    .expect("failing entrypoint should write");
+
+    std::fs::write(
+        root.join("demo-rtd").join("provider.json"),
+        serde_json::to_string_pretty(&blocked_manifest)
+            .expect("blocked manifest should serialize"),
+    )
+    .expect("blocked manifest should write");
+
+    let sum = adapter
+        .invoke_extension_provider(
+            &root,
+            "demo.sum.provider",
+            "DEMOADD",
+            &[
+                dnaonecalc_host::ExtensionInvocationArgument::Number(1.0),
+                dnaonecalc_host::ExtensionInvocationArgument::Number(2.0),
+                dnaonecalc_host::ExtensionInvocationArgument::Number(3.0),
+            ],
+        )
+        .expect("sum provider should invoke");
+    let fail = adapter
+        .invoke_extension_provider(&root, "demo.fail.provider", "DEMOFAIL", &[])
+        .expect("failing provider should return explicit state");
+    let blocked = adapter
+        .invoke_extension_provider(&root, "demo.rtd.provider", "RTDDEMO", &[])
+        .expect("blocked provider should return explicit state");
+
+    println!("dnaonecalc-host extension provider smoke");
+    println!(
+        "sum=provider:{};state:{};invocation:{};value:{}",
+        sum.provider_id,
+        sum.provider_state,
+        sum.invocation_state,
+        sum.value_summary.as_deref().unwrap_or("none")
+    );
+    println!(
+        "fail=provider:{};state:{};invocation:{};reason:{}",
+        fail.provider_id,
+        fail.provider_state,
+        fail.invocation_state,
+        fail.failure_reason.as_deref().unwrap_or("none")
+    );
+    println!(
+        "blocked=provider:{};state:{};invocation:{};reason:{}",
+        blocked.provider_id,
+        blocked.provider_state,
+        blocked.invocation_state,
+        blocked.failure_reason.as_deref().unwrap_or("none")
     );
 }
 

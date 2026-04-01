@@ -34,9 +34,12 @@ pub use document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 pub use extension::{
-    admitted_extension_abi, load_extension_root, validate_extension_manifest,
-    ExtensionAbiContract, ExtensionManifestLoadFailure, ExtensionProviderManifest,
-    ExtensionRootLoadSummary, ExtensionValidationResult, LoadedExtensionProvider,
+    admitted_extension_abi, invoke_extension_provider, load_extension_root,
+    validate_extension_manifest, ExtensionAbiContract, ExtensionInvocationArgument,
+    ExtensionInvocationSummary, ExtensionManifestLoadFailure,
+    ExtensionProviderEntrypoint, ExtensionProviderManifest, ExtensionRootLoadSummary,
+    ExtensionValidationResult, LoadedExtensionProvider, RegisteredExtensionBehavior,
+    RegisteredExtensionFunction,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -280,6 +283,17 @@ mod tests {
         )
         .expect("admitted manifest should write");
         fs::write(
+            root.join("demo-sum").join("functions.json"),
+            serde_json::to_string_pretty(&ExtensionProviderEntrypoint {
+                registered_functions: vec![RegisteredExtensionFunction {
+                    function_name: "DEMOADD".to_string(),
+                    behavior: RegisteredExtensionBehavior::SumNumbers,
+                }],
+            })
+            .expect("entrypoint should serialize"),
+        )
+        .expect("entrypoint should write");
+        fs::write(
             root.join("demo-rtd").join("provider.json"),
             serde_json::to_string_pretty(&blocked_manifest)
                 .expect("blocked manifest should serialize"),
@@ -311,6 +325,131 @@ mod tests {
             .blocked_reasons
             .iter()
             .any(|reason| reason.contains("rtd_provider")));
+    }
+
+    #[test]
+    fn extension_provider_invocation_keeps_failures_explicit() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-extension-provider-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("demo-sum")).expect("demo sum dir should create");
+        fs::create_dir_all(root.join("demo-fail")).expect("demo fail dir should create");
+        fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+        let admitted_manifest = ExtensionProviderManifest {
+            provider_id: "demo.sum.provider".to_string(),
+            display_name: "Demo Sum Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["host_managed_function_registration".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+        let failing_manifest = ExtensionProviderManifest {
+            provider_id: "demo.fail.provider".to_string(),
+            display_name: "Demo Fail Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["host_managed_function_registration".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+        let blocked_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+
+        fs::write(
+            root.join("demo-sum").join("provider.json"),
+            serde_json::to_string_pretty(&admitted_manifest)
+                .expect("admitted manifest should serialize"),
+        )
+        .expect("admitted manifest should write");
+        fs::write(
+            root.join("demo-sum").join("functions.json"),
+            serde_json::to_string_pretty(&ExtensionProviderEntrypoint {
+                registered_functions: vec![RegisteredExtensionFunction {
+                    function_name: "DEMOADD".to_string(),
+                    behavior: RegisteredExtensionBehavior::SumNumbers,
+                }],
+            })
+            .expect("sum entrypoint should serialize"),
+        )
+        .expect("sum entrypoint should write");
+
+        fs::write(
+            root.join("demo-fail").join("provider.json"),
+            serde_json::to_string_pretty(&failing_manifest)
+                .expect("failing manifest should serialize"),
+        )
+        .expect("failing manifest should write");
+        fs::write(
+            root.join("demo-fail").join("functions.json"),
+            serde_json::to_string_pretty(&ExtensionProviderEntrypoint {
+                registered_functions: vec![RegisteredExtensionFunction {
+                    function_name: "DEMOFAIL".to_string(),
+                    behavior: RegisteredExtensionBehavior::AlwaysError {
+                        message: "provider execution failed".to_string(),
+                    },
+                }],
+            })
+            .expect("failing entrypoint should serialize"),
+        )
+        .expect("failing entrypoint should write");
+
+        fs::write(
+            root.join("demo-rtd").join("provider.json"),
+            serde_json::to_string_pretty(&blocked_manifest)
+                .expect("blocked manifest should serialize"),
+        )
+        .expect("blocked manifest should write");
+
+        let sum = adapter
+            .invoke_extension_provider(
+                &root,
+                "demo.sum.provider",
+                "DEMOADD",
+                &[
+                    ExtensionInvocationArgument::Number(1.0),
+                    ExtensionInvocationArgument::Number(2.0),
+                    ExtensionInvocationArgument::Number(3.0),
+                ],
+            )
+            .expect("admitted provider should invoke");
+        let fail = adapter
+            .invoke_extension_provider(&root, "demo.fail.provider", "DEMOFAIL", &[])
+            .expect("failing provider should still return explicit state");
+        let blocked = adapter
+            .invoke_extension_provider(&root, "demo.rtd.provider", "RTDDEMO", &[])
+            .expect("blocked provider should still return explicit state");
+
+        assert_eq!(sum.provider_state, "admitted");
+        assert_eq!(sum.invocation_state, "returned");
+        assert_eq!(sum.value_summary.as_deref(), Some("Number(6)"));
+        assert_eq!(sum.failure_reason, None);
+
+        assert_eq!(fail.provider_state, "admitted");
+        assert_eq!(fail.invocation_state, "provider_error");
+        assert_eq!(
+            fail.failure_reason.as_deref(),
+            Some("provider execution failed")
+        );
+
+        assert_eq!(blocked.provider_state, "rejected");
+        assert_eq!(blocked.invocation_state, "blocked");
+        assert!(blocked
+            .failure_reason
+            .as_deref()
+            .expect("blocked provider should report a reason")
+            .contains("rtd_provider"));
     }
 
     #[test]

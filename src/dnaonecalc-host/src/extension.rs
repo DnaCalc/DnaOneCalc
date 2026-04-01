@@ -14,6 +14,24 @@ pub struct ExtensionProviderManifest {
     pub entrypoint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionProviderEntrypoint {
+    pub registered_functions: Vec<RegisteredExtensionFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisteredExtensionFunction {
+    pub function_name: String,
+    pub behavior: RegisteredExtensionBehavior,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RegisteredExtensionBehavior {
+    SumNumbers,
+    AlwaysError { message: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionAbiContract {
     pub abi_id: String,
@@ -53,6 +71,21 @@ pub struct ExtensionRootLoadSummary {
     pub admitted_providers: Vec<LoadedExtensionProvider>,
     pub rejected_providers: Vec<LoadedExtensionProvider>,
     pub malformed_manifests: Vec<ExtensionManifestLoadFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtensionInvocationArgument {
+    Number(f64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionInvocationSummary {
+    pub provider_id: String,
+    pub function_name: String,
+    pub provider_state: String,
+    pub invocation_state: String,
+    pub value_summary: Option<String>,
+    pub failure_reason: Option<String>,
 }
 
 pub fn admitted_extension_abi(
@@ -199,6 +232,49 @@ pub fn load_extension_root(
     })
 }
 
+pub fn invoke_extension_provider(
+    extension_root: impl AsRef<Path>,
+    host_profile_id: &str,
+    platform_gate_id: &str,
+    provider_id: &str,
+    function_name: &str,
+    arguments: &[ExtensionInvocationArgument],
+) -> Result<ExtensionInvocationSummary, String> {
+    let loaded = load_extension_root(extension_root.as_ref(), host_profile_id, platform_gate_id)?;
+
+    if let Some(provider) = loaded
+        .admitted_providers
+        .iter()
+        .find(|provider| provider.manifest.provider_id == provider_id)
+    {
+        return invoke_loaded_provider(provider, function_name, arguments);
+    }
+
+    if let Some(provider) = loaded
+        .rejected_providers
+        .iter()
+        .find(|provider| provider.manifest.provider_id == provider_id)
+    {
+        return Ok(ExtensionInvocationSummary {
+            provider_id: provider_id.to_string(),
+            function_name: function_name.to_string(),
+            provider_state: "rejected".to_string(),
+            invocation_state: "blocked".to_string(),
+            value_summary: None,
+            failure_reason: Some(provider.validation.blocked_reasons.join(" | ")),
+        });
+    }
+
+    Ok(ExtensionInvocationSummary {
+        provider_id: provider_id.to_string(),
+        function_name: function_name.to_string(),
+        provider_state: "missing".to_string(),
+        invocation_state: "blocked".to_string(),
+        value_summary: None,
+        failure_reason: Some("provider not discovered under extension root".to_string()),
+    })
+}
+
 fn discover_manifest_paths(extension_root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut manifest_paths = Vec::new();
     let root_manifest = extension_root.join("provider.json");
@@ -225,4 +301,75 @@ fn discover_manifest_paths(extension_root: &Path) -> Result<Vec<PathBuf>, String
     }
 
     Ok(manifest_paths)
+}
+
+fn invoke_loaded_provider(
+    provider: &LoadedExtensionProvider,
+    function_name: &str,
+    arguments: &[ExtensionInvocationArgument],
+) -> Result<ExtensionInvocationSummary, String> {
+    let entrypoint = load_provider_entrypoint(provider)?;
+    let Some(function) = entrypoint
+        .registered_functions
+        .iter()
+        .find(|item| item.function_name == function_name)
+    else {
+        return Ok(ExtensionInvocationSummary {
+            provider_id: provider.manifest.provider_id.clone(),
+            function_name: function_name.to_string(),
+            provider_state: "admitted".to_string(),
+            invocation_state: "blocked".to_string(),
+            value_summary: None,
+            failure_reason: Some(format!(
+                "function {} is not registered by provider {}",
+                function_name, provider.manifest.provider_id
+            )),
+        });
+    };
+
+    let (invocation_state, value_summary, failure_reason) =
+        match execute_registered_function(&function.behavior, arguments) {
+            Ok(value_summary) => ("returned".to_string(), Some(value_summary), None),
+            Err(reason) => ("provider_error".to_string(), None, Some(reason)),
+        };
+
+    Ok(ExtensionInvocationSummary {
+        provider_id: provider.manifest.provider_id.clone(),
+        function_name: function_name.to_string(),
+        provider_state: "admitted".to_string(),
+        invocation_state,
+        value_summary,
+        failure_reason,
+    })
+}
+
+fn load_provider_entrypoint(
+    provider: &LoadedExtensionProvider,
+) -> Result<ExtensionProviderEntrypoint, String> {
+    let manifest_dir = Path::new(&provider.manifest_path)
+        .parent()
+        .ok_or_else(|| format!("manifest {} has no parent directory", provider.manifest_path))?;
+    let entrypoint_path = manifest_dir.join(&provider.manifest.entrypoint);
+    let body = fs::read_to_string(&entrypoint_path)
+        .map_err(|error| format!("failed to read entrypoint {}: {error}", entrypoint_path.display()))?;
+    serde_json::from_str(&body)
+        .map_err(|error| format!("failed to parse entrypoint {}: {error}", entrypoint_path.display()))
+}
+
+fn execute_registered_function(
+    behavior: &RegisteredExtensionBehavior,
+    arguments: &[ExtensionInvocationArgument],
+) -> Result<String, String> {
+    match behavior {
+        RegisteredExtensionBehavior::SumNumbers => {
+            let value = arguments
+                .iter()
+                .map(|argument| match argument {
+                    ExtensionInvocationArgument::Number(value) => *value,
+                })
+                .sum::<f64>();
+            Ok(format!("Number({value})"))
+        }
+        RegisteredExtensionBehavior::AlwaysError { message } => Err(message.clone()),
+    }
 }
