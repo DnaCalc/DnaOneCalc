@@ -34,13 +34,15 @@ pub use document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 pub use extension::{
-    admitted_extension_abi, extension_root_runtime_truth, invoke_extension_provider,
-    load_extension_root, validate_extension_manifest, ExtensionAbiContract,
+    activate_windows_rtd_topic, advance_rtd_topic, admitted_extension_abi,
+    extension_root_runtime_truth, invoke_extension_provider, load_extension_root,
+    validate_extension_manifest, ActivatedRtdTopicSession, ExtensionAbiContract,
     ExtensionCapabilityTruth, ExtensionInvocationArgument, ExtensionInvocationSummary,
     ExtensionManifestLoadFailure, ExtensionProviderRuntimeTruth,
     ExtensionProviderEntrypoint, ExtensionProviderManifest, ExtensionRootLoadSummary,
     ExtensionRootRuntimeTruthSummary, ExtensionValidationResult, LoadedExtensionProvider,
-    RegisteredExtensionBehavior, RegisteredExtensionFunction,
+    RegisteredExtensionBehavior, RegisteredExtensionFunction, RegisteredRtdTopic,
+    RtdTopicUpdateSummary,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -290,6 +292,7 @@ mod tests {
                     function_name: "DEMOADD".to_string(),
                     behavior: RegisteredExtensionBehavior::SumNumbers,
                 }],
+                rtd_topics: Vec::new(),
             })
             .expect("entrypoint should serialize"),
         )
@@ -381,6 +384,7 @@ mod tests {
                     function_name: "DEMOADD".to_string(),
                     behavior: RegisteredExtensionBehavior::SumNumbers,
                 }],
+                rtd_topics: Vec::new(),
             })
             .expect("sum entrypoint should serialize"),
         )
@@ -401,6 +405,7 @@ mod tests {
                         message: "provider execution failed".to_string(),
                     },
                 }],
+                rtd_topics: Vec::new(),
             })
             .expect("failing entrypoint should serialize"),
         )
@@ -518,16 +523,89 @@ mod tests {
         assert_eq!(rtd_provider.provider_state, "declared_with_blocked_capabilities");
         assert_eq!(rtd_provider.capability_truths[0].capability_id, "rtd_provider");
         if std::env::consts::OS == "windows" {
-            assert_eq!(
-                rtd_provider.capability_truths[0].runtime_state,
-                "declared_but_not_yet_admitted"
-            );
+            assert_eq!(rtd_provider.capability_truths[0].runtime_state, "declared_but_not_yet_admitted");
         } else {
             assert_eq!(
                 rtd_provider.capability_truths[0].runtime_state,
                 "blocked_by_platform"
             );
         }
+    }
+
+    #[test]
+    fn windows_rtd_activation_runs_the_admitted_in_process_subset() {
+        if std::env::consts::OS != "windows" {
+            return;
+        }
+
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-windows-rtd-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+        let rtd_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+
+        fs::write(
+            root.join("demo-rtd").join("provider.json"),
+            serde_json::to_string_pretty(&rtd_manifest)
+                .expect("rtd manifest should serialize"),
+        )
+        .expect("rtd manifest should write");
+        fs::write(
+            root.join("demo-rtd").join("functions.json"),
+            serde_json::to_string_pretty(&ExtensionProviderEntrypoint {
+                registered_functions: Vec::new(),
+                rtd_topics: vec![RegisteredRtdTopic {
+                    topic_id: "PRICE".to_string(),
+                    initial_value: "100.0".to_string(),
+                    updates: vec!["101.5".to_string(), "103.0".to_string()],
+                }],
+            })
+            .expect("rtd entrypoint should serialize"),
+        )
+        .expect("rtd entrypoint should write");
+
+        let truth = adapter
+            .extension_root_runtime_truth(&root)
+            .expect("extension truth should load");
+        let rtd_provider = truth
+            .provider_truths
+            .iter()
+            .find(|provider| provider.provider_id == "demo.rtd.provider")
+            .expect("rtd provider should be present");
+        assert_eq!(
+            rtd_provider.capability_truths[0].runtime_state,
+            "admitted_windows_subset"
+        );
+
+        let mut session = adapter
+            .activate_windows_rtd_topic(&root, "demo.rtd.provider", "PRICE")
+            .expect("windows rtd topic should activate");
+        assert_eq!(session.current_value, "100.0");
+        assert_eq!(session.lifecycle_state, "active");
+
+        let first = adapter.advance_rtd_topic(&mut session);
+        let second = adapter.advance_rtd_topic(&mut session);
+        let third = adapter.advance_rtd_topic(&mut session);
+
+        assert_eq!(first.current_value, "101.5");
+        assert_eq!(first.remaining_update_count, 1);
+        assert_eq!(second.current_value, "103.0");
+        assert_eq!(second.remaining_update_count, 0);
+        assert_eq!(second.lifecycle_state, "active_final_value");
+        assert_eq!(third.current_value, "103.0");
+        assert_eq!(third.lifecycle_state, "active_no_pending_updates");
     }
 
     #[test]

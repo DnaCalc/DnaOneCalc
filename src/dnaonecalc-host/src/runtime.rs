@@ -34,10 +34,12 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::extension::{
-    admitted_extension_abi, extension_root_runtime_truth, invoke_extension_provider,
-    load_extension_root, validate_extension_manifest, ExtensionAbiContract,
+    activate_windows_rtd_topic, advance_rtd_topic, admitted_extension_abi,
+    extension_root_runtime_truth, invoke_extension_provider, load_extension_root,
+    validate_extension_manifest, ActivatedRtdTopicSession, ExtensionAbiContract,
     ExtensionInvocationArgument, ExtensionInvocationSummary, ExtensionProviderManifest,
     ExtensionRootLoadSummary, ExtensionRootRuntimeTruthSummary, ExtensionValidationResult,
+    RtdTopicUpdateSummary,
 };
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
@@ -590,6 +592,30 @@ impl RuntimeAdapter {
             self.platform_gate().id(),
             std::env::consts::OS,
         )
+    }
+
+    pub fn activate_windows_rtd_topic(
+        &self,
+        extension_root: impl AsRef<Path>,
+        provider_id: &str,
+        topic_id: &str,
+    ) -> Result<ActivatedRtdTopicSession, String> {
+        activate_windows_rtd_topic(
+            extension_root,
+            self.host_profile.id(),
+            self.platform_gate().id(),
+            std::env::consts::OS,
+            provider_id,
+            topic_id,
+        )
+    }
+
+    pub fn advance_rtd_topic(
+        &self,
+        session: &mut ActivatedRtdTopicSession,
+    ) -> RtdTopicUpdateSummary {
+        let _ = self;
+        advance_rtd_topic(session)
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

@@ -16,7 +16,10 @@ pub struct ExtensionProviderManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtensionProviderEntrypoint {
+    #[serde(default)]
     pub registered_functions: Vec<RegisteredExtensionFunction>,
+    #[serde(default)]
+    pub rtd_topics: Vec<RegisteredRtdTopic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +33,14 @@ pub struct RegisteredExtensionFunction {
 pub enum RegisteredExtensionBehavior {
     SumNumbers,
     AlwaysError { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisteredRtdTopic {
+    pub topic_id: String,
+    pub initial_value: String,
+    #[serde(default)]
+    pub updates: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +123,24 @@ pub struct ExtensionRootRuntimeTruthSummary {
     pub runtime_platform: String,
     pub provider_truths: Vec<ExtensionProviderRuntimeTruth>,
     pub manifest_failures: Vec<ExtensionManifestLoadFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivatedRtdTopicSession {
+    pub provider_id: String,
+    pub topic_id: String,
+    pub lifecycle_state: String,
+    pub current_value: String,
+    pending_updates: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtdTopicUpdateSummary {
+    pub provider_id: String,
+    pub topic_id: String,
+    pub lifecycle_state: String,
+    pub current_value: String,
+    pub remaining_update_count: usize,
 }
 
 pub fn admitted_extension_abi(
@@ -323,6 +352,75 @@ pub fn extension_root_runtime_truth(
     })
 }
 
+pub fn activate_windows_rtd_topic(
+    extension_root: impl AsRef<Path>,
+    host_profile_id: &str,
+    platform_gate_id: &str,
+    runtime_platform: &str,
+    provider_id: &str,
+    topic_id: &str,
+) -> Result<ActivatedRtdTopicSession, String> {
+    if !runtime_platform.eq_ignore_ascii_case("windows") {
+        return Err("Windows RTD activation is not admitted on this platform".to_string());
+    }
+
+    let loaded = load_extension_root(extension_root.as_ref(), host_profile_id, platform_gate_id)?;
+    let provider = loaded
+        .rejected_providers
+        .iter()
+        .find(|provider| provider.manifest.provider_id == provider_id)
+        .or_else(|| {
+            loaded
+                .admitted_providers
+                .iter()
+                .find(|provider| provider.manifest.provider_id == provider_id)
+        })
+        .ok_or_else(|| format!("provider {} not discovered under extension root", provider_id))?;
+    let entrypoint = load_provider_entrypoint(provider)?;
+    let topic = entrypoint
+        .rtd_topics
+        .iter()
+        .find(|topic| topic.topic_id == topic_id)
+        .ok_or_else(|| {
+            format!(
+                "RTD topic {} is not declared by provider {}",
+                topic_id, provider.manifest.provider_id
+            )
+        })?;
+
+    Ok(ActivatedRtdTopicSession {
+        provider_id: provider.manifest.provider_id.clone(),
+        topic_id: topic.topic_id.clone(),
+        lifecycle_state: "active".to_string(),
+        current_value: topic.initial_value.clone(),
+        pending_updates: topic.updates.clone(),
+    })
+}
+
+pub fn advance_rtd_topic(
+    session: &mut ActivatedRtdTopicSession,
+) -> RtdTopicUpdateSummary {
+    if let Some(next_value) = session.pending_updates.first().cloned() {
+        session.current_value = next_value;
+        session.pending_updates.remove(0);
+        session.lifecycle_state = if session.pending_updates.is_empty() {
+            "active_final_value".to_string()
+        } else {
+            "active".to_string()
+        };
+    } else {
+        session.lifecycle_state = "active_no_pending_updates".to_string();
+    }
+
+    RtdTopicUpdateSummary {
+        provider_id: session.provider_id.clone(),
+        topic_id: session.topic_id.clone(),
+        lifecycle_state: session.lifecycle_state.clone(),
+        current_value: session.current_value.clone(),
+        remaining_update_count: session.pending_updates.len(),
+    }
+}
+
 fn discover_manifest_paths(extension_root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut manifest_paths = Vec::new();
     let root_manifest = extension_root.join("provider.json");
@@ -459,18 +557,14 @@ fn project_provider_runtime_truth(
             "rtd_provider" => ExtensionCapabilityTruth {
                 capability_id: capability.clone(),
                 declaration_state: "declared".to_string(),
-                runtime_state: if runtime_platform.eq_ignore_ascii_case("windows") {
-                    "declared_but_not_yet_admitted".to_string()
-                } else {
-                    "blocked_by_platform".to_string()
+                runtime_state: {
+                    let (runtime_state, _) = rtd_runtime_state(provider, runtime_platform);
+                    runtime_state
                 },
-                reason: Some(if runtime_platform.eq_ignore_ascii_case("windows") {
-                    "RTD lifecycle is a later admitted Windows subset and is not executable yet."
-                        .to_string()
-                } else {
-                    "RTD remains blocked on this platform until the Linux activation path lands."
-                        .to_string()
-                }),
+                reason: {
+                    let (_, reason) = rtd_runtime_state(provider, runtime_platform);
+                    reason
+                },
             },
             _ => ExtensionCapabilityTruth {
                 capability_id: capability.clone(),
@@ -512,5 +606,28 @@ fn capability_reason(provider: &LoadedExtensionProvider, capability: &str) -> Op
         } else {
             Some(matching_reasons.join(" | "))
         }
+    }
+}
+
+fn rtd_runtime_state(
+    provider: &LoadedExtensionProvider,
+    runtime_platform: &str,
+) -> (String, Option<String>) {
+    if !runtime_platform.eq_ignore_ascii_case("windows") {
+        return (
+            "blocked_by_platform".to_string(),
+            Some("RTD remains blocked on this platform until the Linux activation path lands.".to_string()),
+        );
+    }
+
+    match load_provider_entrypoint(provider) {
+        Ok(entrypoint) if !entrypoint.rtd_topics.is_empty() => (
+            "admitted_windows_subset".to_string(),
+            Some("Windows in-process RTD topic activation is available for the admitted subset.".to_string()),
+        ),
+        _ => (
+            "declared_but_not_yet_admitted".to_string(),
+            Some("RTD lifecycle is a later admitted Windows subset and is not executable yet.".to_string()),
+        ),
     }
 }

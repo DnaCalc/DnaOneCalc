@@ -15,6 +15,7 @@ fn main() {
         Some("--extension-root-smoke") => run_extension_root_smoke(),
         Some("--extension-provider-smoke") => run_extension_provider_smoke(),
         Some("--extension-rtd-state-smoke") => run_extension_rtd_state_smoke(),
+        Some("--windows-rtd-smoke") => run_windows_rtd_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -33,7 +34,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -268,6 +269,7 @@ fn run_extension_root_smoke() {
                 function_name: "DEMOADD".to_string(),
                 behavior: dnaonecalc_host::RegisteredExtensionBehavior::SumNumbers,
             }],
+            rtd_topics: Vec::new(),
         })
         .expect("entrypoint should serialize"),
     )
@@ -370,6 +372,7 @@ fn run_extension_provider_smoke() {
                 function_name: "DEMOADD".to_string(),
                 behavior: dnaonecalc_host::RegisteredExtensionBehavior::SumNumbers,
             }],
+            rtd_topics: Vec::new(),
         })
         .expect("sum entrypoint should serialize"),
     )
@@ -390,6 +393,7 @@ fn run_extension_provider_smoke() {
                     message: "provider execution failed".to_string(),
                 },
             }],
+            rtd_topics: Vec::new(),
         })
         .expect("failing entrypoint should serialize"),
     )
@@ -507,6 +511,87 @@ fn run_extension_rtd_state_smoke() {
             );
         }
     }
+}
+
+fn run_windows_rtd_smoke() {
+    if std::env::consts::OS != "windows" {
+        eprintln!("windows rtd smoke is only admitted on Windows");
+        std::process::exit(1);
+    }
+
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-windows-rtd-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+    let rtd_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.rtd.provider".to_string(),
+        display_name: "Demo RTD Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["rtd_provider".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+
+    std::fs::write(
+        root.join("demo-rtd").join("provider.json"),
+        serde_json::to_string_pretty(&rtd_manifest)
+            .expect("rtd manifest should serialize"),
+    )
+    .expect("rtd manifest should write");
+    std::fs::write(
+        root.join("demo-rtd").join("functions.json"),
+        serde_json::to_string_pretty(&dnaonecalc_host::ExtensionProviderEntrypoint {
+            registered_functions: Vec::new(),
+            rtd_topics: vec![dnaonecalc_host::RegisteredRtdTopic {
+                topic_id: "PRICE".to_string(),
+                initial_value: "100.0".to_string(),
+                updates: vec!["101.5".to_string(), "103.0".to_string()],
+            }],
+        })
+        .expect("rtd entrypoint should serialize"),
+    )
+    .expect("rtd entrypoint should write");
+
+    let truth = adapter
+        .extension_root_runtime_truth(&root)
+        .expect("extension truth should load");
+    let mut session = adapter
+        .activate_windows_rtd_topic(&root, "demo.rtd.provider", "PRICE")
+        .expect("windows rtd topic should activate");
+    let first = adapter.advance_rtd_topic(&mut session);
+    let second = adapter.advance_rtd_topic(&mut session);
+    let third = adapter.advance_rtd_topic(&mut session);
+
+    println!("dnaonecalc-host windows rtd smoke");
+    println!("runtime_platform={}", truth.runtime_platform);
+    println!(
+        "provider_state={}",
+        truth
+            .provider_truths
+            .iter()
+            .find(|provider| provider.provider_id == "demo.rtd.provider")
+            .expect("rtd provider should be present")
+            .capability_truths[0]
+            .runtime_state
+    );
+    println!(
+        "initial=provider:{};topic:{};state:{};value:{}",
+        session.provider_id, session.topic_id, "active", "100.0"
+    );
+    println!(
+        "update1=state:{};value:{};remaining={}",
+        first.lifecycle_state, first.current_value, first.remaining_update_count
+    );
+    println!(
+        "update2=state:{};value:{};remaining={}",
+        second.lifecycle_state, second.current_value, second.remaining_update_count
+    );
+    println!(
+        "update3=state:{};value:{};remaining={}",
+        third.lifecycle_state, third.current_value, third.remaining_update_count
+    );
 }
 
 fn run_h1_smoke() {
