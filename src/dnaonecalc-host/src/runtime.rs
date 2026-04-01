@@ -559,6 +559,25 @@ pub struct ScenarioSelectionDetail {
     pub available_actions: Vec<ScenarioSelectionAction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptanceMatrixRow {
+    pub row_id: String,
+    pub scenario_id: String,
+    pub latest_run_id: String,
+    pub capability_snapshot_id: String,
+    pub capability_floor: String,
+    pub runtime_class: String,
+    pub replay_status: String,
+    pub comparison_status: String,
+    pub witness_status: String,
+    pub handoff_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptanceMatrix {
+    pub rows: Vec<AcceptanceMatrixRow>,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -898,6 +917,61 @@ impl RuntimeAdapter {
             lineage,
             available_actions,
         }
+    }
+
+    pub fn build_acceptance_matrix(
+        &self,
+        store: &RetainedScenarioStore,
+    ) -> Result<AcceptanceMatrix, String> {
+        let promoted = self.build_promoted_scenario_index(store)?;
+        let mut rows = Vec::new();
+
+        for promoted_row in &promoted.rows {
+            let run = store.read_run(&promoted_row.latest_run_id)?;
+            let capability_snapshot_id = run
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .map(|reference| reference.logical_id.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "run {} is missing a capability snapshot ref",
+                        promoted_row.latest_run_id
+                    )
+                })?;
+            let capability = store.read_capability_snapshot(&capability_snapshot_id)?;
+
+            rows.push(AcceptanceMatrixRow {
+                row_id: promoted_row.row_id.clone(),
+                scenario_id: promoted_row.scenario_id.clone(),
+                latest_run_id: promoted_row.latest_run_id.clone(),
+                capability_snapshot_id,
+                capability_floor: capability.capability_floor,
+                runtime_class: capability.runtime_class,
+                replay_status: if promoted_row.replay_capture_ids.is_empty() {
+                    "missing".to_string()
+                } else {
+                    "available".to_string()
+                },
+                comparison_status: if promoted_row.comparison_ids.is_empty() {
+                    "missing".to_string()
+                } else {
+                    "available".to_string()
+                },
+                witness_status: if promoted_row.witness_ids.is_empty() {
+                    "missing".to_string()
+                } else {
+                    "available".to_string()
+                },
+                handoff_status: if promoted_row.handoff_ids.is_empty() {
+                    "missing".to_string()
+                } else {
+                    "available".to_string()
+                },
+            });
+        }
+
+        Ok(AcceptanceMatrix { rows })
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

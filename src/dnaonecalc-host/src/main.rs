@@ -20,6 +20,7 @@ fn main() {
         Some("--scenario-index-smoke") => run_scenario_index_smoke(),
         Some("--scenario-library-filter-smoke") => run_scenario_library_filter_smoke(),
         Some("--scenario-selection-smoke") => run_scenario_selection_smoke(),
+        Some("--acceptance-matrix-smoke") => run_acceptance_matrix_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -38,7 +39,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --scenario-library-filter-smoke, --scenario-selection-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --scenario-library-filter-smoke, --scenario-selection-smoke, --acceptance-matrix-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -799,6 +800,51 @@ fn run_scenario_selection_smoke() {
             .collect::<Vec<_>>()
             .join(",")
     );
+}
+
+fn run_acceptance_matrix_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-acceptance-matrix-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = RetainedScenarioStore::new(&root);
+
+    let mut host = adapter
+        .new_driven_single_formula_host("onecalc.acceptance", "=SUM(1,2,3)")
+        .expect("OC-H1 should admit the driven host model");
+    let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+    let recalc_summary = adapter
+        .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
+        .expect("edit-and-accept recalc should succeed");
+    let persisted = adapter
+        .persist_driven_scenario_run(
+            &store,
+            &host,
+            &recalc_context,
+            &recalc_summary,
+            "acceptance-smoke",
+        )
+        .expect("retained run should persist");
+    adapter
+        .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
+        .expect("replay capture should persist");
+
+    let matrix = adapter
+        .build_acceptance_matrix(&store)
+        .expect("acceptance matrix should build");
+
+    println!("dnaonecalc-host acceptance matrix smoke");
+    for row in &matrix.rows {
+        println!(
+            "row={} floor={} runtime={} replay={} compare={} witness={} handoff={}",
+            row.row_id,
+            row.capability_floor,
+            row.runtime_class,
+            row.replay_status,
+            row.comparison_status,
+            row.witness_status,
+            row.handoff_status
+        );
+    }
 }
 
 fn run_h1_smoke() {

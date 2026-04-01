@@ -61,8 +61,9 @@ pub use retained::{
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 pub use runtime::{
-    CapabilitySnapshotDiffSummary, CompletionProposalSummary, DocumentRoundTripInvariantReport,
-    DrivenRecalcSummary, DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary,
+    AcceptanceMatrix, AcceptanceMatrixRow, CapabilitySnapshotDiffSummary,
+    CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
+    DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary,
     FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
@@ -935,6 +936,51 @@ mod tests {
             .available_actions
             .iter()
             .any(|item| item.action_id == "open_handoff" && item.target_id == "handoff-one"));
+    }
+
+    #[test]
+    fn acceptance_matrix_rows_are_derived_from_promoted_rows_and_capability_truth() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let mut host = adapter
+            .new_driven_single_formula_host("onecalc.acceptance", "=SUM(1,2,3)")
+            .expect("OC-H1 should admit the driven host model");
+        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
+        let recalc_summary = adapter
+            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
+            .expect("edit-and-accept recalc should succeed");
+
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-acceptance-matrix-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let store = RetainedScenarioStore::new(&root);
+        let persisted = adapter
+            .persist_driven_scenario_run(
+                &store,
+                &host,
+                &recalc_context,
+                &recalc_summary,
+                "acceptance-smoke",
+            )
+            .expect("retained run should persist");
+        adapter
+            .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
+            .expect("replay capture should persist");
+
+        let matrix = adapter
+            .build_acceptance_matrix(&store)
+            .expect("acceptance matrix should build");
+
+        assert_eq!(matrix.rows.len(), 1);
+        let row = &matrix.rows[0];
+        assert_eq!(row.row_id, format!("promoted-scenario:{}", persisted.scenario.scenario_id));
+        assert_eq!(row.latest_run_id, persisted.run.scenario_run_id);
+        assert_eq!(row.capability_floor, "OC-H1");
+        assert_eq!(row.replay_status, "available");
+        assert_eq!(row.comparison_status, "missing");
+        assert_eq!(row.witness_status, "missing");
+        assert_eq!(row.handoff_status, "missing");
     }
 
     #[test]
