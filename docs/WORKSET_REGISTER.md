@@ -1,7 +1,7 @@
 # DNA OneCalc Workset Register
 
 Status: `active_register`
-Date: 2026-03-31
+Date: 2026-04-02
 
 ## 1. Purpose
 This is the living ordered workset register for `DnaOneCalc`.
@@ -60,7 +60,10 @@ It does mean:
 2. early rollout should bias toward the shortest honest path to real dependency-backed
    formula entry and evaluation,
 3. later supporting surfaces should not crowd out the first working slice unless they
-   are true prerequisites.
+   are true prerequisites,
+4. once an upstream seam packet is frozen and landed for active OneCalc
+   integration, the corresponding migration workset should execute before later
+   breadth that would deepen the superseded seam shape.
 
 ## 6. Workset Sequence
 
@@ -252,3 +255,26 @@ It does mean:
    workspace management, capability center and diff flows, scenario library and
    promotion, host acceptance matrix and regression evidence, upstream-pressure
    workflows
+
+### WS-11 OxFml_V1 Consumer Seam Migration
+1. purpose:
+   refactor OneCalc's runtime, editor, and replay integration onto the landed
+   `OxFml_V1` consumer facade surface so that later product work no longer
+   deepens dependence on historical root exports, proving-host helpers, or
+   manual packet assembly patterns.
+2. depends_on:
+   `WS-03`, `WS-04`, `WS-05`, `WS-06`
+3. parent_spec_sections:
+   `4`, `5`, `6`, `7.1`, `7.2`, `9.1.4`, `10`, `16`
+4. upstream_dependencies:
+   `OxFml_V1`, `OxFunc`, `OxReplay`
+5. closure_condition:
+   OneCalc consumes the landed `oxfml_core::consumer::runtime`,
+   `oxfml_core::consumer::editor`, and `oxfml_core::consumer::replay` surfaces
+   for its ordinary runtime, driven/session, editor, and replay-aware retained
+   flows; historical direct-consumer substrate use is removed from ordinary host
+   code; and the migrated slice has runnable verification proving semantic and
+   retained behavior stayed intact.
+6. initial_epic_lanes:
+   runtime facade migration, editor facade migration, replay facade migration,
+   seam verification and cleanup
