@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,10 +7,11 @@ use oxfml_core::consumer::editor::{
     EditorAnalysisStage, EditorDocument, EditorEditService, EditorEnvironment,
     FormulaTextChangeRange,
 };
-use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult};
-use oxfml_core::test_support::host::{HostRecalcOutput, SingleFormulaHost};
+use oxfml_core::consumer::runtime::{
+    RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult, RuntimeSessionFacade,
+};
 use oxfml_core::{
-    parse_formula, BindContext, EvaluationBackend, FormulaChannelKind, FormulaSourceRecord,
+    parse_formula, BindContext, FormulaChannelKind, FormulaSourceRecord,
     InMemoryLibraryContextProvider, LibraryContextSnapshotRef, ParseRequest,
     StructureContextVersion, TypedContextQueryBundle,
 };
@@ -259,30 +261,71 @@ impl RecalcContext {
     }
 }
 
-#[derive(Debug)]
 pub struct DrivenSingleFormulaHost {
-    host: SingleFormulaHost,
+    formula_stable_id: String,
+    formula_text: String,
+    formula_text_version: u64,
+    formula_channel_kind: FormulaChannelKind,
+    structure_context_version: String,
+    session: RuntimeSessionFacade<'static>,
+}
+
+impl fmt::Debug for DrivenSingleFormulaHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DrivenSingleFormulaHost")
+            .field("formula_stable_id", &self.formula_stable_id)
+            .field("formula_text", &self.formula_text)
+            .field("formula_text_version", &self.formula_text_version)
+            .field("formula_channel_kind", &self.formula_channel_kind)
+            .field("structure_context_version", &self.structure_context_version)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DrivenSingleFormulaHost {
     pub fn formula_stable_id(&self) -> &str {
-        &self.host.formula_stable_id
+        &self.formula_stable_id
     }
 
     pub fn formula_text(&self) -> &str {
-        &self.host.formula_text
+        &self.formula_text
     }
 
     pub const fn formula_text_version(&self) -> u64 {
-        self.host.formula_text_version
+        self.formula_text_version
     }
 
     pub const fn formula_channel_kind(&self) -> FormulaChannelKind {
-        self.host.formula_channel_kind
+        self.formula_channel_kind
     }
 
     pub fn structure_context_version(&self) -> &str {
-        &self.host.structure_context_version
+        &self.structure_context_version
+    }
+
+    fn formula_source(&self) -> FormulaSourceRecord {
+        FormulaSourceRecord::new(
+            self.formula_stable_id.clone(),
+            self.formula_text_version,
+            self.formula_text.clone(),
+        )
+        .with_formula_channel_kind(self.formula_channel_kind)
+    }
+
+    fn set_formula_text(&mut self, formula_text: impl Into<String>) {
+        self.formula_text = formula_text.into();
+        self.formula_text_version += 1;
+    }
+
+    fn restore_retained_state(
+        &mut self,
+        formula_text_version: u64,
+        formula_channel_kind: FormulaChannelKind,
+        structure_context_version: impl Into<String>,
+    ) {
+        self.formula_text_version = formula_text_version;
+        self.formula_channel_kind = formula_channel_kind;
+        self.structure_context_version = structure_context_version.into();
     }
 }
 
@@ -293,6 +336,7 @@ pub struct DrivenRecalcSummary {
     pub packet_kind: String,
     pub formula_text_version: u64,
     pub structure_context_version: String,
+    pub library_context_snapshot_ref: Option<String>,
     pub evaluation: FormulaEvaluationSummary,
 }
 
@@ -576,9 +620,19 @@ impl RuntimeAdapter {
             ));
         }
 
-        let mut host = SingleFormulaHost::new(formula_stable_id, formula_text);
-        host.structure_context_version = "onecalc:single_formula:h1".to_string();
-        Ok(DrivenSingleFormulaHost { host })
+        let formula_stable_id = formula_stable_id.into();
+        let formula_text = formula_text.into();
+        let structure_context_version = "onecalc:single_formula:h1".to_string();
+        let session =
+            RuntimeSessionFacade::new(build_driven_runtime_environment(structure_context_version.clone()));
+        Ok(DrivenSingleFormulaHost {
+            formula_stable_id,
+            formula_text,
+            formula_text_version: 1,
+            formula_channel_kind: FormulaChannelKind::WorksheetA1,
+            structure_context_version,
+            session,
+        })
     }
 
     pub fn edit_accept_recalc(
@@ -591,7 +645,7 @@ impl RuntimeAdapter {
             return Err("edit_accept_recalc requires RecalcTriggerKind::EditAccept".to_string());
         }
 
-        driven_host.host.set_formula_text(formula_text);
+        driven_host.set_formula_text(formula_text);
         self.run_driven_recalc(driven_host, recalc_context)
     }
 
@@ -644,10 +698,10 @@ impl RuntimeAdapter {
             sanitize_slug(&recalc_summary.packet_kind),
             executed_at_unix_ms
         );
-        let snapshot = self
-            .load_function_surface_catalog()
-            .admitted_execution_snapshot();
-        let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
+        let snapshot_ref = recalc_summary
+            .library_context_snapshot_ref
+            .clone()
+            .ok_or_else(|| "driven recalc did not surface a library context snapshot ref".to_string())?;
         let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
         let capability_snapshot = self
             .emit_capability_snapshot(recalc_summary.packet_kind.as_str(), Some(&snapshot_ref))?;
@@ -839,14 +893,15 @@ impl RuntimeAdapter {
             retained.scenario.provenance.formula_stable_id.clone(),
             retained.run.authored_formula_text.clone(),
         )?;
-        driven_host.host.formula_text_version = retained.run.formula_text_version;
-        driven_host.host.structure_context_version = retained
-            .scenario
-            .provenance
-            .structure_context_version
-            .clone();
-        driven_host.host.formula_channel_kind =
-            parse_formula_channel_kind(&retained.scenario.formula_channel_kind)?;
+        driven_host.restore_retained_state(
+            retained.run.formula_text_version,
+            parse_formula_channel_kind(&retained.scenario.formula_channel_kind)?,
+            retained
+                .scenario
+                .provenance
+                .structure_context_version
+                .clone(),
+        );
 
         Ok(ReopenedDrivenSingleFormulaRun {
             retained,
@@ -873,10 +928,7 @@ impl RuntimeAdapter {
         let scenario_slug = sanitize_slug(&scenario_slug.into());
         let stable_slug = sanitize_slug(driven_host.formula_stable_id());
         let saved_at_unix_ms = unix_time_millis()?;
-        let snapshot = self
-            .load_function_surface_catalog()
-            .admitted_execution_snapshot();
-        let snapshot_ref = format!("{}@{}", snapshot.snapshot_id, snapshot.snapshot_version);
+        let snapshot_ref = recalc_summary.library_context_snapshot_ref.clone();
         let document_id = format!("document-{stable_slug}-{saved_at_unix_ms}");
         let artifact_index = retained_run
             .map(document_artifact_index_from_retained_run)
@@ -902,7 +954,7 @@ impl RuntimeAdapter {
             display_context: "formula_workbench".to_string(),
             effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
             function_surface_policy_id: "onecalc:admitted_execution:supported+preview".to_string(),
-            library_context_snapshot_ref: Some(snapshot_ref),
+            library_context_snapshot_ref: snapshot_ref,
             view_state: DocumentViewStateRecord {
                 active_surface: "formula_workbench".to_string(),
                 cursor_offset: driven_host.formula_text().len(),
@@ -938,10 +990,11 @@ impl RuntimeAdapter {
             document.formula_stable_id.clone(),
             document.formula_text.clone(),
         )?;
-        driven_host.host.formula_text_version = document.formula_text_version;
-        driven_host.host.formula_channel_kind =
-            parse_formula_channel_kind(&document.formula_channel_kind)?;
-        driven_host.host.structure_context_version = document.structure_context_version.clone();
+        driven_host.restore_retained_state(
+            document.formula_text_version,
+            parse_formula_channel_kind(&document.formula_channel_kind)?,
+            document.structure_context_version.clone(),
+        );
 
         Ok(ReopenedOneCalcDocument {
             document,
@@ -2202,11 +2255,6 @@ impl RuntimeAdapter {
             ));
         }
 
-        let catalog = self.load_function_surface_catalog();
-        let snapshot = catalog.admitted_execution_snapshot();
-        let provider = InMemoryLibraryContextProvider::new(snapshot);
-        driven_host.host.now_serial = recalc_context.now_serial;
-        driven_host.host.random_value = recalc_context.random_value;
         let query_bundle = TypedContextQueryBundle::new(
             None,
             None,
@@ -2214,19 +2262,24 @@ impl RuntimeAdapter {
             recalc_context.now_serial,
             recalc_context.random_value,
         );
-        let output = driven_host.host.recalc_with_interfaces(
-            EvaluationBackend::OxFuncBacked,
+        let result = driven_host.session.execute(RuntimeFormulaRequest::new(
+            driven_host.formula_source(),
             query_bundle,
-            Some(&provider),
-        )?;
+        ))?;
+        let library_context_snapshot_ref = result
+            .library_context_snapshot_ref
+            .as_ref()
+            .map(LibraryContextSnapshotRef::compound_ref);
+        let evaluation = summarize_runtime_result(result);
 
         Ok(DrivenRecalcSummary {
             host_profile_id: self.host_profile.id().to_string(),
             trigger_kind: recalc_context.trigger_kind.id().to_string(),
             packet_kind: recalc_context.packet_kind().id().to_string(),
-            formula_text_version: driven_host.host.formula_text_version,
-            structure_context_version: driven_host.host.structure_context_version.clone(),
-            evaluation: summarize_host_output(output),
+            formula_text_version: driven_host.formula_text_version,
+            structure_context_version: driven_host.structure_context_version.clone(),
+            library_context_snapshot_ref,
+            evaluation,
         })
     }
 }
@@ -2247,28 +2300,13 @@ fn build_editor_service(source: &FormulaSourceRecord) -> EditorEditService<'stat
     EditorEditService::new(environment)
 }
 
-fn summarize_host_output(output: HostRecalcOutput) -> FormulaEvaluationSummary {
-    let returned_presentation_hint_status =
-        summarize_presentation_hint(output.returned_value_surface.presentation_hint);
-    let host_style_state_status = summarize_host_style_state();
-
-    FormulaEvaluationSummary {
-        formula_token: output.source.formula_token().0,
-        worksheet_value_summary: summarize_eval_value(&output.published_worksheet_value),
-        payload_summary: output.returned_value_surface.payload_summary.clone(),
-        returned_value_surface_kind: format!("{:?}", output.returned_value_surface.kind),
-        returned_presentation_hint_status: returned_presentation_hint_status.clone(),
-        host_style_state_status: host_style_state_status.clone(),
-        effective_display_status: derive_effective_display_status(
-            &returned_presentation_hint_status,
-            &host_style_state_status,
-        ),
-        commit_decision_kind: match output.commit_decision {
-            oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
-            oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
-        },
-        trace_event_count: output.trace_events.len(),
-    }
+fn build_driven_runtime_environment(
+    structure_context_version: impl Into<String>,
+) -> RuntimeEnvironment<'static> {
+    let snapshot = FunctionSurfaceCatalog::load_current().admitted_execution_snapshot();
+    RuntimeEnvironment::new()
+        .with_structure_context_version(StructureContextVersion(structure_context_version.into()))
+        .with_inline_library_context_snapshot(snapshot)
 }
 
 fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSummary {
