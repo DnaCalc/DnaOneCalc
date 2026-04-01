@@ -578,6 +578,25 @@ pub struct AcceptanceMatrix {
     pub rows: Vec<AcceptanceMatrixRow>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromotedScenarioRegressionSummary {
+    pub total_rows: usize,
+    pub replay_ready_rows: usize,
+    pub compare_ready_rows: usize,
+    pub witness_ready_rows: usize,
+    pub handoff_ready_rows: usize,
+    pub covered_row_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamPressurePacket {
+    pub packet_id: String,
+    pub scenario_id: String,
+    pub source_row_id: String,
+    pub target_lane: String,
+    pub blocker_ids: Vec<String>,
+}
+
 impl DocumentRoundTripInvariantReport {
     pub const fn all_preserved(&self) -> bool {
         self.document_id_preserved
@@ -972,6 +991,98 @@ impl RuntimeAdapter {
         }
 
         Ok(AcceptanceMatrix { rows })
+    }
+
+    pub fn build_promoted_scenario_regression_summary(
+        &self,
+        matrix: &AcceptanceMatrix,
+    ) -> PromotedScenarioRegressionSummary {
+        let _ = self;
+        PromotedScenarioRegressionSummary {
+            total_rows: matrix.rows.len(),
+            replay_ready_rows: matrix
+                .rows
+                .iter()
+                .filter(|row| row.replay_status == "available")
+                .count(),
+            compare_ready_rows: matrix
+                .rows
+                .iter()
+                .filter(|row| row.comparison_status == "available")
+                .count(),
+            witness_ready_rows: matrix
+                .rows
+                .iter()
+                .filter(|row| row.witness_status == "available")
+                .count(),
+            handoff_ready_rows: matrix
+                .rows
+                .iter()
+                .filter(|row| row.handoff_status == "available")
+                .count(),
+            covered_row_ids: matrix.rows.iter().map(|row| row.row_id.clone()).collect(),
+        }
+    }
+
+    pub fn save_promoted_scenario_regression_summary(
+        &self,
+        path: impl AsRef<Path>,
+        summary: &PromotedScenarioRegressionSummary,
+    ) -> Result<(), String> {
+        let _ = self;
+        let body = serde_json::to_string_pretty(summary).map_err(|error| error.to_string())?;
+        fs::write(path, body).map_err(|error| error.to_string())
+    }
+
+    pub fn read_promoted_scenario_regression_summary(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<PromotedScenarioRegressionSummary, String> {
+        let _ = self;
+        let body = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        serde_json::from_str(&body).map_err(|error| error.to_string())
+    }
+
+    pub fn build_upstream_pressure_packets(
+        &self,
+        matrix: &AcceptanceMatrix,
+    ) -> Vec<UpstreamPressurePacket> {
+        let _ = self;
+        matrix
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let mut blocker_ids = Vec::new();
+                if row.comparison_status != "available" {
+                    blocker_ids.push("comparison_missing".to_string());
+                }
+                if row.witness_status != "available" {
+                    blocker_ids.push("witness_missing".to_string());
+                }
+                if row.handoff_status != "available" {
+                    blocker_ids.push("handoff_missing".to_string());
+                }
+                if blocker_ids.is_empty() {
+                    None
+                } else {
+                    Some(UpstreamPressurePacket {
+                        packet_id: format!(
+                            "upstream-pressure:{}:{}",
+                            row.scenario_id,
+                            blocker_ids.join("+")
+                        ),
+                        scenario_id: row.scenario_id.clone(),
+                        source_row_id: row.row_id.clone(),
+                        target_lane: if row.comparison_status != "available" {
+                            "OxXlObs".to_string()
+                        } else {
+                            "OxFml".to_string()
+                        },
+                        blocker_ids,
+                    })
+                }
+            })
+            .collect()
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

@@ -21,6 +21,8 @@ fn main() {
         Some("--scenario-library-filter-smoke") => run_scenario_library_filter_smoke(),
         Some("--scenario-selection-smoke") => run_scenario_selection_smoke(),
         Some("--acceptance-matrix-smoke") => run_acceptance_matrix_smoke(),
+        Some("--scenario-regression-smoke") => run_scenario_regression_smoke(),
+        Some("--upstream-pressure-smoke") => run_upstream_pressure_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -39,7 +41,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --scenario-library-filter-smoke, --scenario-selection-smoke, --acceptance-matrix-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --scenario-index-smoke, --scenario-library-filter-smoke, --scenario-selection-smoke, --acceptance-matrix-smoke, --scenario-regression-smoke, --upstream-pressure-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -843,6 +845,72 @@ fn run_acceptance_matrix_smoke() {
             row.comparison_status,
             row.witness_status,
             row.handoff_status
+        );
+    }
+}
+
+fn run_scenario_regression_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let matrix = dnaonecalc_host::AcceptanceMatrix {
+        rows: vec![dnaonecalc_host::AcceptanceMatrixRow {
+            row_id: "promoted-scenario:one".to_string(),
+            scenario_id: "scenario-one".to_string(),
+            latest_run_id: "run-one".to_string(),
+            capability_snapshot_id: "cap-one".to_string(),
+            capability_floor: "OC-H1".to_string(),
+            runtime_class: "desktop_native_only".to_string(),
+            replay_status: "available".to_string(),
+            comparison_status: "missing".to_string(),
+            witness_status: "missing".to_string(),
+            handoff_status: "missing".to_string(),
+        }],
+    };
+    let summary = adapter.build_promoted_scenario_regression_summary(&matrix);
+    let path = env::temp_dir().join("dnaonecalc-scenario-regression-smoke.json");
+    adapter
+        .save_promoted_scenario_regression_summary(&path, &summary)
+        .expect("regression summary should persist");
+    let reopened = adapter
+        .read_promoted_scenario_regression_summary(&path)
+        .expect("regression summary should reopen");
+
+    println!("dnaonecalc-host scenario regression smoke");
+    println!(
+        "total={} replay={} compare={} witness={} handoff={}",
+        reopened.total_rows,
+        reopened.replay_ready_rows,
+        reopened.compare_ready_rows,
+        reopened.witness_ready_rows,
+        reopened.handoff_ready_rows
+    );
+}
+
+fn run_upstream_pressure_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let matrix = dnaonecalc_host::AcceptanceMatrix {
+        rows: vec![dnaonecalc_host::AcceptanceMatrixRow {
+            row_id: "promoted-scenario:one".to_string(),
+            scenario_id: "scenario-one".to_string(),
+            latest_run_id: "run-one".to_string(),
+            capability_snapshot_id: "cap-one".to_string(),
+            capability_floor: "OC-H1".to_string(),
+            runtime_class: "desktop_native_only".to_string(),
+            replay_status: "available".to_string(),
+            comparison_status: "missing".to_string(),
+            witness_status: "missing".to_string(),
+            handoff_status: "missing".to_string(),
+        }],
+    };
+    let packets = adapter.build_upstream_pressure_packets(&matrix);
+
+    println!("dnaonecalc-host upstream pressure smoke");
+    for packet in &packets {
+        println!(
+            "packet={} scenario={} lane={} blockers={}",
+            packet.packet_id,
+            packet.scenario_id,
+            packet.target_lane,
+            packet.blocker_ids.join("|")
         );
     }
 }

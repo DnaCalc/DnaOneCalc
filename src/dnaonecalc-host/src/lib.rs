@@ -68,8 +68,9 @@ pub use runtime::{
     OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
     OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
     OpenedWitnessSummary, PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
-    RecalcContext, RecalcTriggerKind, ScenarioLibraryFilter, ScenarioLibrarySavedView,
-    ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail,
+    PromotedScenarioRegressionSummary, RecalcContext, RecalcTriggerKind,
+    ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef,
+    ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
     RetainedRunXRaySummary, RuntimeAdapter,
 };
@@ -981,6 +982,66 @@ mod tests {
         assert_eq!(row.comparison_status, "missing");
         assert_eq!(row.witness_status, "missing");
         assert_eq!(row.handoff_status, "missing");
+    }
+
+    #[test]
+    fn regression_summary_and_upstream_pressure_packets_follow_acceptance_rows() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let matrix = AcceptanceMatrix {
+            rows: vec![
+                AcceptanceMatrixRow {
+                    row_id: "promoted-scenario:one".to_string(),
+                    scenario_id: "scenario-one".to_string(),
+                    latest_run_id: "run-one".to_string(),
+                    capability_snapshot_id: "cap-one".to_string(),
+                    capability_floor: "OC-H1".to_string(),
+                    runtime_class: "desktop_native_only".to_string(),
+                    replay_status: "available".to_string(),
+                    comparison_status: "missing".to_string(),
+                    witness_status: "missing".to_string(),
+                    handoff_status: "missing".to_string(),
+                },
+                AcceptanceMatrixRow {
+                    row_id: "promoted-scenario:two".to_string(),
+                    scenario_id: "scenario-two".to_string(),
+                    latest_run_id: "run-two".to_string(),
+                    capability_snapshot_id: "cap-two".to_string(),
+                    capability_floor: "OC-H1".to_string(),
+                    runtime_class: "desktop_native_only".to_string(),
+                    replay_status: "available".to_string(),
+                    comparison_status: "available".to_string(),
+                    witness_status: "available".to_string(),
+                    handoff_status: "available".to_string(),
+                },
+            ],
+        };
+
+        let summary = adapter.build_promoted_scenario_regression_summary(&matrix);
+        let packets = adapter.build_upstream_pressure_packets(&matrix);
+        let path = std::env::temp_dir().join(format!(
+            "dnaonecalc-regression-summary-test-{}.json",
+            std::process::id()
+        ));
+        adapter
+            .save_promoted_scenario_regression_summary(&path, &summary)
+            .expect("regression summary should persist");
+        let reopened = adapter
+            .read_promoted_scenario_regression_summary(&path)
+            .expect("regression summary should reopen");
+
+        assert_eq!(summary.total_rows, 2);
+        assert_eq!(summary.replay_ready_rows, 2);
+        assert_eq!(summary.compare_ready_rows, 1);
+        assert_eq!(summary.witness_ready_rows, 1);
+        assert_eq!(summary.handoff_ready_rows, 1);
+        assert_eq!(reopened, summary);
+
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].scenario_id, "scenario-one");
+        assert!(packets[0]
+            .blocker_ids
+            .contains(&"comparison_missing".to_string()));
+        assert_eq!(packets[0].target_lane, "OxXlObs");
     }
 
     #[test]
