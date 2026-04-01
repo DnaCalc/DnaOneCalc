@@ -35,11 +35,11 @@ use crate::document::{
 };
 use crate::extension::{
     activate_windows_rtd_topic, advance_rtd_topic, admitted_extension_abi,
-    extension_root_runtime_truth, invoke_extension_provider, load_extension_root,
-    validate_extension_manifest, ActivatedRtdTopicSession, ExtensionAbiContract,
-    ExtensionInvocationArgument, ExtensionInvocationSummary, ExtensionProviderManifest,
-    ExtensionRootLoadSummary, ExtensionRootRuntimeTruthSummary, ExtensionValidationResult,
-    RtdTopicUpdateSummary,
+    extension_root_runtime_truth, invoke_extension_provider, linux_rtd_registry_truth,
+    load_extension_root, validate_extension_manifest, ActivatedRtdTopicSession,
+    ExtensionAbiContract, ExtensionInvocationArgument, ExtensionInvocationSummary,
+    ExtensionProviderManifest, ExtensionRootLoadSummary, ExtensionRootRuntimeTruthSummary,
+    ExtensionValidationResult, LinuxRtdRegistrySummary, RtdTopicUpdateSummary,
 };
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
@@ -616,6 +616,18 @@ impl RuntimeAdapter {
     ) -> RtdTopicUpdateSummary {
         let _ = self;
         advance_rtd_topic(session)
+    }
+
+    pub fn linux_rtd_registry_truth(
+        &self,
+        extension_root: impl AsRef<Path>,
+    ) -> Result<LinuxRtdRegistrySummary, String> {
+        linux_rtd_registry_truth(
+            extension_root,
+            self.host_profile.id(),
+            self.platform_gate().id(),
+            std::env::consts::OS,
+        )
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {

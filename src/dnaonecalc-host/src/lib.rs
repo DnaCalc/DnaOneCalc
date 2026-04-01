@@ -41,8 +41,8 @@ pub use extension::{
     ExtensionManifestLoadFailure, ExtensionProviderRuntimeTruth,
     ExtensionProviderEntrypoint, ExtensionProviderManifest, ExtensionRootLoadSummary,
     ExtensionRootRuntimeTruthSummary, ExtensionValidationResult, LoadedExtensionProvider,
-    RegisteredExtensionBehavior, RegisteredExtensionFunction, RegisteredRtdTopic,
-    RtdTopicUpdateSummary,
+    LinuxRtdRegistryEntry, LinuxRtdRegistrySummary, RegisteredExtensionBehavior,
+    RegisteredExtensionFunction, RegisteredRtdTopic, RtdTopicUpdateSummary,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -606,6 +606,60 @@ mod tests {
         assert_eq!(second.lifecycle_state, "active_final_value");
         assert_eq!(third.current_value, "103.0");
         assert_eq!(third.lifecycle_state, "active_no_pending_updates");
+    }
+
+    #[test]
+    fn linux_rtd_registry_truth_keeps_cross_platform_gate_explicit() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-linux-rtd-registry-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+        let rtd_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+
+        fs::write(
+            root.join("demo-rtd").join("provider.json"),
+            serde_json::to_string_pretty(&rtd_manifest)
+                .expect("rtd manifest should serialize"),
+        )
+        .expect("rtd manifest should write");
+        fs::write(
+            root.join("demo-rtd").join("functions.json"),
+            serde_json::to_string_pretty(&ExtensionProviderEntrypoint {
+                registered_functions: Vec::new(),
+                rtd_topics: vec![RegisteredRtdTopic {
+                    topic_id: "PRICE".to_string(),
+                    initial_value: "100.0".to_string(),
+                    updates: vec!["101.5".to_string()],
+                }],
+            })
+            .expect("rtd entrypoint should serialize"),
+        )
+        .expect("rtd entrypoint should write");
+
+        let summary = adapter
+            .linux_rtd_registry_truth(&root)
+            .expect("linux rtd registry truth should load");
+
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].provider_id, "demo.rtd.provider");
+        assert_eq!(summary.entries[0].topic_ids, vec!["PRICE".to_string()]);
+        if std::env::consts::OS == "linux" {
+            assert_eq!(summary.gate_state, "admitted_design_floor");
+        } else {
+            assert_eq!(summary.gate_state, "blocked_on_host_platform");
+        }
     }
 
     #[test]

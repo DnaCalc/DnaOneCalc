@@ -16,6 +16,7 @@ fn main() {
         Some("--extension-provider-smoke") => run_extension_provider_smoke(),
         Some("--extension-rtd-state-smoke") => run_extension_rtd_state_smoke(),
         Some("--windows-rtd-smoke") => run_windows_rtd_smoke(),
+        Some("--linux-rtd-gate-smoke") => run_linux_rtd_gate_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -34,7 +35,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --windows-rtd-smoke, --linux-rtd-gate-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -592,6 +593,55 @@ fn run_windows_rtd_smoke() {
         "update3=state:{};value:{};remaining={}",
         third.lifecycle_state, third.current_value, third.remaining_update_count
     );
+}
+
+fn run_linux_rtd_gate_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-linux-rtd-gate-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+    let rtd_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.rtd.provider".to_string(),
+        display_name: "Demo RTD Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["rtd_provider".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+
+    std::fs::write(
+        root.join("demo-rtd").join("provider.json"),
+        serde_json::to_string_pretty(&rtd_manifest)
+            .expect("rtd manifest should serialize"),
+    )
+    .expect("rtd manifest should write");
+    std::fs::write(
+        root.join("demo-rtd").join("functions.json"),
+        serde_json::to_string_pretty(&dnaonecalc_host::ExtensionProviderEntrypoint {
+            registered_functions: Vec::new(),
+            rtd_topics: vec![dnaonecalc_host::RegisteredRtdTopic {
+                topic_id: "PRICE".to_string(),
+                initial_value: "100.0".to_string(),
+                updates: vec!["101.5".to_string()],
+            }],
+        })
+        .expect("rtd entrypoint should serialize"),
+    )
+    .expect("rtd entrypoint should write");
+
+    let summary = adapter
+        .linux_rtd_registry_truth(&root)
+        .expect("linux rtd registry truth should load");
+
+    println!("dnaonecalc-host linux rtd gate smoke");
+    println!("runtime_platform={}", summary.runtime_platform);
+    println!("gate_state={}", summary.gate_state);
+    println!("reason={}", summary.reason);
+    for entry in &summary.entries {
+        println!("entry={} topics={}", entry.provider_id, entry.topic_ids.join(","));
+    }
 }
 
 fn run_h1_smoke() {

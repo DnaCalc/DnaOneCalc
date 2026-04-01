@@ -143,6 +143,20 @@ pub struct RtdTopicUpdateSummary {
     pub remaining_update_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxRtdRegistryEntry {
+    pub provider_id: String,
+    pub topic_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxRtdRegistrySummary {
+    pub runtime_platform: String,
+    pub gate_state: String,
+    pub reason: String,
+    pub entries: Vec<LinuxRtdRegistryEntry>,
+}
+
 pub fn admitted_extension_abi(
     host_profile_id: &str,
     platform_gate_id: &str,
@@ -394,6 +408,54 @@ pub fn activate_windows_rtd_topic(
         lifecycle_state: "active".to_string(),
         current_value: topic.initial_value.clone(),
         pending_updates: topic.updates.clone(),
+    })
+}
+
+pub fn linux_rtd_registry_truth(
+    extension_root: impl AsRef<Path>,
+    host_profile_id: &str,
+    platform_gate_id: &str,
+    runtime_platform: &str,
+) -> Result<LinuxRtdRegistrySummary, String> {
+    let loaded = load_extension_root(extension_root.as_ref(), host_profile_id, platform_gate_id)?;
+    let entries = loaded
+        .admitted_providers
+        .iter()
+        .chain(loaded.rejected_providers.iter())
+        .filter_map(|provider| {
+            let entrypoint = load_provider_entrypoint(provider).ok()?;
+            if entrypoint.rtd_topics.is_empty() {
+                return None;
+            }
+
+            Some(LinuxRtdRegistryEntry {
+                provider_id: provider.manifest.provider_id.clone(),
+                topic_ids: entrypoint
+                    .rtd_topics
+                    .iter()
+                    .map(|topic| topic.topic_id.clone())
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let (gate_state, reason) = if runtime_platform.eq_ignore_ascii_case("linux") {
+        (
+            "admitted_design_floor".to_string(),
+            "Linux RTD registry truth is available; activation remains bounded to the declared subset.".to_string(),
+        )
+    } else {
+        (
+            "blocked_on_host_platform".to_string(),
+            "Linux RTD registry remains explicit design truth only on this host platform.".to_string(),
+        )
+    };
+
+    Ok(LinuxRtdRegistrySummary {
+        runtime_platform: runtime_platform.to_string(),
+        gate_state,
+        reason,
+        entries,
     })
 }
 
