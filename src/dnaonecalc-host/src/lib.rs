@@ -34,12 +34,13 @@ pub use document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 pub use extension::{
-    admitted_extension_abi, invoke_extension_provider, load_extension_root,
-    validate_extension_manifest, ExtensionAbiContract, ExtensionInvocationArgument,
-    ExtensionInvocationSummary, ExtensionManifestLoadFailure,
+    admitted_extension_abi, extension_root_runtime_truth, invoke_extension_provider,
+    load_extension_root, validate_extension_manifest, ExtensionAbiContract,
+    ExtensionCapabilityTruth, ExtensionInvocationArgument, ExtensionInvocationSummary,
+    ExtensionManifestLoadFailure, ExtensionProviderRuntimeTruth,
     ExtensionProviderEntrypoint, ExtensionProviderManifest, ExtensionRootLoadSummary,
-    ExtensionValidationResult, LoadedExtensionProvider, RegisteredExtensionBehavior,
-    RegisteredExtensionFunction,
+    ExtensionRootRuntimeTruthSummary, ExtensionValidationResult, LoadedExtensionProvider,
+    RegisteredExtensionBehavior, RegisteredExtensionFunction,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -450,6 +451,83 @@ mod tests {
             .as_deref()
             .expect("blocked provider should report a reason")
             .contains("rtd_provider"));
+    }
+
+    #[test]
+    fn extension_runtime_truth_keeps_declared_rtd_state_visible() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let root = std::env::temp_dir().join(format!(
+            "dnaonecalc-extension-rtd-truth-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("demo-sum")).expect("demo sum dir should create");
+        fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+        let admitted_manifest = ExtensionProviderManifest {
+            provider_id: "demo.sum.provider".to_string(),
+            display_name: "Demo Sum Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["host_managed_function_registration".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+        let rtd_manifest = ExtensionProviderManifest {
+            provider_id: "demo.rtd.provider".to_string(),
+            display_name: "Demo RTD Provider".to_string(),
+            abi_version: "v1".to_string(),
+            host_profile_ids: vec!["OC-H1".to_string()],
+            platform_gate_ids: vec!["desktop_native_only".to_string()],
+            declared_capabilities: vec!["rtd_provider".to_string()],
+            entrypoint: "functions.json".to_string(),
+        };
+
+        fs::write(
+            root.join("demo-sum").join("provider.json"),
+            serde_json::to_string_pretty(&admitted_manifest)
+                .expect("admitted manifest should serialize"),
+        )
+        .expect("admitted manifest should write");
+        fs::write(
+            root.join("demo-rtd").join("provider.json"),
+            serde_json::to_string_pretty(&rtd_manifest)
+                .expect("rtd manifest should serialize"),
+        )
+        .expect("rtd manifest should write");
+
+        let truth = adapter
+            .extension_root_runtime_truth(&root)
+            .expect("extension truth should load");
+        let sum_provider = truth
+            .provider_truths
+            .iter()
+            .find(|provider| provider.provider_id == "demo.sum.provider")
+            .expect("sum provider should be present");
+        let rtd_provider = truth
+            .provider_truths
+            .iter()
+            .find(|provider| provider.provider_id == "demo.rtd.provider")
+            .expect("rtd provider should be present");
+
+        assert_eq!(sum_provider.provider_state, "admitted");
+        assert_eq!(
+            sum_provider.capability_truths[0].runtime_state,
+            "admitted"
+        );
+        assert_eq!(rtd_provider.provider_state, "declared_with_blocked_capabilities");
+        assert_eq!(rtd_provider.capability_truths[0].capability_id, "rtd_provider");
+        if std::env::consts::OS == "windows" {
+            assert_eq!(
+                rtd_provider.capability_truths[0].runtime_state,
+                "declared_but_not_yet_admitted"
+            );
+        } else {
+            assert_eq!(
+                rtd_provider.capability_truths[0].runtime_state,
+                "blocked_by_platform"
+            );
+        }
     }
 
     #[test]

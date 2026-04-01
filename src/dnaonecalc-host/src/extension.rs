@@ -88,6 +88,32 @@ pub struct ExtensionInvocationSummary {
     pub failure_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionCapabilityTruth {
+    pub capability_id: String,
+    pub declaration_state: String,
+    pub runtime_state: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionProviderRuntimeTruth {
+    pub provider_id: String,
+    pub display_name: String,
+    pub manifest_path: String,
+    pub provider_state: String,
+    pub capability_truths: Vec<ExtensionCapabilityTruth>,
+    pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionRootRuntimeTruthSummary {
+    pub extension_root: String,
+    pub runtime_platform: String,
+    pub provider_truths: Vec<ExtensionProviderRuntimeTruth>,
+    pub manifest_failures: Vec<ExtensionManifestLoadFailure>,
+}
+
 pub fn admitted_extension_abi(
     host_profile_id: &str,
     platform_gate_id: &str,
@@ -275,6 +301,28 @@ pub fn invoke_extension_provider(
     })
 }
 
+pub fn extension_root_runtime_truth(
+    extension_root: impl AsRef<Path>,
+    host_profile_id: &str,
+    platform_gate_id: &str,
+    runtime_platform: &str,
+) -> Result<ExtensionRootRuntimeTruthSummary, String> {
+    let loaded = load_extension_root(extension_root.as_ref(), host_profile_id, platform_gate_id)?;
+    let provider_truths = loaded
+        .admitted_providers
+        .iter()
+        .chain(loaded.rejected_providers.iter())
+        .map(|provider| project_provider_runtime_truth(provider, runtime_platform))
+        .collect::<Vec<_>>();
+
+    Ok(ExtensionRootRuntimeTruthSummary {
+        extension_root: loaded.extension_root,
+        runtime_platform: runtime_platform.to_string(),
+        provider_truths,
+        manifest_failures: loaded.malformed_manifests,
+    })
+}
+
 fn discover_manifest_paths(extension_root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut manifest_paths = Vec::new();
     let root_manifest = extension_root.join("provider.json");
@@ -371,5 +419,98 @@ fn execute_registered_function(
             Ok(format!("Number({value})"))
         }
         RegisteredExtensionBehavior::AlwaysError { message } => Err(message.clone()),
+    }
+}
+
+fn project_provider_runtime_truth(
+    provider: &LoadedExtensionProvider,
+    runtime_platform: &str,
+) -> ExtensionProviderRuntimeTruth {
+    let provider_state = if provider.validation.admitted
+        && provider.validation.blocked_capabilities.is_empty()
+    {
+        "admitted".to_string()
+    } else if provider.manifest.declared_capabilities.is_empty() {
+        "blocked".to_string()
+    } else {
+        "declared_with_blocked_capabilities".to_string()
+    };
+
+    let capability_truths = provider
+        .manifest
+        .declared_capabilities
+        .iter()
+        .map(|capability| match capability.as_str() {
+            "host_managed_function_registration" => ExtensionCapabilityTruth {
+                capability_id: capability.clone(),
+                declaration_state: "declared".to_string(),
+                runtime_state: if provider
+                    .validation
+                    .admitted_capabilities
+                    .iter()
+                    .any(|item| item == capability)
+                {
+                    "admitted".to_string()
+                } else {
+                    "blocked".to_string()
+                },
+                reason: capability_reason(provider, capability),
+            },
+            "rtd_provider" => ExtensionCapabilityTruth {
+                capability_id: capability.clone(),
+                declaration_state: "declared".to_string(),
+                runtime_state: if runtime_platform.eq_ignore_ascii_case("windows") {
+                    "declared_but_not_yet_admitted".to_string()
+                } else {
+                    "blocked_by_platform".to_string()
+                },
+                reason: Some(if runtime_platform.eq_ignore_ascii_case("windows") {
+                    "RTD lifecycle is a later admitted Windows subset and is not executable yet."
+                        .to_string()
+                } else {
+                    "RTD remains blocked on this platform until the Linux activation path lands."
+                        .to_string()
+                }),
+            },
+            _ => ExtensionCapabilityTruth {
+                capability_id: capability.clone(),
+                declaration_state: "declared".to_string(),
+                runtime_state: "blocked".to_string(),
+                reason: capability_reason(provider, capability),
+            },
+        })
+        .collect::<Vec<_>>();
+
+    ExtensionProviderRuntimeTruth {
+        provider_id: provider.manifest.provider_id.clone(),
+        display_name: provider.manifest.display_name.clone(),
+        manifest_path: provider.manifest_path.clone(),
+        provider_state,
+        capability_truths,
+        blocked_reasons: provider.validation.blocked_reasons.clone(),
+    }
+}
+
+fn capability_reason(provider: &LoadedExtensionProvider, capability: &str) -> Option<String> {
+    if provider
+        .validation
+        .admitted_capabilities
+        .iter()
+        .any(|item| item == capability)
+    {
+        None
+    } else {
+        let matching_reasons = provider
+            .validation
+            .blocked_reasons
+            .iter()
+            .filter(|reason| reason.contains(capability))
+            .cloned()
+            .collect::<Vec<_>>();
+        if matching_reasons.is_empty() {
+            Some(provider.validation.blocked_reasons.join(" | "))
+        } else {
+            Some(matching_reasons.join(" | "))
+        }
     }
 }

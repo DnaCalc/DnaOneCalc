@@ -14,6 +14,7 @@ fn main() {
         Some("--extension-abi-smoke") => run_extension_abi_smoke(),
         Some("--extension-root-smoke") => run_extension_root_smoke(),
         Some("--extension-provider-smoke") => run_extension_provider_smoke(),
+        Some("--extension-rtd-state-smoke") => run_extension_rtd_state_smoke(),
         Some("--h1-smoke") => run_h1_smoke(),
         Some("--h1-retained-smoke") => run_h1_retained_smoke(),
         Some("--h1-compare-smoke") => run_h1_compare_smoke(),
@@ -32,7 +33,7 @@ fn main() {
         Some(flag) => {
             eprintln!("unknown flag: {flag}");
             eprintln!(
-                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
+                "supported flags: --probe, --function-surface-smoke, --capability-snapshot-smoke, --capability-center-smoke, --extension-abi-smoke, --extension-root-smoke, --extension-provider-smoke, --extension-rtd-state-smoke, --h1-smoke, --h1-retained-smoke, --h1-compare-smoke, --replay-capture-smoke, --xray-diff-smoke, --witness-smoke, --handoff-smoke, --document-roundtrip-smoke, --workspace-smoke, --windows-observation-smoke, --twin-compare-smoke, --widening-request-smoke, --scenario-capsule-smoke, --shell-smoke, --editor-diagnostic-smoke"
             );
             std::process::exit(2);
         }
@@ -442,6 +443,70 @@ fn run_extension_provider_smoke() {
         blocked.invocation_state,
         blocked.failure_reason.as_deref().unwrap_or("none")
     );
+}
+
+fn run_extension_rtd_state_smoke() {
+    let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+    let root = env::temp_dir().join("dnaonecalc-extension-rtd-state-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("demo-sum")).expect("demo sum dir should create");
+    std::fs::create_dir_all(root.join("demo-rtd")).expect("demo rtd dir should create");
+
+    let admitted_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.sum.provider".to_string(),
+        display_name: "Demo Sum Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["host_managed_function_registration".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+    let rtd_manifest = dnaonecalc_host::ExtensionProviderManifest {
+        provider_id: "demo.rtd.provider".to_string(),
+        display_name: "Demo RTD Provider".to_string(),
+        abi_version: "v1".to_string(),
+        host_profile_ids: vec!["OC-H1".to_string()],
+        platform_gate_ids: vec!["desktop_native_only".to_string()],
+        declared_capabilities: vec!["rtd_provider".to_string()],
+        entrypoint: "functions.json".to_string(),
+    };
+
+    std::fs::write(
+        root.join("demo-sum").join("provider.json"),
+        serde_json::to_string_pretty(&admitted_manifest)
+            .expect("admitted manifest should serialize"),
+    )
+    .expect("admitted manifest should write");
+    std::fs::write(
+        root.join("demo-rtd").join("provider.json"),
+        serde_json::to_string_pretty(&rtd_manifest)
+            .expect("rtd manifest should serialize"),
+    )
+    .expect("rtd manifest should write");
+
+    let truth = adapter
+        .extension_root_runtime_truth(&root)
+        .expect("extension truth should load");
+
+    println!("dnaonecalc-host extension rtd state smoke");
+    println!("runtime_platform={}", truth.runtime_platform);
+    for provider in &truth.provider_truths {
+        println!(
+            "provider={} state={} blocked_reasons={}",
+            provider.provider_id,
+            provider.provider_state,
+            provider.blocked_reasons.join("|")
+        );
+        for capability in &provider.capability_truths {
+            println!(
+                "capability={} declaration={} runtime={} reason={}",
+                capability.capability_id,
+                capability.declaration_state,
+                capability.runtime_state,
+                capability.reason.as_deref().unwrap_or("none")
+            );
+        }
+    }
 }
 
 fn run_h1_smoke() {

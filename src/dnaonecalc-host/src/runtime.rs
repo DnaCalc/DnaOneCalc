@@ -34,10 +34,10 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::extension::{
-    admitted_extension_abi, invoke_extension_provider, load_extension_root,
-    validate_extension_manifest, ExtensionAbiContract, ExtensionInvocationArgument,
-    ExtensionInvocationSummary, ExtensionProviderManifest, ExtensionRootLoadSummary,
-    ExtensionValidationResult,
+    admitted_extension_abi, extension_root_runtime_truth, invoke_extension_provider,
+    load_extension_root, validate_extension_manifest, ExtensionAbiContract,
+    ExtensionInvocationArgument, ExtensionInvocationSummary, ExtensionProviderManifest,
+    ExtensionRootLoadSummary, ExtensionRootRuntimeTruthSummary, ExtensionValidationResult,
 };
 use crate::observation::{invoke_live_windows_capture, load_observation_source_bundle};
 use crate::retained::{
@@ -577,6 +577,18 @@ impl RuntimeAdapter {
             provider_id,
             function_name,
             arguments,
+        )
+    }
+
+    pub fn extension_root_runtime_truth(
+        &self,
+        extension_root: impl AsRef<Path>,
+    ) -> Result<ExtensionRootRuntimeTruthSummary, String> {
+        extension_root_runtime_truth(
+            extension_root,
+            self.host_profile.id(),
+            self.platform_gate().id(),
+            std::env::consts::OS,
         )
     }
 
