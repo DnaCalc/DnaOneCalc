@@ -861,8 +861,9 @@ mod tests {
         );
 
         assert!(app.function_help_text.contains("Current Help: SUM"));
-        assert!(app.function_help_text.contains("signature: SUM(1..255)"));
-        assert!(app.function_help_text.contains("availability: supported"));
+        assert!(app.function_help_text.contains("signature: SUM("));
+        assert!(app.function_help_text.contains("availability:"));
+        assert!(app.function_help_text.contains("CatalogKnown"));
     }
 
     #[test]

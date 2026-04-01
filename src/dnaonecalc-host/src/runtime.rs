@@ -2,15 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use oxfml_core::consumer::editor::{
+    EditorAnalysisStage, EditorDocument, EditorEditService, EditorEnvironment,
+    FormulaTextChangeRange,
+};
+use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult};
+use oxfml_core::test_support::host::{HostRecalcOutput, SingleFormulaHost};
 use oxfml_core::{
-    apply_formula_edit, build_function_help_lookup_request, collect_completion_proposals,
-    parse_formula, BindContext, CompletionRequest, EditFollowOnStage, EvaluationBackend,
-    FormulaChannelKind, FormulaEditRequest, FormulaEditResult, FormulaSourceRecord,
-    FormulaTextChangeRange, InMemoryLibraryContextProvider, ParseRequest, SingleFormulaHost,
+    parse_formula, BindContext, EvaluationBackend, FormulaChannelKind, FormulaSourceRecord,
+    InMemoryLibraryContextProvider, LibraryContextSnapshotRef, ParseRequest,
     StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::EvalValue;
-use oxfunc_core::xll_export_specs::lookup_function_meta_by_surface_name;
 use oxreplay_abstractions::{CapabilityLevel, LaneId, RegistryRef};
 use oxreplay_core::{
     is_replay_ready, load_replay_scenario_from_path, ReplayEvent, ReplayScenario, ReplayView,
@@ -154,7 +157,7 @@ pub struct ParseSnapshot {
 pub struct FormulaEditorSession {
     formula_stable_id: String,
     formula_text_version: u64,
-    latest_result: Option<FormulaEditResult>,
+    latest_result: Option<EditorDocument>,
 }
 
 impl FormulaEditorSession {
@@ -166,7 +169,7 @@ impl FormulaEditorSession {
         }
     }
 
-    pub fn latest_result(&self) -> Option<&FormulaEditResult> {
+    pub fn latest_result(&self) -> Option<&EditorDocument> {
         self.latest_result.as_ref()
     }
 }
@@ -542,17 +545,23 @@ impl RuntimeAdapter {
     ) -> Result<FormulaEvaluationSummary, String> {
         let catalog = self.load_function_surface_catalog();
         let snapshot = catalog.admitted_execution_snapshot();
+        let snapshot_ref = LibraryContextSnapshotRef::from(&snapshot);
         let provider = InMemoryLibraryContextProvider::new(snapshot);
-        let query_bundle =
-            TypedContextQueryBundle::new(None, None, None, Some(46_000.0), Some(0.25));
-        let mut host = SingleFormulaHost::new("onecalc.eval", formula_text);
-        let output = host.recalc_with_interfaces(
-            EvaluationBackend::OxFuncBacked,
-            query_bundle,
-            Some(&provider),
-        )?;
+        let environment = RuntimeEnvironment::new()
+            .with_structure_context_version(StructureContextVersion(
+                "onecalc:single_formula:v1".to_string(),
+            ))
+            .with_pinned_library_context(&provider, snapshot_ref);
+        let source =
+            FormulaSourceRecord::new("onecalc.eval", 1, formula_text)
+                .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
+        let request = RuntimeFormulaRequest::new(
+            source,
+            TypedContextQueryBundle::new(None, None, None, Some(46_000.0), Some(0.25)),
+        );
+        let result = environment.execute(request)?;
 
-        Ok(summarize_host_output(output))
+        Ok(summarize_runtime_result(result))
     }
 
     pub fn new_driven_single_formula_host(
@@ -2103,22 +2112,10 @@ impl RuntimeAdapter {
         session: &FormulaEditorSession,
         cursor_offset: usize,
     ) -> Vec<CompletionProposalSummary> {
-        let Some(result) = session.latest_result() else {
+        let Some(document) = session.latest_result() else {
             return Vec::new();
         };
-
-        let snapshot = self
-            .load_function_surface_catalog()
-            .admitted_execution_snapshot();
-        let bind_context = build_bind_context(&result.source);
-        let completion = collect_completion_proposals(CompletionRequest {
-            source: &result.source,
-            green_tree: &result.green_tree,
-            red_projection: &result.red_projection,
-            bind_context: &bind_context,
-            library_context_snapshot: Some(&snapshot),
-            cursor_offset,
-        });
+        let completion = build_editor_service(&document.source).completion_at_cursor(document, cursor_offset);
 
         completion
             .proposals
@@ -2135,35 +2132,27 @@ impl RuntimeAdapter {
         session: &FormulaEditorSession,
         cursor_offset: usize,
     ) -> Option<FunctionHelpSummary> {
-        let result = session.latest_result()?;
-        let catalog = self.load_function_surface_catalog();
-        let snapshot = catalog.admitted_execution_snapshot();
-        let request = build_function_help_lookup_request(
-            &result.source,
-            &result.green_tree,
-            cursor_offset,
-            Some(&snapshot),
-        )?;
-        let function_meta = lookup_function_meta_by_surface_name(&request.lookup_key)?;
-        let entry = catalog.get(&request.lookup_key)?;
-        let display_signature = format!(
-            "{}({})",
-            request.lookup_key,
-            summarize_arity(function_meta.arity.min, function_meta.arity.max)
-        );
-        let availability_summary =
-            format!("{} ({})", entry.admission_category.id(), entry.category);
+        let document = session.latest_result()?;
+        let interaction = build_editor_service(&document.source).interact_at_cursor(document, cursor_offset);
+        let function_help = interaction.function_help_packet?;
+        let display_signature = function_help
+            .signature_forms
+            .first()
+            .map(|signature| signature.display_signature.clone())
+            .unwrap_or_else(|| function_help.display_name.clone());
+        let availability_summary = function_help
+            .availability_summary
+            .unwrap_or_else(|| "availability unknown".to_string());
 
         Some(FunctionHelpSummary {
-            display_name: request.lookup_key,
+            display_name: function_help.display_name,
             display_signature,
-            active_argument_index: signature_help_argument_index(
-                &result.source,
-                &result.green_tree,
-                cursor_offset,
-            ),
+            active_argument_index: interaction
+                .signature_help_context
+                .map(|context| context.active_argument_index)
+                .unwrap_or(0),
             availability_summary,
-            provisional: matches!(entry.admission_category, crate::AdmissionCategory::Preview),
+            provisional: function_help.deferred_or_profile_limited,
         })
     }
 
@@ -2178,33 +2167,26 @@ impl RuntimeAdapter {
             formula_text,
         )
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
-
-        let bind_context = build_bind_context(&source);
-
-        let previous_result = session.latest_result.as_ref();
-        let result = apply_formula_edit(FormulaEditRequest {
-            source: source.clone(),
-            bind_context,
-            previous_green_tree: previous_result.map(|result| &result.green_tree),
-            previous_red_projection: previous_result.map(|result| &result.red_projection),
-            previous_bound_formula: previous_result
-                .and_then(|result| result.bound_formula.as_ref()),
-            follow_on_stage: EditFollowOnStage::ParseAndBind,
-            semantic_plan_options: None,
-        });
+        let result = build_editor_service(&source).apply_edit(
+            source,
+            session.latest_result.as_ref(),
+            EditorAnalysisStage::SyntaxAndBind,
+            None,
+        );
+        let document = result.document;
 
         session.formula_text_version += 1;
 
         let summary = FormulaEditPacketSummary {
-            formula_token: result.source.formula_token().0,
-            diagnostic_count: result.live_diagnostics.diagnostics.len(),
-            text_change_range: result.text_change_range,
-            reused_green_tree: result.reuse_summary.reused_green_tree,
-            reused_red_projection: result.reuse_summary.reused_red_projection,
-            reused_bound_formula: result.reuse_summary.reused_bound_formula,
+            formula_token: document.source.formula_token().0,
+            diagnostic_count: document.live_diagnostics.diagnostics.len(),
+            text_change_range: document.text_change_range,
+            reused_green_tree: document.reuse_summary.reused_green_tree,
+            reused_red_projection: document.reuse_summary.reused_red_projection,
+            reused_bound_formula: document.reuse_summary.reused_bound_formula,
         };
 
-        session.latest_result = Some(result);
+        session.latest_result = Some(document);
         summary
     }
 
@@ -2257,7 +2239,15 @@ fn build_bind_context(source: &FormulaSourceRecord) -> BindContext {
     bind_context
 }
 
-fn summarize_host_output(output: oxfml_core::HostRecalcOutput) -> FormulaEvaluationSummary {
+fn build_editor_service(source: &FormulaSourceRecord) -> EditorEditService<'static> {
+    let bind_context = build_bind_context(source);
+    let snapshot = FunctionSurfaceCatalog::load_current().admitted_execution_snapshot();
+    let environment =
+        EditorEnvironment::new(bind_context).with_inline_library_context_snapshot(snapshot);
+    EditorEditService::new(environment)
+}
+
+fn summarize_host_output(output: HostRecalcOutput) -> FormulaEvaluationSummary {
     let returned_presentation_hint_status =
         summarize_presentation_hint(output.returned_value_surface.presentation_hint);
     let host_style_state_status = summarize_host_style_state();
@@ -2278,6 +2268,30 @@ fn summarize_host_output(output: oxfml_core::HostRecalcOutput) -> FormulaEvaluat
             oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
         },
         trace_event_count: output.trace_events.len(),
+    }
+}
+
+fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSummary {
+    let returned_presentation_hint_status =
+        summarize_presentation_hint(result.returned_value_surface.presentation_hint);
+    let host_style_state_status = summarize_host_style_state();
+
+    FormulaEvaluationSummary {
+        formula_token: result.source.formula_token().0,
+        worksheet_value_summary: summarize_eval_value(&result.published_worksheet_value),
+        payload_summary: result.returned_value_surface.payload_summary.clone(),
+        returned_value_surface_kind: format!("{:?}", result.returned_value_surface.kind),
+        returned_presentation_hint_status: returned_presentation_hint_status.clone(),
+        host_style_state_status: host_style_state_status.clone(),
+        effective_display_status: derive_effective_display_status(
+            &returned_presentation_hint_status,
+            &host_style_state_status,
+        ),
+        commit_decision_kind: match result.commit_decision {
+            oxfml_core::AcceptDecision::Accepted(_) => "accepted".to_string(),
+            oxfml_core::AcceptDecision::Rejected(_) => "rejected".to_string(),
+        },
+        trace_event_count: result.trace_events.len(),
     }
 }
 
@@ -2379,6 +2393,7 @@ fn build_replay_scenario(scenario: &ScenarioRecord, run: &ScenarioRunRecord) -> 
         scenario_id: scenario.scenario_id.clone(),
         lane_id: LaneId("dnaonecalc".to_string()),
         events,
+        source_metadata: None,
         registry_refs: vec![
             RegistryRef {
                 family: "dnaonecalc-host".to_string(),
@@ -2420,24 +2435,6 @@ fn unix_time_millis() -> Result<u64, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?;
     Ok(duration.as_millis() as u64)
-}
-
-fn summarize_arity(min: usize, max: usize) -> String {
-    if min == max {
-        min.to_string()
-    } else {
-        format!("{min}..{max}")
-    }
-}
-
-fn signature_help_argument_index(
-    source: &FormulaSourceRecord,
-    green_tree: &oxfml_core::GreenTreeRoot,
-    cursor_offset: usize,
-) -> usize {
-    oxfml_core::signature_help_context_at_cursor(source, green_tree, cursor_offset)
-        .map(|context| context.active_argument_index)
-        .unwrap_or(0)
 }
 
 fn to_sorted_set(values: impl IntoIterator<Item = String>) -> BTreeSet<String> {

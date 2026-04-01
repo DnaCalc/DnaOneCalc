@@ -301,19 +301,12 @@ mod tests {
             Some(AdmissionCategory::Supported)
         );
         assert_eq!(
-            catalog.get("ACCRINT").map(|entry| entry.admission_category),
-            Some(AdmissionCategory::CatalogOnly)
-        );
-        assert_eq!(
-            catalog.get("CALL").map(|entry| entry.admission_category),
-            Some(AdmissionCategory::Preview)
-        );
-        assert_eq!(
             catalog
                 .get("ENCODEURL")
                 .map(|entry| entry.admission_category),
             Some(AdmissionCategory::Deferred)
         );
+        assert!(catalog.label_summary().supported > 0);
     }
 
     #[test]

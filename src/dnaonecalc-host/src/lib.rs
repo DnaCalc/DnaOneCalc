@@ -128,6 +128,7 @@ pub fn run_dependency_probe() -> Result<DependencyProbeReport, DependencyProbeEr
             source_label: "sum_probe".to_string(),
             normalized_family: "evaluation.sum".to_string(),
         }],
+        source_metadata: None,
         registry_refs: vec![RegistryRef {
             family: "probe".to_string(),
             version: "v1".to_string(),
