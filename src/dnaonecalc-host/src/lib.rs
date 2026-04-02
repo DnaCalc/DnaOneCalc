@@ -71,9 +71,9 @@ pub use runtime::{
     OpenedReplayCaptureSummary, OpenedTwinCompareSummary, OpenedWitnessSummary, PlatformGate,
     PromotedScenarioIndex, PromotedScenarioIndexRow, PromotedScenarioRegressionSummary,
     RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
-    RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter, ScenarioLibraryFilter,
-    ScenarioLibrarySavedView, ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail,
-    UpstreamPressurePacket,
+    RetainedRunDiffSummary, RetainedRunReopenInvariantReport, RetainedRunXRaySummary,
+    RuntimeAdapter, ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef,
+    ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -1410,6 +1410,72 @@ mod tests {
             reopened_summary.evaluation.worksheet_value_summary,
             "Number(6)"
         );
+    }
+
+    #[test]
+    fn retained_run_reopen_invariants_hold_for_active_and_reopened_h1_flow() {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let (recalc_context, recalc_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let fixture_root = FixtureRoot::new("retained-reopen-invariants");
+        let store = fixture_root.retained_store();
+        let persisted = fixture.persist_run(
+            &store,
+            &recalc_context,
+            &recalc_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+
+        let report = fixture
+            .adapter
+            .verify_reopened_driven_scenario_run_invariants(&store, &persisted.run.scenario_run_id)
+            .expect("retained reopen invariants should hold");
+
+        assert!(report.scenario_ref_preserved);
+        assert!(report.formula_identity_preserved);
+        assert!(report.structure_context_preserved);
+        assert!(report.session_state_preserved);
+        assert!(report.capability_snapshot_links_preserved);
+        assert!(report.replay_projection_links_preserved);
+        assert!(report.all_preserved());
+    }
+
+    #[test]
+    fn retained_run_reopen_invariant_regressions_surface_when_persisted_state_is_tampered() {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let (recalc_context, recalc_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let fixture_root = FixtureRoot::new("retained-reopen-regression");
+        let store = fixture_root.retained_store();
+        let persisted = fixture.persist_run(
+            &store,
+            &recalc_context,
+            &recalc_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+
+        let mut tampered_run = store
+            .read_run(&persisted.run.scenario_run_id)
+            .expect("run should read for tamper setup");
+        tampered_run.host_recalc_sequence += 7;
+        fs::write(
+            &persisted.run_path,
+            serde_json::to_string_pretty(&tampered_run).expect("tampered run should serialize"),
+        )
+        .expect("tampered run should write");
+
+        let error = fixture
+            .adapter
+            .verify_reopened_driven_scenario_run_invariants(&store, &persisted.run.scenario_run_id)
+            .expect_err("tampered retained run should fail reopen invariants");
+
+        assert!(error.contains("session_state"));
     }
 
     #[test]

@@ -30,6 +30,8 @@ pub struct ScenarioRecord {
     pub formula_text: String,
     pub formula_channel_kind: String,
     pub host_profile_id: String,
+    pub host_session_id: String,
+    pub host_recalc_sequence: u64,
     pub host_driving_packet_kind: String,
     pub host_driving_block: String,
     pub recalc_context: RetainedRecalcContextRecord,

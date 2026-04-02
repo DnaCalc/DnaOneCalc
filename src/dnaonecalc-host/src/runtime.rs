@@ -489,6 +489,16 @@ pub struct DocumentRoundTripInvariantReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedRunReopenInvariantReport {
+    pub scenario_ref_preserved: bool,
+    pub formula_identity_preserved: bool,
+    pub structure_context_preserved: bool,
+    pub session_state_preserved: bool,
+    pub capability_snapshot_links_preserved: bool,
+    pub replay_projection_links_preserved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenedReplayCaptureSummary {
     pub replay_capture_id: String,
     pub scenario_id: String,
@@ -687,6 +697,17 @@ impl DocumentRoundTripInvariantReport {
             && self.library_context_snapshot_ref_preserved
             && self.artifact_index_preserved
             && self.effective_display_status_preserved
+    }
+}
+
+impl RetainedRunReopenInvariantReport {
+    pub const fn all_preserved(&self) -> bool {
+        self.scenario_ref_preserved
+            && self.formula_identity_preserved
+            && self.structure_context_preserved
+            && self.session_state_preserved
+            && self.capability_snapshot_links_preserved
+            && self.replay_projection_links_preserved
     }
 }
 
@@ -1364,6 +1385,8 @@ impl RuntimeAdapter {
             formula_text: driven_host.formula_text().to_string(),
             formula_channel_kind: format!("{:?}", driven_host.formula_channel_kind()),
             host_profile_id: self.host_profile.id().to_string(),
+            host_session_id: recalc_summary.host_session_id.clone(),
+            host_recalc_sequence: recalc_summary.host_recalc_sequence,
             host_driving_packet_kind: recalc_summary.packet_kind.clone(),
             host_driving_block: "driven_single_formula_host".to_string(),
             recalc_context: RetainedRecalcContextRecord {
@@ -1705,6 +1728,146 @@ impl RuntimeAdapter {
             }
             Err(format!(
                 "document round-trip invariants failed: {}",
+                failed.join(", ")
+            ))
+        }
+    }
+
+    pub fn verify_reopened_driven_scenario_run_invariants(
+        &self,
+        store: &RetainedScenarioStore,
+        scenario_run_id: &str,
+    ) -> Result<RetainedRunReopenInvariantReport, String> {
+        let reopened = self.reopen_driven_scenario_run(store, scenario_run_id)?;
+        let capability_snapshot_ref = reopened
+            .retained
+            .run
+            .envelope
+            .capability_snapshot_ref
+            .as_ref()
+            .map(|reference| reference.logical_id.clone());
+        let scenario_capability_ref = reopened
+            .retained
+            .scenario
+            .envelope
+            .capability_snapshot_ref
+            .as_ref()
+            .map(|reference| reference.logical_id.clone());
+        let report = RetainedRunReopenInvariantReport {
+            scenario_ref_preserved: reopened.retained.run.scenario_id
+                == reopened.retained.scenario.scenario_id
+                && reopened.retained.run.scenario_ref.logical_id
+                    == reopened.retained.scenario.scenario_id,
+            formula_identity_preserved: reopened.driven_host.formula_stable_id()
+                == reopened.retained.scenario.provenance.formula_stable_id
+                && reopened.driven_host.formula_text() == reopened.retained.scenario.formula_text
+                && reopened.driven_host.formula_text_version()
+                    == reopened.retained.run.formula_text_version
+                && reopened.retained.run.authored_formula_text
+                    == reopened.retained.scenario.formula_text,
+            structure_context_preserved: reopened.driven_host.structure_context_version()
+                == reopened
+                    .retained
+                    .scenario
+                    .provenance
+                    .structure_context_version,
+            session_state_preserved: reopened.driven_host.session_state().session_id
+                == reopened.retained.run.host_session_id
+                && reopened.retained.scenario.host_session_id
+                    == reopened.retained.run.host_session_id
+                && reopened.driven_host.session_state().recalc_sequence
+                    == reopened.retained.run.host_recalc_sequence
+                && reopened.retained.scenario.host_recalc_sequence
+                    == reopened.retained.run.host_recalc_sequence
+                && reopened
+                    .driven_host
+                    .session_state()
+                    .last_trigger_kind
+                    .as_deref()
+                    == Some(
+                        reopened
+                            .retained
+                            .scenario
+                            .recalc_context
+                            .trigger_kind
+                            .as_str(),
+                    )
+                && reopened
+                    .driven_host
+                    .session_state()
+                    .last_packet_kind
+                    .as_deref()
+                    == Some(reopened.retained.run.envelope.packet_kind.as_str()),
+            capability_snapshot_links_preserved: capability_snapshot_ref == scenario_capability_ref
+                && capability_snapshot_ref
+                    == store
+                        .read_capability_snapshot(
+                            reopened
+                                .retained
+                                .run
+                                .envelope
+                                .capability_snapshot_ref
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    "retained run is missing a capability snapshot ref".to_string()
+                                })?
+                                .logical_id
+                                .as_str(),
+                        )?
+                        .envelope
+                        .stable_ref()
+                        .content_hash
+                        .map(|_| {
+                            reopened
+                                .retained
+                                .run
+                                .envelope
+                                .capability_snapshot_ref
+                                .as_ref()
+                                .expect("capability snapshot ref already checked")
+                                .logical_id
+                                .clone()
+                        }),
+            replay_projection_links_preserved: reopened
+                .retained
+                .run
+                .replay_projection
+                .as_ref()
+                .map(|projection| {
+                    projection.formula_stable_id
+                        == reopened.retained.scenario.provenance.formula_stable_id
+                        && projection.library_context_snapshot_ref
+                            == reopened.retained.scenario.library_context_snapshot_ref
+                        && projection.phase.as_deref() == Some("CommittedOrRejected")
+                        && !projection.trace_event_kinds.is_empty()
+                })
+                .unwrap_or(false),
+        };
+
+        if report.all_preserved() {
+            Ok(report)
+        } else {
+            let mut failed = Vec::new();
+            if !report.scenario_ref_preserved {
+                failed.push("scenario_ref");
+            }
+            if !report.formula_identity_preserved {
+                failed.push("formula_identity");
+            }
+            if !report.structure_context_preserved {
+                failed.push("structure_context");
+            }
+            if !report.session_state_preserved {
+                failed.push("session_state");
+            }
+            if !report.capability_snapshot_links_preserved {
+                failed.push("capability_snapshot_links");
+            }
+            if !report.replay_projection_links_preserved {
+                failed.push("replay_projection_links");
+            }
+            Err(format!(
+                "retained run reopen invariants failed: {}",
                 failed.join(", ")
             ))
         }
