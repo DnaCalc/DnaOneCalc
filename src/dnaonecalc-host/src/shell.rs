@@ -14,6 +14,7 @@ pub const FORMULA_REGION_ID: &str = "formula";
 pub const RESULT_REGION_ID: &str = "result";
 pub const DIAGNOSTICS_REGION_ID: &str = "diagnostics";
 pub const CAPABILITY_REGION_ID: &str = "capability_center";
+pub const XRAY_REGION_ID: &str = "xray";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormulaEditorState {
@@ -162,6 +163,7 @@ pub struct OneCalcShellApp {
     diagnostics_text: String,
     support_sidebar_visible: bool,
     capability_center_visible: bool,
+    xray_visible: bool,
     editor_focus_requested: bool,
     smoke_mode: bool,
     smoke_reported: bool,
@@ -239,6 +241,7 @@ impl OneCalcShellApp {
             diagnostics_text,
             support_sidebar_visible: true,
             capability_center_visible: false,
+            xray_visible: false,
             editor_focus_requested: false,
             smoke_mode,
             smoke_reported: false,
@@ -260,6 +263,7 @@ impl OneCalcShellApp {
             RESULT_REGION_ID,
             DIAGNOSTICS_REGION_ID,
             CAPABILITY_REGION_ID,
+            XRAY_REGION_ID,
         ]
     }
 
@@ -276,6 +280,10 @@ impl OneCalcShellApp {
         if self.capability_center_visible {
             self.support_sidebar_visible = true;
         }
+    }
+
+    fn toggle_xray(&mut self) {
+        self.xray_visible = !self.xray_visible;
     }
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
@@ -297,6 +305,11 @@ impl OneCalcShellApp {
 
         if ctx.input(|input| input.key_pressed(egui::Key::F7)) {
             self.toggle_capability_center();
+            self.request_editor_focus();
+        }
+
+        if ctx.input(|input| input.key_pressed(egui::Key::F8)) {
+            self.toggle_xray();
             self.request_editor_focus();
         }
     }
@@ -337,10 +350,21 @@ impl OneCalcShellApp {
                 {
                     self.toggle_capability_center();
                 }
+                if ui
+                    .button(if self.xray_visible {
+                        "Hide X-Ray"
+                    } else {
+                        "Show X-Ray"
+                    })
+                    .clicked()
+                {
+                    self.toggle_xray();
+                }
                 ui.separator();
                 ui.small("Ctrl+Enter evaluate");
                 ui.small("F6 inspector");
                 ui.small("F7 capability");
+                ui.small("F8 X-Ray");
             });
         });
     }
@@ -625,6 +649,91 @@ impl OneCalcShellApp {
             });
     }
 
+    fn render_xray_panel(&self, ctx: &egui::Context) {
+        if !self.xray_visible {
+            return;
+        }
+
+        egui::SidePanel::left(XRAY_REGION_ID)
+            .resizable(true)
+            .default_width(300.0)
+            .min_width(260.0)
+            .show(ctx, |ui| {
+                ui.heading("X-Ray");
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.group(|ui| {
+                            ui.label("Parse");
+                            ui.separator();
+                            ui.monospace(format!(
+                                "formula_token={}\nparse_diagnostic_count={}\ntext_change_range={:?}",
+                                self.latest_edit_packet.formula_token,
+                                self.latest_edit_packet.diagnostic_count,
+                                self.latest_edit_packet.text_change_range
+                            ));
+                        });
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            ui.label("Bind");
+                            ui.separator();
+                            ui.monospace(format!(
+                                "reused_bound_formula={}\nreused_red_projection={}\ncurrent_help={}",
+                                self.latest_edit_packet.reused_bound_formula,
+                                self.latest_edit_packet.reused_red_projection,
+                                self.function_help
+                                    .as_ref()
+                                    .map(|help| help.display_name.as_str())
+                                    .unwrap_or("unavailable")
+                            ));
+                        });
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            ui.label("Eval");
+                            ui.separator();
+                            if let Some(summary) = &self.latest_evaluation {
+                                ui.monospace(format!(
+                                    "worksheet_value={}\npayload_summary={}\neffective_display={}\nreturned_surface={}",
+                                    summary.worksheet_value_summary,
+                                    summary.payload_summary,
+                                    summary.effective_display_status,
+                                    summary.returned_value_surface_kind
+                                ));
+                            } else {
+                                ui.small("No evaluated runtime result is available yet.");
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            ui.label("Trace");
+                            ui.separator();
+                            if let Some(summary) = &self.latest_evaluation {
+                                ui.monospace(format!(
+                                    "trace_event_count={}\ncommit_decision={}",
+                                    summary.trace_event_count, summary.commit_decision_kind
+                                ));
+                            } else {
+                                ui.small("Trace truth appears after evaluation.");
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            ui.label("Provenance");
+                            ui.separator();
+                            ui.monospace(format!(
+                                "host_profile={}\npacket_register={}\nlatest_capability_snapshot={}",
+                                self.host_profile_id,
+                                self.packet_register_text,
+                                self.latest_capability_snapshot_id
+                                    .as_deref()
+                                    .unwrap_or("unavailable")
+                            ));
+                        });
+                    });
+            });
+    }
+
     fn render_result_panel(&self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.push_id(RESULT_REGION_ID, |ui| {
@@ -790,6 +899,7 @@ impl eframe::App for OneCalcShellApp {
         self.handle_keyboard_shortcuts(ctx);
         self.render_context_bar(ctx);
         self.render_formula_panel(ctx);
+        self.render_xray_panel(ctx);
         self.render_support_sidebar(ctx);
         self.render_result_panel(ctx);
 
@@ -936,7 +1046,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_app_exposes_the_three_core_regions() {
+    fn shell_app_exposes_the_promoted_shell_regions() {
         assert_eq!(
             OneCalcShellApp::region_ids(),
             &[
@@ -944,6 +1054,7 @@ mod tests {
                 RESULT_REGION_ID,
                 DIAGNOSTICS_REGION_ID,
                 CAPABILITY_REGION_ID,
+                XRAY_REGION_ID,
             ]
         );
     }
@@ -1025,6 +1136,9 @@ mod tests {
         app.editor_focus_requested = true;
         app.request_editor_focus();
         assert!(!app.editor_focus_requested);
+
+        app.toggle_xray();
+        assert!(app.xray_visible);
     }
 
     #[test]
