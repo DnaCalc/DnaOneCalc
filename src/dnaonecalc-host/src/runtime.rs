@@ -484,6 +484,7 @@ pub struct DocumentRoundTripInvariantReport {
     pub structure_context_preserved: bool,
     pub session_state_preserved: bool,
     pub library_context_snapshot_ref_preserved: bool,
+    pub governing_capability_snapshot_preserved: bool,
     pub artifact_index_preserved: bool,
     pub effective_display_status_preserved: bool,
 }
@@ -695,6 +696,7 @@ impl DocumentRoundTripInvariantReport {
             && self.structure_context_preserved
             && self.session_state_preserved
             && self.library_context_snapshot_ref_preserved
+            && self.governing_capability_snapshot_preserved
             && self.artifact_index_preserved
             && self.effective_display_status_preserved
     }
@@ -1588,6 +1590,13 @@ impl RuntimeAdapter {
         let artifact_index = retained_run
             .map(document_artifact_index_from_retained_run)
             .unwrap_or_default();
+        let governing_capability_snapshot_id = retained_run.map(|persisted| {
+            persisted
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
+                .clone()
+        });
 
         let document = OneCalcDocumentRecord {
             document_id,
@@ -1612,6 +1621,7 @@ impl RuntimeAdapter {
             effective_display_status: recalc_summary.evaluation.effective_display_status.clone(),
             function_surface_policy_id: "onecalc:admitted_execution:supported+preview".to_string(),
             library_context_snapshot_ref: snapshot_ref,
+            governing_capability_snapshot_id,
             view_state: DocumentViewStateRecord {
                 active_surface: "formula_workbench".to_string(),
                 cursor_offset: driven_host.formula_text().len(),
@@ -1640,6 +1650,14 @@ impl RuntimeAdapter {
                 "document host profile {} does not match runtime {}",
                 document.host_profile_id,
                 self.host_profile.id()
+            ));
+        }
+        let artifact_capability_snapshot_id =
+            document_capability_snapshot_id_from_artifact_index(&document.artifact_index);
+        if document.governing_capability_snapshot_id != artifact_capability_snapshot_id {
+            return Err(format!(
+                "document governing capability snapshot {:?} does not match artifact index {:?}",
+                document.governing_capability_snapshot_id, artifact_capability_snapshot_id
             ));
         }
 
@@ -1695,6 +1713,10 @@ impl RuntimeAdapter {
                     == persisted_document.document.host_recalc_sequence,
             library_context_snapshot_ref_preserved: reopened.document.library_context_snapshot_ref
                 == persisted_document.document.library_context_snapshot_ref,
+            governing_capability_snapshot_preserved: reopened
+                .document
+                .governing_capability_snapshot_id
+                == persisted_document.document.governing_capability_snapshot_id,
             artifact_index_preserved: reopened.document.artifact_index
                 == persisted_document.document.artifact_index,
             effective_display_status_preserved: reopened.document.effective_display_status
@@ -1719,6 +1741,9 @@ impl RuntimeAdapter {
             }
             if !report.library_context_snapshot_ref_preserved {
                 failed.push("library_context_snapshot_ref");
+            }
+            if !report.governing_capability_snapshot_preserved {
+                failed.push("governing_capability_snapshot");
             }
             if !report.artifact_index_preserved {
                 failed.push("artifact_index");
@@ -1887,11 +1912,27 @@ impl RuntimeAdapter {
         manifest_path: impl AsRef<Path>,
     ) -> Result<OpenedOneCalcWorkspace, String> {
         let manifest = read_workspace_manifest(manifest_path)?;
-        let reopened_documents = manifest
-            .document_entries
-            .iter()
-            .map(|entry| self.reopen_isolated_document(&entry.document_path))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut reopened_documents = Vec::with_capacity(manifest.document_entries.len());
+        for entry in &manifest.document_entries {
+            let reopened = self.reopen_isolated_document(&entry.document_path)?;
+            if entry.document_id != reopened.document.document_id {
+                return Err(format!(
+                    "workspace entry {} does not match reopened document {}",
+                    entry.document_id, reopened.document.document_id
+                ));
+            }
+            if entry.governing_capability_snapshot_id
+                != reopened.document.governing_capability_snapshot_id
+            {
+                return Err(format!(
+                    "workspace entry {} governing capability snapshot {:?} does not match reopened document {:?}",
+                    entry.document_id,
+                    entry.governing_capability_snapshot_id,
+                    reopened.document.governing_capability_snapshot_id
+                ));
+            }
+            reopened_documents.push(reopened);
+        }
 
         Ok(OpenedOneCalcWorkspace {
             manifest,
@@ -3373,6 +3414,15 @@ fn document_artifact_index_from_retained_run(
             embedded: false,
         },
     ]
+}
+
+fn document_capability_snapshot_id_from_artifact_index(
+    artifact_index: &[DocumentArtifactIndexEntry],
+) -> Option<String> {
+    artifact_index
+        .iter()
+        .find(|entry| entry.artifact_kind == ArtifactKind::CapabilityLedgerSnapshot.id())
+        .map(|entry| entry.logical_id.clone())
 }
 
 fn sanitize_slug(value: &str) -> String {

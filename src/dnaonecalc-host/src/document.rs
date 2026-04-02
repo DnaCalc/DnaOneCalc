@@ -46,6 +46,7 @@ pub struct OneCalcDocumentRecord {
     pub effective_display_status: String,
     pub function_surface_policy_id: String,
     pub library_context_snapshot_ref: Option<String>,
+    pub governing_capability_snapshot_id: Option<String>,
     pub view_state: DocumentViewStateRecord,
     pub artifact_index: Vec<DocumentArtifactIndexEntry>,
 }
@@ -263,6 +264,13 @@ fn flatten_document(document: &OneCalcDocumentRecord) -> Vec<(String, String)> {
                 .unwrap_or_default(),
         ),
         (
+            "scenario.governing_capability_snapshot_id".to_string(),
+            document
+                .governing_capability_snapshot_id
+                .clone()
+                .unwrap_or_default(),
+        ),
+        (
             "view.active_surface".to_string(),
             document.view_state.active_surface.clone(),
         ),
@@ -339,6 +347,10 @@ fn inflate_document(rows: &BTreeMap<String, String>) -> Result<OneCalcDocumentRe
         effective_display_status: required(rows, "scenario.effective_display_status")?,
         function_surface_policy_id: required(rows, "scenario.function_surface_policy_id")?,
         library_context_snapshot_ref: optional(rows, "scenario.library_context_snapshot_ref"),
+        governing_capability_snapshot_id: optional(
+            rows,
+            "scenario.governing_capability_snapshot_id",
+        ),
         view_state: DocumentViewStateRecord {
             active_surface: required(rows, "view.active_surface")?,
             cursor_offset: parse_usize(rows, "view.cursor_offset")?,
@@ -445,6 +457,7 @@ mod tests {
             effective_display_status: "none".to_string(),
             function_surface_policy_id: "policy-001".to_string(),
             library_context_snapshot_ref: None,
+            governing_capability_snapshot_id: Some("cap-001".to_string()),
             view_state: DocumentViewStateRecord {
                 active_surface: "formula".to_string(),
                 cursor_offset: 4,

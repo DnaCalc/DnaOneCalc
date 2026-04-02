@@ -247,6 +247,14 @@ mod tests {
                 "host_recalc_sequence={}",
                 document.document.host_recalc_sequence
             ),
+            format!(
+                "governing_capability_snapshot={}",
+                document
+                    .document
+                    .governing_capability_snapshot_id
+                    .as_deref()
+                    .unwrap_or("none")
+            ),
             format!("packet_kind={}", document.document.host_driving_packet_kind),
             format!("effective_display={}", document.document.effective_display_status),
             format!("artifact_index_count={}", document.document.artifact_index.len()),
@@ -261,12 +269,13 @@ mod tests {
                     .join("|")
             ),
             format!(
-                "invariants=document_id:{};formula_identity:{};structure_context:{};session_state:{};library_context_snapshot_ref:{};artifact_index:{};effective_display_status:{}",
+                "invariants=document_id:{};formula_identity:{};structure_context:{};session_state:{};library_context_snapshot_ref:{};governing_capability_snapshot:{};artifact_index:{};effective_display_status:{}",
                 invariants.document_id_preserved,
                 invariants.formula_identity_preserved,
                 invariants.structure_context_preserved,
                 invariants.session_state_preserved,
                 invariants.library_context_snapshot_ref_preserved,
+                invariants.governing_capability_snapshot_preserved,
                 invariants.artifact_index_preserved,
                 invariants.effective_display_status_preserved
             ),
@@ -2213,6 +2222,7 @@ mod tests {
         assert!(invariants.structure_context_preserved);
         assert!(invariants.session_state_preserved);
         assert!(invariants.library_context_snapshot_ref_preserved);
+        assert!(invariants.governing_capability_snapshot_preserved);
         assert!(invariants.artifact_index_preserved);
         assert!(invariants.effective_display_status_preserved);
         assert_eq!(
@@ -2227,11 +2237,19 @@ mod tests {
                     persisted_document.document.host_session_id
                 ),
                 "host_recalc_sequence=1".to_string(),
+                format!(
+                    "governing_capability_snapshot={}",
+                    persisted_document
+                        .document
+                        .governing_capability_snapshot_id
+                        .as_deref()
+                        .unwrap_or("none")
+                ),
                 "packet_kind=edit_accept_recalc".to_string(),
                 "effective_display=none".to_string(),
                 "artifact_index_count=3".to_string(),
                 "artifact_kinds=scenario|scenario_run|capability_ledger_snapshot".to_string(),
-                "invariants=document_id:true;formula_identity:true;structure_context:true;session_state:true;library_context_snapshot_ref:true;artifact_index:true;effective_display_status:true".to_string(),
+                "invariants=document_id:true;formula_identity:true;structure_context:true;session_state:true;library_context_snapshot_ref:true;governing_capability_snapshot:true;artifact_index:true;effective_display_status:true".to_string(),
             ]
         );
 
@@ -2409,6 +2427,14 @@ mod tests {
         assert_eq!(
             opened.manifest.active_document_id,
             first_document.document.document_id
+        );
+        assert_eq!(
+            opened.manifest.document_entries[0].governing_capability_snapshot_id,
+            first_document.document.governing_capability_snapshot_id
+        );
+        assert_eq!(
+            opened.manifest.document_entries[1].governing_capability_snapshot_id,
+            second_document.document.governing_capability_snapshot_id
         );
         assert_ne!(
             opened.reopened_documents[0].document.document_id,

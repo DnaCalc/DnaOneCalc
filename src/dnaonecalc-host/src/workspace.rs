@@ -12,6 +12,7 @@ pub struct WorkspaceDocumentEntry {
     pub formula_stable_id: String,
     pub scenario_slug: String,
     pub host_profile_id: String,
+    pub governing_capability_snapshot_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +103,7 @@ fn workspace_document_entry(
         formula_stable_id: document.formula_stable_id.clone(),
         scenario_slug: document.scenario_slug.clone(),
         host_profile_id: document.host_profile_id.clone(),
+        governing_capability_snapshot_id: document.governing_capability_snapshot_id.clone(),
     }
 }
 
