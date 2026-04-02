@@ -159,6 +159,8 @@ pub struct OneCalcShellApp {
     effective_display_render: EffectiveDisplayRenderState,
     result_text: String,
     diagnostics_text: String,
+    support_sidebar_visible: bool,
+    capability_center_visible: bool,
     editor_focus_requested: bool,
     smoke_mode: bool,
     smoke_reported: bool,
@@ -237,6 +239,8 @@ impl OneCalcShellApp {
             effective_display_render: EffectiveDisplayRenderState::none(),
             result_text,
             diagnostics_text,
+            support_sidebar_visible: true,
+            capability_center_visible: false,
             editor_focus_requested: false,
             smoke_mode,
             smoke_reported: false,
@@ -259,6 +263,49 @@ impl OneCalcShellApp {
             DIAGNOSTICS_REGION_ID,
             CAPABILITY_REGION_ID,
         ]
+    }
+
+    fn render_context_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("context_bar").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.strong(format!("Host Profile: {}", self.host_profile_id));
+                ui.separator();
+                ui.label(format!("Packet Kinds: {}", self.packet_register_text));
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::from_rgb(140, 88, 0),
+                    &self.platform_gate_text,
+                );
+                ui.separator();
+                ui.label(&self.function_policy_text);
+                ui.separator();
+                ui.label(&self.conditional_formatting_policy_text);
+                ui.separator();
+                if ui
+                    .button(if self.support_sidebar_visible {
+                        "Hide Inspector"
+                    } else {
+                        "Show Inspector"
+                    })
+                    .clicked()
+                {
+                    self.support_sidebar_visible = !self.support_sidebar_visible;
+                }
+                if ui
+                    .button(if self.capability_center_visible {
+                        "Hide Capability Center"
+                    } else {
+                        "Show Capability Center"
+                    })
+                    .clicked()
+                {
+                    self.capability_center_visible = !self.capability_center_visible;
+                    if self.capability_center_visible {
+                        self.support_sidebar_visible = true;
+                    }
+                }
+            });
+        });
     }
 
     fn render_formula_panel(&mut self, ctx: &egui::Context) {
@@ -444,7 +491,11 @@ impl OneCalcShellApp {
         });
     }
 
-    fn render_support_sidebar(&self, ctx: &egui::Context) {
+    fn render_support_sidebar(&mut self, ctx: &egui::Context) {
+        if !self.support_sidebar_visible {
+            return;
+        }
+
         egui::SidePanel::right(DIAGNOSTICS_REGION_ID)
             .resizable(true)
             .default_width(340.0)
@@ -452,12 +503,36 @@ impl OneCalcShellApp {
             .show(ctx, |ui| {
                 ui.heading("Inspector");
                 ui.separator();
+                ui.horizontal(|ui| {
+                    ui.small("Supporting dock");
+                    if ui
+                        .button(if self.capability_center_visible {
+                            "Collapse Capability Center"
+                        } else {
+                            "Open Capability Center"
+                        })
+                        .clicked()
+                    {
+                        self.capability_center_visible = !self.capability_center_visible;
+                    }
+                });
+                ui.separator();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.group(|ui| self.render_diagnostics_panel(ui));
                         ui.add_space(8.0);
-                        ui.group(|ui| self.render_capability_center(ui));
+                        if self.capability_center_visible {
+                            ui.group(|ui| self.render_capability_center(ui));
+                        } else {
+                            ui.group(|ui| {
+                                ui.heading("Capability Center");
+                                ui.separator();
+                                ui.small(
+                                    "Collapsed to keep the explorer and result surfaces in view.",
+                                );
+                            });
+                        }
                     });
             });
     }
@@ -632,23 +707,7 @@ impl OneCalcShellApp {
 
 impl eframe::App for OneCalcShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("context_bar").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.strong(format!("Host Profile: {}", self.host_profile_id));
-                ui.separator();
-                ui.label(format!("Packet Kinds: {}", self.packet_register_text));
-                ui.separator();
-                ui.colored_label(
-                    egui::Color32::from_rgb(140, 88, 0),
-                    &self.platform_gate_text,
-                );
-                ui.separator();
-                ui.label(&self.function_policy_text);
-                ui.separator();
-                ui.label(&self.conditional_formatting_policy_text);
-            });
-        });
-
+        self.render_context_bar(ctx);
         self.render_formula_panel(ctx);
         self.render_support_sidebar(ctx);
         self.render_result_panel(ctx);
@@ -861,6 +920,14 @@ mod tests {
         assert!(!app.rendered_diagnostics.is_empty());
         assert!(app.rendered_diagnostics[0].contains("Syntax"));
         assert!(app.rendered_diagnostics[0].contains(".."));
+    }
+
+    #[test]
+    fn shell_app_defaults_capability_center_to_a_supporting_collapsed_surface() {
+        let app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), false);
+
+        assert!(app.support_sidebar_visible);
+        assert!(!app.capability_center_visible);
     }
 
     #[test]
