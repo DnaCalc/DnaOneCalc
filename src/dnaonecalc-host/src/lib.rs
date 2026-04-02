@@ -199,6 +199,86 @@ mod tests {
         ]
     }
 
+    fn capability_snapshot_golden_lines(
+        snapshot: &OpenedCapabilitySnapshotSummary,
+        diff: &CapabilitySnapshotDiffSummary,
+    ) -> Vec<String> {
+        vec![
+            format!("host_kind={}", snapshot.host_kind),
+            format!("runtime_class={}", snapshot.runtime_class),
+            format!("capability_floor={}", snapshot.capability_floor),
+            format!(
+                "packet_kind_register={}",
+                snapshot.packet_kind_register.join("|")
+            ),
+            format!(
+                "mode_availability={}",
+                snapshot
+                    .mode_availability
+                    .iter()
+                    .map(|mode| format!("{}:{}", mode.mode_id, mode.state))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+            format!(
+                "function_surface_policy={}",
+                snapshot.function_surface_policy_id
+            ),
+            format!(
+                "diff_base={}",
+                snapshot.diff_base_snapshot_id.as_deref().unwrap_or("none")
+            ),
+            format!("diff_floor={}", diff.diff_floor),
+            format!("diff_mode_changes={}", diff.mode_changes.join("|")),
+        ]
+    }
+
+    fn document_roundtrip_golden_lines(
+        document: &PersistedOneCalcDocument,
+        invariants: &DocumentRoundTripInvariantReport,
+    ) -> Vec<String> {
+        vec![
+            format!("scope={}", document.document.document_scope),
+            format!("format={}", document.document.persistence_format_id),
+            format!("host_profile={}", document.document.host_profile_id),
+            format!("scenario_slug={}", document.document.scenario_slug),
+            format!("packet_kind={}", document.document.host_driving_packet_kind),
+            format!("effective_display={}", document.document.effective_display_status),
+            format!("artifact_index_count={}", document.document.artifact_index.len()),
+            format!(
+                "artifact_kinds={}",
+                document
+                    .document
+                    .artifact_index
+                    .iter()
+                    .map(|entry| entry.artifact_kind.as_str())
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+            format!(
+                "invariants=document_id:{};formula_identity:{};structure_context:{};library_context_snapshot_ref:{};artifact_index:{};effective_display_status:{}",
+                invariants.document_id_preserved,
+                invariants.formula_identity_preserved,
+                invariants.structure_context_preserved,
+                invariants.library_context_snapshot_ref_preserved,
+                invariants.artifact_index_preserved,
+                invariants.effective_display_status_preserved
+            ),
+        ]
+    }
+
+    fn twin_compare_golden_lines(compare: &OpenedTwinCompareSummary) -> Vec<String> {
+        vec![
+            format!("reliability={}", compare.reliability_badge),
+            format!("envelope={}", compare.comparison_envelope.join("|")),
+            format!("mismatches={}", compare.mismatch_lines.join("|")),
+            format!(
+                "projection_limitations={}",
+                compare.projection_limitations.join("|")
+            ),
+        ]
+    }
+
     #[test]
     fn dependency_probe_uses_real_upstream_libraries() {
         let report = run_dependency_probe().expect("dependency probe should succeed");
@@ -1695,6 +1775,20 @@ mod tests {
         assert!(diff.packet_kinds_added.is_empty());
         assert!(!diff.function_surface_policy_changed);
         assert_eq!(diff.diff_floor, "immutable_capability_snapshot_diff");
+        assert_eq!(
+            capability_snapshot_golden_lines(&opened, &diff),
+            vec![
+                "host_kind=dnaonecalc-host".to_string(),
+                "runtime_class=desktop_native_only".to_string(),
+                "capability_floor=OC-H1".to_string(),
+                "packet_kind_register=formula_edit|edit_accept_recalc|manual_recalc|forced_recalc|replay_capture|observation_capture".to_string(),
+                "mode_availability=DNA-only:available|Excel-observed:available|Twin compare:available|Replay:available|Diff:available|Explain:available|Distill:blocked|Handoff:available".to_string(),
+                "function_surface_policy=onecalc:admitted_execution:supported=517::preview=0::experimental=0::deferred=17::catalog_only=0".to_string(),
+                format!("diff_base={}", left.snapshot.capability_snapshot_id),
+                "diff_floor=immutable_capability_snapshot_diff".to_string(),
+                "diff_mode_changes=".to_string(),
+            ]
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1782,6 +1876,15 @@ mod tests {
             .mismatch_lines
             .iter()
             .any(|line| line.contains("formula_text:mismatch")));
+        assert_eq!(
+            twin_compare_golden_lines(&opened),
+            vec![
+                "reliability=direct".to_string(),
+                "envelope=worksheet_value|formula_text".to_string(),
+                "mismatches=worksheet_value:match:Number(42):Number(42):observation surface status=direct capture_loss=none|formula_text:mismatch:=SUM(10,20,12):=SUM(B1:B3):observation surface status=direct capture_loss=none".to_string(),
+                "projection_limitations=display_state_not_in_current_observation_envelope|formatting_not_in_current_observation_envelope|conditional_formatting_not_in_current_observation_envelope".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -1998,6 +2101,20 @@ mod tests {
         assert!(invariants.library_context_snapshot_ref_preserved);
         assert!(invariants.artifact_index_preserved);
         assert!(invariants.effective_display_status_preserved);
+        assert_eq!(
+            document_roundtrip_golden_lines(&persisted_document, &invariants),
+            vec![
+                "scope=isolated_single_formula_instance".to_string(),
+                "format=spreadsheetml2003.onecalc.single_instance.v1".to_string(),
+                "host_profile=OC-H1".to_string(),
+                "scenario_slug=sum-document-invariant".to_string(),
+                "packet_kind=edit_accept_recalc".to_string(),
+                "effective_display=none".to_string(),
+                "artifact_index_count=3".to_string(),
+                "artifact_kinds=scenario|scenario_run|capability_ledger_snapshot".to_string(),
+                "invariants=document_id:true;formula_identity:true;structure_context:true;library_context_snapshot_ref:true;artifact_index:true;effective_display_status:true".to_string(),
+            ]
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
