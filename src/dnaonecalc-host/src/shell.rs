@@ -15,6 +15,11 @@ pub const RESULT_REGION_ID: &str = "result";
 pub const DIAGNOSTICS_REGION_ID: &str = "diagnostics";
 pub const CAPABILITY_REGION_ID: &str = "capability_center";
 pub const XRAY_REGION_ID: &str = "xray";
+const INSPECTOR_DEFAULT_WIDTH: f32 = 340.0;
+const INSPECTOR_MIN_WIDTH: f32 = 300.0;
+const XRAY_DEFAULT_WIDTH: f32 = 300.0;
+const XRAY_MIN_WIDTH: f32 = 260.0;
+const INSPECTOR_DIAGNOSTICS_SPLIT: f32 = 0.42;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormulaEditorState {
@@ -137,6 +142,20 @@ impl EffectiveDisplayRenderState {
         }
         text
     }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+struct ExplorerRegressionState {
+    result_visible: bool,
+    inspector_visible: bool,
+    capability_center_visible: bool,
+    xray_visible: bool,
+    result_scroll_enabled: bool,
+    diagnostics_scroll_enabled: bool,
+    capability_scroll_enabled: bool,
+    xray_scroll_enabled: bool,
+    diagnostics_height_fraction: f32,
 }
 
 pub struct OneCalcShellApp {
@@ -265,6 +284,30 @@ impl OneCalcShellApp {
             CAPABILITY_REGION_ID,
             XRAY_REGION_ID,
         ]
+    }
+
+    #[cfg(test)]
+    fn diagnostics_height_fraction(&self) -> f32 {
+        if self.capability_center_visible {
+            INSPECTOR_DIAGNOSTICS_SPLIT
+        } else {
+            1.0
+        }
+    }
+
+    #[cfg(test)]
+    fn explorer_regression_state(&self) -> ExplorerRegressionState {
+        ExplorerRegressionState {
+            result_visible: true,
+            inspector_visible: self.support_sidebar_visible,
+            capability_center_visible: self.capability_center_visible,
+            xray_visible: self.xray_visible,
+            result_scroll_enabled: true,
+            diagnostics_scroll_enabled: self.support_sidebar_visible,
+            capability_scroll_enabled: self.capability_center_visible,
+            xray_scroll_enabled: self.xray_visible,
+            diagnostics_height_fraction: self.diagnostics_height_fraction(),
+        }
     }
 
     fn request_editor_focus(&mut self) {
@@ -594,8 +637,8 @@ impl OneCalcShellApp {
 
         egui::SidePanel::right(DIAGNOSTICS_REGION_ID)
             .resizable(true)
-            .default_width(340.0)
-            .min_width(300.0)
+            .default_width(INSPECTOR_DEFAULT_WIDTH)
+            .min_width(INSPECTOR_MIN_WIDTH)
             .show(ctx, |ui| {
                 ui.heading("Inspector");
                 ui.separator();
@@ -615,7 +658,7 @@ impl OneCalcShellApp {
                 ui.separator();
                 let inspector_height = ui.available_height().max(0.0);
                 let diagnostics_height = if self.capability_center_visible {
-                    ((inspector_height - 8.0).max(0.0)) * 0.42
+                    ((inspector_height - 8.0).max(0.0)) * INSPECTOR_DIAGNOSTICS_SPLIT
                 } else {
                     inspector_height
                 };
@@ -656,8 +699,8 @@ impl OneCalcShellApp {
 
         egui::SidePanel::left(XRAY_REGION_ID)
             .resizable(true)
-            .default_width(300.0)
-            .min_width(260.0)
+            .default_width(XRAY_DEFAULT_WIDTH)
+            .min_width(XRAY_MIN_WIDTH)
             .show(ctx, |ui| {
                 ui.heading("X-Ray");
                 ui.separator();
@@ -1120,6 +1163,13 @@ mod tests {
 
         assert!(app.support_sidebar_visible);
         assert!(!app.capability_center_visible);
+        let regression = app.explorer_regression_state();
+        assert!(regression.result_visible);
+        assert!(regression.inspector_visible);
+        assert!(regression.result_scroll_enabled);
+        assert!(regression.diagnostics_scroll_enabled);
+        assert!(!regression.capability_scroll_enabled);
+        assert_eq!(regression.diagnostics_height_fraction, 1.0);
     }
 
     #[test]
@@ -1139,6 +1189,36 @@ mod tests {
 
         app.toggle_xray();
         assert!(app.xray_visible);
+    }
+
+    #[test]
+    fn shell_app_regression_state_keeps_result_visible_when_support_surfaces_open() {
+        let mut app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), false);
+
+        app.toggle_capability_center();
+        app.toggle_xray();
+
+        let regression = app.explorer_regression_state();
+        assert!(regression.result_visible);
+        assert!(regression.inspector_visible);
+        assert!(regression.capability_center_visible);
+        assert!(regression.xray_visible);
+        assert!(regression.result_scroll_enabled);
+        assert!(regression.diagnostics_scroll_enabled);
+        assert!(regression.capability_scroll_enabled);
+        assert!(regression.xray_scroll_enabled);
+        assert_eq!(
+            regression.diagnostics_height_fraction,
+            INSPECTOR_DIAGNOSTICS_SPLIT
+        );
+    }
+
+    #[test]
+    fn shell_app_regression_layout_constants_keep_support_surfaces_out_of_the_result_center() {
+        assert!(INSPECTOR_DEFAULT_WIDTH >= INSPECTOR_MIN_WIDTH);
+        assert!(XRAY_DEFAULT_WIDTH >= XRAY_MIN_WIDTH);
+        assert!(INSPECTOR_DIAGNOSTICS_SPLIT > 0.0);
+        assert!(INSPECTOR_DIAGNOSTICS_SPLIT < 1.0);
     }
 
     #[test]
