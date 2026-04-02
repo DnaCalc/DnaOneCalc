@@ -1300,6 +1300,7 @@ pub fn launch_shell_with_formula(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{adapter_for, FormulaScenarioFamily};
 
     fn shell_xray_golden_lines(xray: &ShellXRayModel) -> Vec<String> {
         let mut lines = vec![
@@ -1406,8 +1407,8 @@ mod tests {
     #[test]
     fn shell_app_projects_live_diagnostics_and_spans_for_invalid_formula() {
         let app = OneCalcShellApp::with_formula(
-            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
-            "=SUM(1,".to_string(),
+            adapter_for(OneCalcHostProfile::OcH0),
+            FormulaScenarioFamily::ExplorerInvalid.formula().to_string(),
             true,
         );
 
@@ -1544,8 +1545,8 @@ mod tests {
     #[test]
     fn shell_app_projects_structured_xray_model_for_invalid_formula_without_eval() {
         let app = OneCalcShellApp::with_formula(
-            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
-            "=SUM(1,".to_string(),
+            adapter_for(OneCalcHostProfile::OcH0),
+            FormulaScenarioFamily::ExplorerInvalid.formula().to_string(),
             false,
         );
         let xray = app.xray_model();
@@ -1558,8 +1559,10 @@ mod tests {
     #[test]
     fn shell_app_projects_function_completion_into_editor_flow() {
         let app = OneCalcShellApp::with_formula(
-            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
-            "=SU".to_string(),
+            adapter_for(OneCalcHostProfile::OcH0),
+            FormulaScenarioFamily::ExplorerCompletionStem
+                .formula()
+                .to_string(),
             false,
         );
 
@@ -1617,8 +1620,10 @@ mod tests {
     #[test]
     fn shell_app_projects_array_results_into_the_main_result_surface_state() {
         let app = OneCalcShellApp::with_formula(
-            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
-            "=SEQUENCE(2,3)".to_string(),
+            adapter_for(OneCalcHostProfile::OcH0),
+            FormulaScenarioFamily::ExplorerSequence23
+                .formula()
+                .to_string(),
             true,
         );
 

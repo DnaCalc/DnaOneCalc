@@ -8,6 +8,8 @@ pub mod observation;
 pub mod retained;
 pub mod runtime;
 pub mod shell;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod workspace;
 
 use oxfml_core::{parse_formula, FormulaChannelKind, FormulaSourceRecord, ParseRequest};
@@ -159,9 +161,12 @@ pub fn run_dependency_probe() -> Result<DependencyProbeReport, DependencyProbeEr
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
 
     use super::*;
+    use crate::test_support::{
+        adapter_for, persist_observation_fixture, DrivenHostFixture, FixtureRoot,
+        FormulaScenarioFamily, ObservationScenarioFamily,
+    };
 
     fn retained_xray_golden_lines(xray: &RetainedRunXRaySummary) -> Vec<String> {
         vec![
@@ -206,7 +211,7 @@ mod tests {
 
     #[test]
     fn runtime_adapter_exposes_profile_and_packet_register() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+        let adapter = adapter_for(OneCalcHostProfile::OcH0);
 
         assert_eq!(adapter.host_profile(), OneCalcHostProfile::OcH0);
         assert_eq!(adapter.host_profile().id(), "OC-H0");
@@ -222,9 +227,9 @@ mod tests {
 
     #[test]
     fn runtime_adapter_evaluates_admitted_formula_through_upstream_host() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+        let adapter = adapter_for(OneCalcHostProfile::OcH0);
         let summary = adapter
-            .evaluate_formula("=SUM(1,2,3)")
+            .evaluate_formula(FormulaScenarioFamily::ExplorerSum.formula())
             .expect("admitted SUM formula should evaluate");
 
         assert!(!summary.formula_token.is_empty());
@@ -239,7 +244,7 @@ mod tests {
 
     #[test]
     fn runtime_adapter_evaluates_array_formula_with_bounded_preview() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+        let adapter = adapter_for(OneCalcHostProfile::OcH0);
         let summary = adapter
             .evaluate_formula("=SEQUENCE(8,7)")
             .expect("admitted array formula should evaluate");
@@ -1175,30 +1180,20 @@ mod tests {
 
     #[test]
     fn h1_runs_persist_scenario_and_scenario_run_and_reopen_through_runtime() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let recalc_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context.clone())
-            .expect("edit-and-accept recalc should succeed");
-
-        let store_root = std::env::temp_dir().join(format!(
-            "dnaonecalc-h1-retained-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&store_root);
-        let store = RetainedScenarioStore::new(&store_root);
-        let persisted = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &recalc_context,
-                &recalc_summary,
-                "SUM baseline",
-            )
-            .expect("retained scenario and run should persist");
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let (recalc_context, recalc_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let fixture_root = FixtureRoot::new("h1-retained");
+        let store = fixture_root.retained_store();
+        let persisted = fixture.persist_run(
+            &store,
+            &recalc_context,
+            &recalc_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
 
         assert!(persisted.scenario_path.exists());
         assert!(persisted.run_path.exists());
@@ -1254,7 +1249,8 @@ mod tests {
                 .capability_snapshot_id
         );
 
-        let mut reopened = adapter
+        let mut reopened = fixture
+            .adapter
             .reopen_driven_scenario_run(&store, &persisted.run.scenario_run_id)
             .expect("retained run should reopen");
         assert_eq!(
@@ -1270,7 +1266,8 @@ mod tests {
             recalc_summary.formula_text_version
         );
 
-        let reopened_summary = adapter
+        let reopened_summary = fixture
+            .adapter
             .manual_recalc(
                 &mut reopened.driven_host,
                 RecalcContext::manual(Some(46_000.0), Some(0.25)),
@@ -1281,39 +1278,25 @@ mod tests {
             reopened_summary.evaluation.worksheet_value_summary,
             "Number(6)"
         );
-
-        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
     fn retained_runs_emit_replay_capture_outputs_and_open_them_through_oxreplay() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.replay", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let recalc_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let recalc_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", recalc_context)
-            .expect("replay source recalc should succeed");
-
-        let root = std::env::temp_dir().join(format!(
-            "dnaonecalc-replay-capture-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let store = RetainedScenarioStore::new(&root);
-        let persisted = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &recalc_context,
-                &recalc_summary,
-                "SUM replay",
-            )
-            .expect("retained run should persist");
-        let replay_capture = adapter
-            .emit_replay_capture_for_run(&store, &persisted.run.scenario_run_id)
-            .expect("replay capture should emit");
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let (recalc_context, recalc_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let fixture_root = FixtureRoot::new("replay-capture");
+        let store = fixture_root.retained_store();
+        let persisted = fixture.persist_run(
+            &store,
+            &recalc_context,
+            &recalc_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let replay_capture = fixture.emit_replay_capture(&store, &persisted);
 
         assert!(replay_capture.capture_path.exists());
         assert!(replay_capture.replay_path.exists());
@@ -1338,7 +1321,8 @@ mod tests {
             replay_capture.capture.replay_capture_id
         );
 
-        let opened = adapter
+        let opened = fixture
+            .adapter
             .open_replay_capture(&store, &replay_capture.capture.replay_capture_id)
             .expect("replay capture should open");
         assert!(opened.replay_ready);
@@ -1357,50 +1341,39 @@ mod tests {
             Some("CommittedOrRejected")
         );
         assert!(opened.projection_alias.is_none());
-
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn retained_run_xray_and_diff_surfaces_open_on_real_retained_data() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.xray", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let store_root =
-            std::env::temp_dir().join(format!("dnaonecalc-xray-diff-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&store_root);
-        let store = RetainedScenarioStore::new(&store_root);
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("xray-diff");
+        let store = fixture_root.retained_store();
 
-        let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let first_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
-            .expect("first xray run should succeed");
-        let first = adapter
-            .persist_driven_scenario_run(&store, &host, &first_context, &first_summary, "SUM xray")
-            .expect("first retained run should persist");
-        let first_replay = adapter
-            .emit_replay_capture_for_run(&store, &first.run.scenario_run_id)
-            .expect("first replay capture should emit");
+        let (first_context, first_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let first = fixture.persist_run(
+            &store,
+            &first_context,
+            &first_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let first_replay = fixture.emit_replay_capture(&store, &first);
 
-        let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
-        let second_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
-            .expect("second xray run should succeed");
-        let second = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &second_context,
-                &second_summary,
-                "SUM xray",
-            )
-            .expect("second retained run should persist");
-        let second_replay = adapter
-            .emit_replay_capture_for_run(&store, &second.run.scenario_run_id)
-            .expect("second replay capture should emit");
+        let (second_context, second_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let second = fixture.persist_run(
+            &store,
+            &second_context,
+            &second_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
+        let second_replay = fixture.emit_replay_capture(&store, &second);
 
-        let xray = adapter
+        let xray = fixture
+            .adapter
             .open_retained_run_xray(&store, &first.run.scenario_run_id)
             .expect("retained X-Ray should open");
         assert_eq!(xray.scenario_id, first.scenario.scenario_id);
@@ -1448,7 +1421,8 @@ mod tests {
             ]
         );
 
-        let diff = adapter
+        let diff = fixture
+            .adapter
             .diff_retained_run_xray(
                 &store,
                 &first.run.scenario_run_id,
@@ -1473,50 +1447,39 @@ mod tests {
         assert_eq!(diff.diff_floor, "retained_artifact_direct_diff");
         assert!(!first_replay.capture.replay_capture_id.is_empty());
         assert!(!second_replay.capture.replay_capture_id.is_empty());
-
-        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
     fn retained_witness_generation_uses_real_diff_state_and_keeps_blocked_dimensions_explicit() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.witness", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let store_root =
-            std::env::temp_dir().join(format!("dnaonecalc-witness-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&store_root);
-        let store = RetainedScenarioStore::new(&store_root);
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("witness");
+        let store = fixture_root.retained_store();
 
-        let left_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let left_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", left_context)
-            .expect("left witness run should succeed");
-        let left = adapter
-            .persist_driven_scenario_run(&store, &host, &left_context, &left_summary, "SUM witness")
-            .expect("left retained run should persist");
-        adapter
-            .emit_replay_capture_for_run(&store, &left.run.scenario_run_id)
-            .expect("left replay capture should emit");
+        let (left_context, left_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let left = fixture.persist_run(
+            &store,
+            &left_context,
+            &left_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        fixture.emit_replay_capture(&store, &left);
 
-        let right_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
-        let right_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", right_context)
-            .expect("right witness run should succeed");
-        let right = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &right_context,
-                &right_summary,
-                "SUM witness",
-            )
-            .expect("right retained run should persist");
-        adapter
-            .emit_replay_capture_for_run(&store, &right.run.scenario_run_id)
-            .expect("right replay capture should emit");
+        let (right_context, right_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let right = fixture.persist_run(
+            &store,
+            &right_context,
+            &right_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
+        fixture.emit_replay_capture(&store, &right);
 
-        let persisted = adapter
+        let persisted = fixture
+            .adapter
             .generate_retained_witness(
                 &store,
                 &left.run.scenario_run_id,
@@ -1534,7 +1497,8 @@ mod tests {
             right.run.scenario_run_id
         );
 
-        let opened = adapter
+        let opened = fixture
+            .adapter
             .open_witness(&store, &persisted.witness.witness_id)
             .expect("witness should open");
         assert_eq!(opened.explain_floor, "retained_diff_explain_summary");
@@ -1549,64 +1513,55 @@ mod tests {
             .blocked_dimensions
             .contains(&"no_oxreplay_explain_adapter_invocation_yet".to_string()));
         assert!(opened.replay_projection_aliases.is_empty());
-
-        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
     fn handoff_packets_are_generated_from_retained_evidence_and_gated_by_capability_truth() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.handoff", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let store_root =
-            std::env::temp_dir().join(format!("dnaonecalc-handoff-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&store_root);
-        let store = RetainedScenarioStore::new(&store_root);
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("handoff");
+        let store = fixture_root.retained_store();
 
-        let left_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let left_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", left_context)
-            .expect("left handoff run should succeed");
-        let left = adapter
-            .persist_driven_scenario_run(&store, &host, &left_context, &left_summary, "SUM handoff")
-            .expect("left retained run should persist");
-        adapter
-            .emit_replay_capture_for_run(&store, &left.run.scenario_run_id)
-            .expect("left replay capture should emit");
+        let (left_context, left_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let left = fixture.persist_run(
+            &store,
+            &left_context,
+            &left_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        fixture.emit_replay_capture(&store, &left);
 
-        let right_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
-        let right_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", right_context)
-            .expect("right handoff run should succeed");
-        let right = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &right_context,
-                &right_summary,
-                "SUM handoff",
-            )
-            .expect("right retained run should persist");
-        adapter
-            .emit_replay_capture_for_run(&store, &right.run.scenario_run_id)
-            .expect("right replay capture should emit");
+        let (right_context, right_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let right = fixture.persist_run(
+            &store,
+            &right_context,
+            &right_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
+        fixture.emit_replay_capture(&store, &right);
 
-        let witness = adapter
+        let witness = fixture
+            .adapter
             .generate_retained_witness(
                 &store,
                 &left.run.scenario_run_id,
                 &right.run.scenario_run_id,
             )
             .expect("witness should generate");
-        let handoff = adapter
+        let handoff = fixture
+            .adapter
             .generate_handoff_packet(&store, &witness.witness.witness_id)
             .expect("handoff should generate");
         assert!(handoff.handoff_path.exists());
         assert_eq!(handoff.handoff.envelope.artifact_kind, "handoff_packet");
         assert_eq!(handoff.handoff.status, "ready");
 
-        let opened = adapter
+        let opened = fixture
+            .adapter
             .open_handoff_packet(&store, &handoff.handoff.handoff_id)
             .expect("handoff should open");
         assert_eq!(opened.target_lane, "OxReplay/DnaOneCalc");
@@ -1627,8 +1582,6 @@ mod tests {
             opened.replay_projection_phase.as_deref(),
             Some("CommittedOrRejected")
         );
-
-        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
@@ -1727,23 +1680,14 @@ mod tests {
 
     #[test]
     fn observation_artifact_persists_from_upstream_source_bundle() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let root = std::env::temp_dir().join(format!(
-            "dnaonecalc-observation-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let store = RetainedScenarioStore::new(&root);
-        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("OxXlPlay")
-            .join("states/excel/xlplay_capture_values_formulae_001");
-
-        let persisted = adapter
-            .persist_observation_from_existing_source(&store, &source_root)
-            .expect("observation artifact should persist");
+        let adapter = adapter_for(OneCalcHostProfile::OcH1);
+        let fixture_root = FixtureRoot::new("observation");
+        let store = fixture_root.retained_store();
+        let persisted = persist_observation_fixture(
+            &adapter,
+            &store,
+            ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
+        );
 
         assert!(persisted.observation_path.exists());
         assert_eq!(persisted.observation.envelope.artifact_kind, "observation");
@@ -1764,47 +1708,40 @@ mod tests {
             .read_observation(&persisted.observation.observation_id)
             .expect("observation artifact should reopen");
         assert_eq!(reopened.scenario_id, "xlplay_capture_values_formulae_001");
-
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn twin_compare_artifact_persists_and_opens_on_real_run_and_observation() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let root = std::env::temp_dir().join(format!(
-            "dnaonecalc-twin-compare-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let store = RetainedScenarioStore::new(&root);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.compare.obs", "=SUM(10,20,12)")
-            .expect("compare host should initialize");
-        let context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(10,20,12)", context)
-            .expect("compare recalc should succeed");
-        let retained = adapter
-            .persist_driven_scenario_run(&store, &host, &context, &summary, "Twin compare")
-            .expect("retained run should persist");
-        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("OxXlPlay")
-            .join("states/excel/xlplay_capture_values_formulae_001");
-        let observation = adapter
-            .persist_observation_from_existing_source(&store, &source_root)
-            .expect("observation should persist");
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let fixture_root = FixtureRoot::new("twin-compare");
+        let store = fixture_root.retained_store();
+        let (context, summary) =
+            fixture.edit_accept(FormulaScenarioFamily::ObservationCompareSum, 46_000.0, 0.25);
+        let retained = fixture.persist_run(
+            &store,
+            &context,
+            &summary,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let observation = persist_observation_fixture(
+            &fixture.adapter,
+            &store,
+            ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
+        );
 
-        let comparison = adapter
+        let comparison = fixture
+            .adapter
             .compare_run_with_observation(
                 &store,
                 &retained.run.scenario_run_id,
                 &observation.observation.observation_id,
             )
             .expect("comparison should persist");
-        let opened = adapter
+        let opened = fixture
+            .adapter
             .open_twin_compare(&store, &comparison.comparison.comparison_id)
             .expect("compare view should open");
 
@@ -1821,37 +1758,31 @@ mod tests {
             .mismatch_lines
             .iter()
             .any(|line| line.contains("formula_text:mismatch")));
-
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn widening_request_handoff_emits_from_real_compare_state() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let root =
-            std::env::temp_dir().join(format!("dnaonecalc-widening-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let store = RetainedScenarioStore::new(&root);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.widening", "=SUM(10,20,12)")
-            .expect("widening host should initialize");
-        let context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(10,20,12)", context)
-            .expect("widening recalc should succeed");
-        let retained = adapter
-            .persist_driven_scenario_run(&store, &host, &context, &summary, "Widening request")
-            .expect("retained run should persist");
-        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("OxXlPlay")
-            .join("states/excel/xlplay_capture_values_formulae_001");
-        let observation = adapter
-            .persist_observation_from_existing_source(&store, &source_root)
-            .expect("observation should persist");
-        let comparison = adapter
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let fixture_root = FixtureRoot::new("widening");
+        let store = fixture_root.retained_store();
+        let (context, summary) =
+            fixture.edit_accept(FormulaScenarioFamily::ObservationCompareSum, 46_000.0, 0.25);
+        let retained = fixture.persist_run(
+            &store,
+            &context,
+            &summary,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let observation = persist_observation_fixture(
+            &fixture.adapter,
+            &store,
+            ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
+        );
+        let comparison = fixture
+            .adapter
             .compare_run_with_observation(
                 &store,
                 &retained.run.scenario_run_id,
@@ -1859,60 +1790,49 @@ mod tests {
             )
             .expect("comparison should persist");
 
-        let handoff = adapter
+        let handoff = fixture
+            .adapter
             .generate_observation_widening_handoff(&store, &comparison.comparison.comparison_id)
             .expect("widening handoff should persist");
-        let opened = adapter
+        let opened = fixture
+            .adapter
             .open_handoff_packet(&store, &handoff.handoff.handoff_id)
             .expect("handoff should open");
 
         assert_eq!(opened.target_lane, "OxXlPlay/DnaOneCalc");
         assert_eq!(opened.requested_action_kind, "widen_observation_envelope");
         assert_eq!(opened.status, "ready");
-
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn retained_h1_runs_compare_version_to_version_in_code() {
-        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
-        let mut host = adapter
-            .new_driven_single_formula_host("onecalc.h1.compare", "=SUM(1,2,3)")
-            .expect("OC-H1 should admit the driven host model");
-        let store_root =
-            std::env::temp_dir().join(format!("dnaonecalc-h1-compare-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&store_root);
-        let store = RetainedScenarioStore::new(&store_root);
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("h1-compare");
+        let store = fixture_root.retained_store();
 
-        let first_context = RecalcContext::edit_accept(Some(46_000.0), Some(0.25));
-        let first_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,3)", first_context)
-            .expect("first run should succeed");
-        let first = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &first_context,
-                &first_summary,
-                "SUM compare",
-            )
-            .expect("first run should persist");
+        let (first_context, first_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let first = fixture.persist_run(
+            &store,
+            &first_context,
+            &first_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
 
-        let second_context = RecalcContext::edit_accept(Some(46_001.0), Some(0.25));
-        let second_summary = adapter
-            .edit_accept_recalc(&mut host, "=SUM(1,2,4)", second_context)
-            .expect("second run should succeed");
-        let second = adapter
-            .persist_driven_scenario_run(
-                &store,
-                &host,
-                &second_context,
-                &second_summary,
-                "SUM compare",
-            )
-            .expect("second run should persist");
+        let (second_context, second_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let second = fixture.persist_run(
+            &store,
+            &second_context,
+            &second_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
 
-        let comparison = adapter
+        let comparison = fixture
+            .adapter
             .compare_retained_driven_runs(
                 &store,
                 &first.run.scenario_run_id,
@@ -1925,8 +1845,6 @@ mod tests {
         assert!(comparison.formula_text_changed);
         assert!(!comparison.worksheet_value_match);
         assert_eq!(comparison.reliability_badge, "direct");
-
-        let _ = fs::remove_dir_all(store.root());
     }
 
     #[test]
