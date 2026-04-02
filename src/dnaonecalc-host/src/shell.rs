@@ -193,8 +193,14 @@ struct TraceXRayView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProvenanceXRayView {
     host_profile_id: String,
+    platform_gate_text: String,
+    latest_host_driving_packet_kind: String,
     packet_register_text: String,
     latest_capability_snapshot_id: String,
+    capability_floor: String,
+    runtime_class: String,
+    function_surface_policy_id: String,
+    mode_availability_summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,6 +234,7 @@ pub struct OneCalcShellApp {
     effective_display_render: EffectiveDisplayRenderState,
     result_text: String,
     diagnostics_text: String,
+    latest_host_driving_packet_kind: String,
     support_sidebar_visible: bool,
     capability_center_visible: bool,
     xray_visible: bool,
@@ -306,6 +313,7 @@ impl OneCalcShellApp {
             effective_display_render: EffectiveDisplayRenderState::none(),
             result_text,
             diagnostics_text,
+            latest_host_driving_packet_kind: "formula_edit".to_string(),
             support_sidebar_visible: true,
             capability_center_visible: false,
             xray_visible: false,
@@ -396,10 +404,43 @@ impl OneCalcShellApp {
             });
         let provenance = ProvenanceXRayView {
             host_profile_id: self.host_profile_id.clone(),
+            platform_gate_text: self.platform_gate_text.clone(),
+            latest_host_driving_packet_kind: self.latest_host_driving_packet_kind.clone(),
             packet_register_text: self.packet_register_text.clone(),
             latest_capability_snapshot_id: self
                 .latest_capability_snapshot_id
                 .clone()
+                .unwrap_or_else(|| "unavailable".to_string()),
+            capability_floor: self
+                .capability_center
+                .active_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.capability_floor.clone())
+                .unwrap_or_else(|| "unavailable".to_string()),
+            runtime_class: self
+                .capability_center
+                .active_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.runtime_class.clone())
+                .unwrap_or_else(|| "unavailable".to_string()),
+            function_surface_policy_id: self
+                .capability_center
+                .active_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.function_surface_policy_id.clone())
+                .unwrap_or_else(|| "unavailable".to_string()),
+            mode_availability_summary: self
+                .capability_center
+                .active_snapshot
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .mode_availability
+                        .iter()
+                        .map(|mode| format!("{}:{}", mode.mode_id, mode.state))
+                        .collect::<Vec<_>>()
+                        .join("|")
+                })
                 .unwrap_or_else(|| "unavailable".to_string()),
         };
 
@@ -869,10 +910,16 @@ impl OneCalcShellApp {
                             ui.label("Provenance");
                             ui.separator();
                             ui.monospace(format!(
-                                "host_profile={}\npacket_register={}\nlatest_capability_snapshot={}",
+                                "host_profile={}\nplatform_gate={}\nhost_driving_packet_kind={}\npacket_register={}\nlatest_capability_snapshot={}\ncapability_floor={}\nruntime_class={}\nfunction_surface_policy={}\nmode_availability={}",
                                 xray.provenance.host_profile_id,
+                                xray.provenance.platform_gate_text,
+                                xray.provenance.latest_host_driving_packet_kind,
                                 xray.provenance.packet_register_text,
-                                xray.provenance.latest_capability_snapshot_id
+                                xray.provenance.latest_capability_snapshot_id,
+                                xray.provenance.capability_floor,
+                                xray.provenance.runtime_class,
+                                xray.provenance.function_surface_policy_id,
+                                xray.provenance.mode_availability_summary
                             ));
                         });
                     });
@@ -987,6 +1034,7 @@ impl OneCalcShellApp {
     }
 
     fn refresh_capability_center(&mut self, packet_kind: &str) {
+        self.latest_host_driving_packet_kind = packet_kind.to_string();
         let previous_snapshot_id = self.latest_capability_snapshot_id.clone();
         match self.runtime_adapter.persist_capability_snapshot(
             &self.capability_store,
@@ -1203,6 +1251,14 @@ mod tests {
                 "provenance.packet_register={}",
                 xray.provenance.packet_register_text
             ),
+            format!(
+                "provenance.host_driving_packet_kind={}",
+                xray.provenance.latest_host_driving_packet_kind
+            ),
+            format!(
+                "provenance.capability_floor={}",
+                xray.provenance.capability_floor
+            ),
         ];
 
         if let Some(evaluation) = &xray.evaluation {
@@ -1386,6 +1442,15 @@ mod tests {
             .provenance
             .latest_capability_snapshot_id
             .contains("capability"));
+        assert_eq!(
+            xray.provenance.latest_host_driving_packet_kind,
+            "edit_accept_recalc"
+        );
+        assert_eq!(xray.provenance.capability_floor, "OC-H0");
+        assert!(xray
+            .provenance
+            .platform_gate_text
+            .contains("Desktop native host only"));
     }
 
     #[test]
@@ -1402,6 +1467,8 @@ mod tests {
                 "provenance.host_profile=OC-H0".to_string(),
                 "provenance.packet_register=formula_edit, edit_accept_recalc, replay_capture"
                     .to_string(),
+                "provenance.host_driving_packet_kind=edit_accept_recalc".to_string(),
+                "provenance.capability_floor=OC-H0".to_string(),
                 "eval.worksheet_value=Number(6)".to_string(),
                 "eval.payload=Number".to_string(),
                 "eval.effective_display=none".to_string(),
