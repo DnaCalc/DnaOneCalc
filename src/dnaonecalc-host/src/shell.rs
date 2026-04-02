@@ -1305,6 +1305,56 @@ mod tests {
         FormattingScenarioFamily, FormulaScenarioFamily,
     };
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ShellTestShortcut {
+        Evaluate,
+        ToggleInspector,
+        ToggleCapabilityCenter,
+        ToggleXRay,
+    }
+
+    struct ShellInteractionHarness {
+        app: OneCalcShellApp,
+    }
+
+    impl ShellInteractionHarness {
+        fn new(scenario_family: FormulaScenarioFamily, smoke_mode: bool) -> Self {
+            let scenario = promoted_formula_scenario(scenario_family);
+            Self {
+                app: OneCalcShellApp::with_formula(
+                    adapter_for(scenario.host_profile),
+                    scenario.formula.to_string(),
+                    smoke_mode,
+                ),
+            }
+        }
+
+        fn apply_shortcut(&mut self, shortcut: ShellTestShortcut) {
+            match shortcut {
+                ShellTestShortcut::Evaluate => {
+                    self.app.evaluate_current_formula();
+                    self.app.request_editor_focus();
+                }
+                ShellTestShortcut::ToggleInspector => {
+                    self.app.toggle_support_sidebar();
+                    self.app.request_editor_focus();
+                }
+                ShellTestShortcut::ToggleCapabilityCenter => {
+                    self.app.toggle_capability_center();
+                    self.app.request_editor_focus();
+                }
+                ShellTestShortcut::ToggleXRay => {
+                    self.app.toggle_xray();
+                    self.app.request_editor_focus();
+                }
+            }
+        }
+
+        fn regression_state(&self) -> ExplorerRegressionState {
+            self.app.explorer_regression_state()
+        }
+    }
+
     fn shell_xray_golden_lines(xray: &ShellXRayModel) -> Vec<String> {
         let mut lines = vec![
             format!("parse.diagnostic_count={}", xray.parse.diagnostic_count),
@@ -1625,6 +1675,56 @@ mod tests {
         );
         assert_eq!(render.emphasis, "host:accent");
         assert_eq!(render.number_format, "none");
+    }
+
+    #[test]
+    fn shell_interaction_harness_covers_keyboard_shortcuts_and_focus_routing() {
+        let mut harness =
+            ShellInteractionHarness::new(FormulaScenarioFamily::ExplorerSequence23, false);
+
+        assert!(harness.app.result_text.contains("not evaluated yet"));
+
+        harness.apply_shortcut(ShellTestShortcut::Evaluate);
+        assert!(harness
+            .app
+            .result_text
+            .contains("worksheet_value: Array(2x3)"));
+        assert!(!harness.app.editor_focus_requested);
+
+        harness.apply_shortcut(ShellTestShortcut::ToggleCapabilityCenter);
+        assert!(harness.regression_state().capability_center_visible);
+        assert!(harness.regression_state().inspector_visible);
+
+        harness.apply_shortcut(ShellTestShortcut::ToggleXRay);
+        assert!(harness.regression_state().xray_visible);
+
+        harness.apply_shortcut(ShellTestShortcut::ToggleInspector);
+        assert!(!harness.regression_state().inspector_visible);
+        assert!(harness.regression_state().result_visible);
+    }
+
+    #[test]
+    fn shell_interaction_harness_covers_resize_and_scroll_invariants_for_promoted_scenarios() {
+        let mut harness =
+            ShellInteractionHarness::new(FormulaScenarioFamily::ExplorerInvalid, false);
+
+        harness.apply_shortcut(ShellTestShortcut::ToggleCapabilityCenter);
+        harness.apply_shortcut(ShellTestShortcut::ToggleXRay);
+
+        let regression = harness.regression_state();
+        assert!(regression.result_visible);
+        assert!(regression.inspector_visible);
+        assert!(regression.capability_center_visible);
+        assert!(regression.xray_visible);
+        assert!(regression.result_scroll_enabled);
+        assert!(regression.diagnostics_scroll_enabled);
+        assert!(regression.capability_scroll_enabled);
+        assert!(regression.xray_scroll_enabled);
+        assert_eq!(
+            regression.diagnostics_height_fraction,
+            INSPECTOR_DIAGNOSTICS_SPLIT
+        );
+        assert!(!harness.app.rendered_diagnostics.is_empty());
     }
 
     #[test]
