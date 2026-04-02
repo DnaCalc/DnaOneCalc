@@ -220,8 +220,14 @@ fn run_extension_abi_smoke() {
         "abi=id:{};version:{};host:{};platform:{}",
         contract.abi_id, contract.abi_version, contract.host_profile_id, contract.platform_gate_id
     );
-    println!("admitted_capabilities={}", contract.admitted_capabilities.join(","));
-    println!("excluded_capabilities={}", contract.excluded_capabilities.join(","));
+    println!(
+        "admitted_capabilities={}",
+        contract.admitted_capabilities.join(",")
+    );
+    println!(
+        "excluded_capabilities={}",
+        contract.excluded_capabilities.join(",")
+    );
     println!(
         "admitted_provider={};admitted:{};caps:{}",
         admitted.provider_id,
@@ -283,8 +289,7 @@ fn run_extension_root_smoke() {
     .expect("entrypoint should write");
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
-        serde_json::to_string_pretty(&blocked_manifest)
-            .expect("blocked manifest should serialize"),
+        serde_json::to_string_pretty(&blocked_manifest).expect("blocked manifest should serialize"),
     )
     .expect("blocked manifest should write");
 
@@ -387,8 +392,7 @@ fn run_extension_provider_smoke() {
 
     std::fs::write(
         root.join("demo-fail").join("provider.json"),
-        serde_json::to_string_pretty(&failing_manifest)
-            .expect("failing manifest should serialize"),
+        serde_json::to_string_pretty(&failing_manifest).expect("failing manifest should serialize"),
     )
     .expect("failing manifest should write");
     std::fs::write(
@@ -408,8 +412,7 @@ fn run_extension_provider_smoke() {
 
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
-        serde_json::to_string_pretty(&blocked_manifest)
-            .expect("blocked manifest should serialize"),
+        serde_json::to_string_pretty(&blocked_manifest).expect("blocked manifest should serialize"),
     )
     .expect("blocked manifest should write");
 
@@ -490,8 +493,7 @@ fn run_extension_rtd_state_smoke() {
     .expect("admitted manifest should write");
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
-        serde_json::to_string_pretty(&rtd_manifest)
-            .expect("rtd manifest should serialize"),
+        serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
     )
     .expect("rtd manifest should write");
 
@@ -543,8 +545,7 @@ fn run_windows_rtd_smoke() {
 
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
-        serde_json::to_string_pretty(&rtd_manifest)
-            .expect("rtd manifest should serialize"),
+        serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
     )
     .expect("rtd manifest should write");
     std::fs::write(
@@ -619,8 +620,7 @@ fn run_linux_rtd_gate_smoke() {
 
     std::fs::write(
         root.join("demo-rtd").join("provider.json"),
-        serde_json::to_string_pretty(&rtd_manifest)
-            .expect("rtd manifest should serialize"),
+        serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
     )
     .expect("rtd manifest should write");
     std::fs::write(
@@ -646,7 +646,11 @@ fn run_linux_rtd_gate_smoke() {
     println!("gate_state={}", summary.gate_state);
     println!("reason={}", summary.reason);
     for entry in &summary.entries {
-        println!("entry={} topics={}", entry.provider_id, entry.topic_ids.join(","));
+        println!(
+            "entry={} topics={}",
+            entry.provider_id,
+            entry.topic_ids.join(",")
+        );
     }
 }
 

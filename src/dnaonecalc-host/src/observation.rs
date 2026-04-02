@@ -81,8 +81,8 @@ pub fn invoke_live_windows_capture(
     output_root: impl AsRef<Path>,
 ) -> Result<LoadedObservationSourceBundle, String> {
     let oxxlplay_root = oxxlplay_repo_root();
-    let scenario_path =
-        oxxlplay_root.join("docs/test-corpus/excel/xlplay_capture_values_formulae_001/scenario.json");
+    let scenario_path = oxxlplay_root
+        .join("docs/test-corpus/excel/xlplay_capture_values_formulae_001/scenario.json");
     let output_root = output_root.as_ref();
     fs::create_dir_all(output_root).map_err(|error| error.to_string())?;
 

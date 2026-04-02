@@ -78,10 +78,9 @@ pub fn validate_isolated_conditional_formatting_carrier(
     )
     .with_formula_channel_kind(FormulaChannelKind::ConditionalFormatting);
     let document = build_cf_validation_service().open_document(source, None);
-    let bound_formula = document
-        .bound_formula
-        .as_ref()
-        .ok_or_else(|| "conditional-formatting carrier validation requires a bound formula".to_string())?;
+    let bound_formula = document.bound_formula.as_ref().ok_or_else(|| {
+        "conditional-formatting carrier validation requires a bound formula".to_string()
+    })?;
     // Until OxFml exposes a dedicated consumer CF validator, OneCalc treats this as an
     // explicit editor-adjacent semantic operation rather than general host-side seam drilling.
     let validation = validate_conditional_formatting_formula(

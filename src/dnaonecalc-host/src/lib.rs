@@ -34,15 +34,15 @@ pub use document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 pub use extension::{
-    activate_windows_rtd_topic, advance_rtd_topic, admitted_extension_abi,
+    activate_windows_rtd_topic, admitted_extension_abi, advance_rtd_topic,
     extension_root_runtime_truth, invoke_extension_provider, load_extension_root,
     validate_extension_manifest, ActivatedRtdTopicSession, ExtensionAbiContract,
     ExtensionCapabilityTruth, ExtensionInvocationArgument, ExtensionInvocationSummary,
-    ExtensionManifestLoadFailure, ExtensionProviderRuntimeTruth,
-    ExtensionProviderEntrypoint, ExtensionProviderManifest, ExtensionRootLoadSummary,
-    ExtensionRootRuntimeTruthSummary, ExtensionValidationResult, LoadedExtensionProvider,
-    LinuxRtdRegistryEntry, LinuxRtdRegistrySummary, RegisteredExtensionBehavior,
-    RegisteredExtensionFunction, RegisteredRtdTopic, RtdTopicUpdateSummary,
+    ExtensionManifestLoadFailure, ExtensionProviderEntrypoint, ExtensionProviderManifest,
+    ExtensionProviderRuntimeTruth, ExtensionRootLoadSummary, ExtensionRootRuntimeTruthSummary,
+    ExtensionValidationResult, LinuxRtdRegistryEntry, LinuxRtdRegistrySummary,
+    LoadedExtensionProvider, RegisteredExtensionBehavior, RegisteredExtensionFunction,
+    RegisteredRtdTopic, RtdTopicUpdateSummary,
 };
 pub use function_surface::{
     AdmissionCategory, FunctionSurfaceCatalog, FunctionSurfaceEntry, SurfaceLabelSummary,
@@ -63,16 +63,15 @@ pub use retained::{
 pub use runtime::{
     AcceptanceMatrix, AcceptanceMatrixRow, CapabilitySnapshotDiffSummary,
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
-    DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary,
-    FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind,
-    OneCalcHostProfile, OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary,
-    OpenedOneCalcWorkspace, OpenedReplayCaptureSummary, OpenedTwinCompareSummary,
-    OpenedWitnessSummary, PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
-    PromotedScenarioRegressionSummary, RecalcContext, RecalcTriggerKind,
-    ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef,
-    ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
-    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, RetainedRunDiffSummary,
-    RetainedRunXRaySummary, RuntimeAdapter,
+    DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
+    FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
+    OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary, OpenedOneCalcWorkspace,
+    OpenedReplayCaptureSummary, OpenedTwinCompareSummary, OpenedWitnessSummary, PlatformGate,
+    PromotedScenarioIndex, PromotedScenarioIndexRow, PromotedScenarioRegressionSummary,
+    RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
+    RetainedRunDiffSummary, RetainedRunXRaySummary, RuntimeAdapter, ScenarioLibraryFilter,
+    ScenarioLibrarySavedView, ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail,
+    UpstreamPressurePacket,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -321,7 +320,9 @@ mod tests {
             "demo.sum.provider"
         );
         assert_eq!(
-            loaded.admitted_providers[0].validation.admitted_capabilities,
+            loaded.admitted_providers[0]
+                .validation
+                .admitted_capabilities,
             vec!["host_managed_function_registration".to_string()]
         );
         assert_eq!(
@@ -500,8 +501,7 @@ mod tests {
         .expect("admitted manifest should write");
         fs::write(
             root.join("demo-rtd").join("provider.json"),
-            serde_json::to_string_pretty(&rtd_manifest)
-                .expect("rtd manifest should serialize"),
+            serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
         )
         .expect("rtd manifest should write");
 
@@ -520,14 +520,20 @@ mod tests {
             .expect("rtd provider should be present");
 
         assert_eq!(sum_provider.provider_state, "admitted");
+        assert_eq!(sum_provider.capability_truths[0].runtime_state, "admitted");
         assert_eq!(
-            sum_provider.capability_truths[0].runtime_state,
-            "admitted"
+            rtd_provider.provider_state,
+            "declared_with_blocked_capabilities"
         );
-        assert_eq!(rtd_provider.provider_state, "declared_with_blocked_capabilities");
-        assert_eq!(rtd_provider.capability_truths[0].capability_id, "rtd_provider");
+        assert_eq!(
+            rtd_provider.capability_truths[0].capability_id,
+            "rtd_provider"
+        );
         if std::env::consts::OS == "windows" {
-            assert_eq!(rtd_provider.capability_truths[0].runtime_state, "declared_but_not_yet_admitted");
+            assert_eq!(
+                rtd_provider.capability_truths[0].runtime_state,
+                "declared_but_not_yet_admitted"
+            );
         } else {
             assert_eq!(
                 rtd_provider.capability_truths[0].runtime_state,
@@ -562,8 +568,7 @@ mod tests {
 
         fs::write(
             root.join("demo-rtd").join("provider.json"),
-            serde_json::to_string_pretty(&rtd_manifest)
-                .expect("rtd manifest should serialize"),
+            serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
         )
         .expect("rtd manifest should write");
         fs::write(
@@ -634,8 +639,7 @@ mod tests {
 
         fs::write(
             root.join("demo-rtd").join("provider.json"),
-            serde_json::to_string_pretty(&rtd_manifest)
-                .expect("rtd manifest should serialize"),
+            serde_json::to_string_pretty(&rtd_manifest).expect("rtd manifest should serialize"),
         )
         .expect("rtd manifest should write");
         fs::write(
@@ -709,7 +713,10 @@ mod tests {
                 schema_version: "v1".to_string(),
                 artifact_kind: ArtifactKind::Comparison.id().to_string(),
                 logical_id: "comparison-index-smoke".to_string(),
-                content_hash: stable_hash(&("comparison-index-smoke", persisted.run.scenario_run_id.as_str())),
+                content_hash: stable_hash(&(
+                    "comparison-index-smoke",
+                    persisted.run.scenario_run_id.as_str(),
+                )),
                 created_at_unix_ms: 1,
                 created_by_build: "dnaonecalc-host@test".to_string(),
                 host_profile_id: "OC-H1".to_string(),
@@ -741,7 +748,10 @@ mod tests {
                 schema_version: "v1".to_string(),
                 artifact_kind: ArtifactKind::Witness.id().to_string(),
                 logical_id: witness_ref.logical_id.clone(),
-                content_hash: stable_hash(&("witness-index-smoke", persisted.run.scenario_run_id.as_str())),
+                content_hash: stable_hash(&(
+                    "witness-index-smoke",
+                    persisted.run.scenario_run_id.as_str(),
+                )),
                 created_at_unix_ms: 2,
                 created_by_build: "dnaonecalc-host@test".to_string(),
                 host_profile_id: "OC-H1".to_string(),
@@ -768,7 +778,10 @@ mod tests {
                 schema_version: "v1".to_string(),
                 artifact_kind: ArtifactKind::HandoffPacket.id().to_string(),
                 logical_id: "handoff-index-smoke".to_string(),
-                content_hash: stable_hash(&("handoff-index-smoke", persisted.run.scenario_run_id.as_str())),
+                content_hash: stable_hash(&(
+                    "handoff-index-smoke",
+                    persisted.run.scenario_run_id.as_str(),
+                )),
                 created_at_unix_ms: 3,
                 created_by_build: "dnaonecalc-host@test".to_string(),
                 host_profile_id: "OC-H1".to_string(),
@@ -821,8 +834,14 @@ mod tests {
         );
         assert_eq!(row.scenario_id, persisted.scenario.scenario_id);
         assert_eq!(row.latest_run_id, persisted.run.scenario_run_id);
-        assert_eq!(row.replay_capture_ids, vec![replay.capture.replay_capture_id.clone()]);
-        assert_eq!(row.comparison_ids, vec!["comparison-index-smoke".to_string()]);
+        assert_eq!(
+            row.replay_capture_ids,
+            vec![replay.capture.replay_capture_id.clone()]
+        );
+        assert_eq!(
+            row.comparison_ids,
+            vec!["comparison-index-smoke".to_string()]
+        );
         assert_eq!(row.witness_ids, vec!["witness-index-smoke".to_string()]);
         assert_eq!(row.handoff_ids, vec!["handoff-index-smoke".to_string()]);
     }
@@ -975,7 +994,10 @@ mod tests {
 
         assert_eq!(matrix.rows.len(), 1);
         let row = &matrix.rows[0];
-        assert_eq!(row.row_id, format!("promoted-scenario:{}", persisted.scenario.scenario_id));
+        assert_eq!(
+            row.row_id,
+            format!("promoted-scenario:{}", persisted.scenario.scenario_id)
+        );
         assert_eq!(row.latest_run_id, persisted.run.scenario_run_id);
         assert_eq!(row.capability_floor, "OC-H1");
         assert_eq!(row.replay_status, "available");

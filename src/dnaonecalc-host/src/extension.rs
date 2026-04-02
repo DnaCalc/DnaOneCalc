@@ -192,7 +192,11 @@ pub fn validate_extension_manifest(
             manifest.abi_version, contract.abi_version
         ));
     }
-    if !manifest.host_profile_ids.iter().any(|item| item == host_profile_id) {
+    if !manifest
+        .host_profile_ids
+        .iter()
+        .any(|item| item == host_profile_id)
+    {
         blocked_reasons.push(format!(
             "host profile {} is not declared by provider",
             host_profile_id
@@ -218,7 +222,10 @@ pub fn validate_extension_manifest(
             admitted_capabilities.push(capability.clone());
         } else {
             blocked_capabilities.push(capability.clone());
-            blocked_reasons.push(format!("capability {} is not admitted in OneCalc v1", capability));
+            blocked_reasons.push(format!(
+                "capability {} is not admitted in OneCalc v1",
+                capability
+            ));
         }
     }
 
@@ -389,7 +396,12 @@ pub fn activate_windows_rtd_topic(
                 .iter()
                 .find(|provider| provider.manifest.provider_id == provider_id)
         })
-        .ok_or_else(|| format!("provider {} not discovered under extension root", provider_id))?;
+        .ok_or_else(|| {
+            format!(
+                "provider {} not discovered under extension root",
+                provider_id
+            )
+        })?;
     let entrypoint = load_provider_entrypoint(provider)?;
     let topic = entrypoint
         .rtd_topics
@@ -447,7 +459,8 @@ pub fn linux_rtd_registry_truth(
     } else {
         (
             "blocked_on_host_platform".to_string(),
-            "Linux RTD registry remains explicit design truth only on this host platform.".to_string(),
+            "Linux RTD registry remains explicit design truth only on this host platform."
+                .to_string(),
         )
     };
 
@@ -459,9 +472,7 @@ pub fn linux_rtd_registry_truth(
     })
 }
 
-pub fn advance_rtd_topic(
-    session: &mut ActivatedRtdTopicSession,
-) -> RtdTopicUpdateSummary {
+pub fn advance_rtd_topic(session: &mut ActivatedRtdTopicSession) -> RtdTopicUpdateSummary {
     if let Some(next_value) = session.pending_updates.first().cloned() {
         session.current_value = next_value;
         session.pending_updates.remove(0);
@@ -554,14 +565,25 @@ fn invoke_loaded_provider(
 fn load_provider_entrypoint(
     provider: &LoadedExtensionProvider,
 ) -> Result<ExtensionProviderEntrypoint, String> {
-    let manifest_dir = Path::new(&provider.manifest_path)
-        .parent()
-        .ok_or_else(|| format!("manifest {} has no parent directory", provider.manifest_path))?;
+    let manifest_dir = Path::new(&provider.manifest_path).parent().ok_or_else(|| {
+        format!(
+            "manifest {} has no parent directory",
+            provider.manifest_path
+        )
+    })?;
     let entrypoint_path = manifest_dir.join(&provider.manifest.entrypoint);
-    let body = fs::read_to_string(&entrypoint_path)
-        .map_err(|error| format!("failed to read entrypoint {}: {error}", entrypoint_path.display()))?;
-    serde_json::from_str(&body)
-        .map_err(|error| format!("failed to parse entrypoint {}: {error}", entrypoint_path.display()))
+    let body = fs::read_to_string(&entrypoint_path).map_err(|error| {
+        format!(
+            "failed to read entrypoint {}: {error}",
+            entrypoint_path.display()
+        )
+    })?;
+    serde_json::from_str(&body).map_err(|error| {
+        format!(
+            "failed to parse entrypoint {}: {error}",
+            entrypoint_path.display()
+        )
+    })
 }
 
 fn execute_registered_function(
@@ -586,15 +608,14 @@ fn project_provider_runtime_truth(
     provider: &LoadedExtensionProvider,
     runtime_platform: &str,
 ) -> ExtensionProviderRuntimeTruth {
-    let provider_state = if provider.validation.admitted
-        && provider.validation.blocked_capabilities.is_empty()
-    {
-        "admitted".to_string()
-    } else if provider.manifest.declared_capabilities.is_empty() {
-        "blocked".to_string()
-    } else {
-        "declared_with_blocked_capabilities".to_string()
-    };
+    let provider_state =
+        if provider.validation.admitted && provider.validation.blocked_capabilities.is_empty() {
+            "admitted".to_string()
+        } else if provider.manifest.declared_capabilities.is_empty() {
+            "blocked".to_string()
+        } else {
+            "declared_with_blocked_capabilities".to_string()
+        };
 
     let capability_truths = provider
         .manifest
@@ -678,18 +699,27 @@ fn rtd_runtime_state(
     if !runtime_platform.eq_ignore_ascii_case("windows") {
         return (
             "blocked_by_platform".to_string(),
-            Some("RTD remains blocked on this platform until the Linux activation path lands.".to_string()),
+            Some(
+                "RTD remains blocked on this platform until the Linux activation path lands."
+                    .to_string(),
+            ),
         );
     }
 
     match load_provider_entrypoint(provider) {
         Ok(entrypoint) if !entrypoint.rtd_topics.is_empty() => (
             "admitted_windows_subset".to_string(),
-            Some("Windows in-process RTD topic activation is available for the admitted subset.".to_string()),
+            Some(
+                "Windows in-process RTD topic activation is available for the admitted subset."
+                    .to_string(),
+            ),
         ),
         _ => (
             "declared_but_not_yet_admitted".to_string(),
-            Some("RTD lifecycle is a later admitted Windows subset and is not executable yet.".to_string()),
+            Some(
+                "RTD lifecycle is a later admitted Windows subset and is not executable yet."
+                    .to_string(),
+            ),
         ),
     }
 }

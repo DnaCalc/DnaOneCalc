@@ -4,7 +4,6 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
 use oxfml_core::consumer::editor::{
     EditorAnalysisStage, EditorDocument, EditorEditService, EditorEnvironment,
     FormulaTextChangeRange,
@@ -21,9 +20,8 @@ use oxfml_core::{
 };
 use oxfunc_core::value::EvalValue;
 use oxreplay_abstractions::CapabilityLevel;
-use oxreplay_core::{
-    is_replay_ready, load_oxfml_v1_replay_projection, ReplayView,
-};
+use oxreplay_core::{is_replay_ready, load_oxfml_v1_replay_projection, ReplayView};
+use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
     stable_hash, ArtifactAttachmentRef, ArtifactEnvelope, ArtifactKind, ArtifactLineageRef,
@@ -36,7 +34,7 @@ use crate::document::{
     DocumentViewStateRecord, OneCalcDocumentRecord, PersistedOneCalcDocument,
 };
 use crate::extension::{
-    activate_windows_rtd_topic, advance_rtd_topic, admitted_extension_abi,
+    activate_windows_rtd_topic, admitted_extension_abi, advance_rtd_topic,
     extension_root_runtime_truth, invoke_extension_provider, linux_rtd_registry_truth,
     load_extension_root, validate_extension_manifest, ActivatedRtdTopicSession,
     ExtensionAbiContract, ExtensionInvocationArgument, ExtensionInvocationSummary,
@@ -47,11 +45,10 @@ use crate::observation::{invoke_live_windows_capture, load_observation_source_bu
 use crate::retained::{
     CapabilityLedgerSnapshotRecord, CapabilityModeAvailabilityRecord, ComparisonMismatchRecord,
     ComparisonRecord, HandoffPacketRecord, HandoffReadinessRecord, ObservationRecord,
-    OxfmlReplayProjectionRecord,
-    PersistedCapabilitySnapshot, PersistedComparison, PersistedHandoffPacket, PersistedObservation,
-    PersistedReplayCapture, PersistedScenarioRun, PersistedWitness, ReplayCaptureRecord,
-    RetainedProvenanceRecord, RetainedRecalcContextRecord, RetainedScenarioStore, ScenarioRecord,
-    ScenarioRunRecord, WitnessRecord,
+    OxfmlReplayProjectionRecord, PersistedCapabilitySnapshot, PersistedComparison,
+    PersistedHandoffPacket, PersistedObservation, PersistedReplayCapture, PersistedScenarioRun,
+    PersistedWitness, ReplayCaptureRecord, RetainedProvenanceRecord, RetainedRecalcContextRecord,
+    RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 use crate::workspace::{
     read_workspace_manifest, write_workspace_manifest, OneCalcWorkspaceManifest,
@@ -668,7 +665,11 @@ impl RuntimeAdapter {
         &self,
         extension_root: impl AsRef<Path>,
     ) -> Result<ExtensionRootLoadSummary, String> {
-        load_extension_root(extension_root, self.host_profile.id(), self.platform_gate().id())
+        load_extension_root(
+            extension_root,
+            self.host_profile.id(),
+            self.platform_gate().id(),
+        )
     }
 
     pub fn invoke_extension_provider(
@@ -764,9 +765,12 @@ impl RuntimeAdapter {
 
         let mut rows = Vec::new();
         for (scenario_id, run) in latest_runs {
-            let scenario = scenarios
-                .get(&scenario_id)
-                .ok_or_else(|| format!("scenario {} is missing for retained run {}", scenario_id, run.scenario_run_id))?;
+            let scenario = scenarios.get(&scenario_id).ok_or_else(|| {
+                format!(
+                    "scenario {} is missing for retained run {}",
+                    scenario_id, run.scenario_run_id
+                )
+            })?;
             let replay_capture_ids = replay_captures
                 .iter()
                 .filter(|capture| capture.scenario_run_id == run.scenario_run_id)
@@ -821,7 +825,10 @@ impl RuntimeAdapter {
             .iter()
             .filter(|row| {
                 (filter.host_profile_ids.is_empty()
-                    || filter.host_profile_ids.iter().any(|id| id == &row.host_profile_id))
+                    || filter
+                        .host_profile_ids
+                        .iter()
+                        .any(|id| id == &row.host_profile_id))
                     && filter
                         .runtime_platform
                         .as_ref()
@@ -1121,9 +1128,8 @@ impl RuntimeAdapter {
                 "onecalc:single_formula:v1".to_string(),
             ))
             .with_resolved_library_context(None, Some(snapshot_ref), Some(snapshot));
-        let source =
-            FormulaSourceRecord::new("onecalc.eval", 1, formula_text)
-                .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
+        let source = FormulaSourceRecord::new("onecalc.eval", 1, formula_text)
+            .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
         let request = RuntimeFormulaRequest::new(
             source,
             TypedContextQueryBundle::new(None, None, None, Some(46_000.0), Some(0.25)),
@@ -1148,8 +1154,9 @@ impl RuntimeAdapter {
         let formula_stable_id = formula_stable_id.into();
         let formula_text = formula_text.into();
         let structure_context_version = "onecalc:single_formula:h1".to_string();
-        let session =
-            RuntimeSessionFacade::new(build_driven_runtime_environment(structure_context_version.clone()));
+        let session = RuntimeSessionFacade::new(build_driven_runtime_environment(
+            structure_context_version.clone(),
+        ));
         Ok(DrivenSingleFormulaHost {
             formula_stable_id,
             formula_text,
@@ -1226,7 +1233,9 @@ impl RuntimeAdapter {
         let snapshot_ref = recalc_summary
             .library_context_snapshot_ref
             .clone()
-            .ok_or_else(|| "driven recalc did not surface a library context snapshot ref".to_string())?;
+            .ok_or_else(|| {
+                "driven recalc did not surface a library context snapshot ref".to_string()
+            })?;
         let function_surface_policy_id = "onecalc:admitted_execution:supported+preview";
         let capability_snapshot = self
             .emit_capability_snapshot(recalc_summary.packet_kind.as_str(), Some(&snapshot_ref))?;
@@ -1735,11 +1744,9 @@ impl RuntimeAdapter {
             .capability_snapshot_ref
             .clone()
             .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?;
-        let replay_projection = reopened
-            .run
-            .replay_projection
-            .clone()
-            .unwrap_or_else(|| replay_projection_from_retained_run(&reopened.scenario, &reopened.run));
+        let replay_projection = reopened.run.replay_projection.clone().unwrap_or_else(|| {
+            replay_projection_from_retained_run(&reopened.scenario, &reopened.run)
+        });
         let replay_capture_id = format!("replay-capture-{scenario_run_id}");
         let emitted_at_unix_ms = unix_time_millis()?;
         let replay_floor = format!(
@@ -1854,7 +1861,13 @@ impl RuntimeAdapter {
             .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?
             .logical_id
             .clone();
-        let (replay_capture_id, replay_floor, replay_projection_source_artifact_family, replay_projection_phase, replay_projection_alias) = reopened
+        let (
+            replay_capture_id,
+            replay_floor,
+            replay_projection_source_artifact_family,
+            replay_projection_phase,
+            replay_projection_alias,
+        ) = reopened
             .run
             .replay_capture_ref
             .as_ref()
@@ -1963,12 +1976,15 @@ impl RuntimeAdapter {
             "distill_not_integrated".to_string(),
             "no_oxreplay_explain_adapter_invocation_yet".to_string(),
         ];
-        let replay_projection_aliases = [left.run.replay_projection.as_ref(), right.run.replay_projection.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter_map(replay_projection_alias)
-            .map(str::to_string)
-            .collect::<Vec<_>>();
+        let replay_projection_aliases = [
+            left.run.replay_projection.as_ref(),
+            right.run.replay_projection.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(replay_projection_alias)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
         let mut explanation_lines = explanation_lines;
         if !replay_projection_aliases.is_empty() {
             explanation_lines.push(format!(
@@ -1976,11 +1992,14 @@ impl RuntimeAdapter {
                 replay_projection_aliases.join("|")
             ));
         }
-        let replay_projection_phases = [left.run.replay_projection.as_ref(), right.run.replay_projection.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter_map(|projection| projection.phase.clone())
-            .collect::<Vec<_>>();
+        let replay_projection_phases = [
+            left.run.replay_projection.as_ref(),
+            right.run.replay_projection.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|projection| projection.phase.clone())
+        .collect::<Vec<_>>();
         if !replay_projection_phases.is_empty() {
             explanation_lines.push(format!(
                 "replay_projection_phases={}",
@@ -2767,7 +2786,8 @@ impl RuntimeAdapter {
         let Some(document) = session.latest_result() else {
             return Vec::new();
         };
-        let completion = build_editor_service(&document.source).completion_at_cursor(document, cursor_offset);
+        let completion =
+            build_editor_service(&document.source).completion_at_cursor(document, cursor_offset);
 
         completion
             .proposals
@@ -2785,7 +2805,8 @@ impl RuntimeAdapter {
         cursor_offset: usize,
     ) -> Option<FunctionHelpSummary> {
         let document = session.latest_result()?;
-        let interaction = build_editor_service(&document.source).interact_at_cursor(document, cursor_offset);
+        let interaction =
+            build_editor_service(&document.source).interact_at_cursor(document, cursor_offset);
         let function_help = interaction.function_help_packet?;
         let display_signature = function_help
             .signature_forms
@@ -2865,9 +2886,9 @@ impl RuntimeAdapter {
             driven_host.formula_source(),
             query_bundle,
         ))?;
-        let replay_projection = oxfml_replay_projection_record(
-            ReplayProjectionService::project(ReplayProjectionRequest::runtime_result(&result)),
-        );
+        let replay_projection = oxfml_replay_projection_record(ReplayProjectionService::project(
+            ReplayProjectionRequest::runtime_result(&result),
+        ));
         let library_context_snapshot_ref = result
             .library_context_snapshot_ref
             .as_ref()
@@ -2949,7 +2970,10 @@ fn replay_projection_from_retained_run(
             .map(|candidate| candidate.logical_id.clone()),
         library_context_snapshot_ref: scenario.library_context_snapshot_ref.clone(),
         phase: Some("CommittedOrRejected".to_string()),
-        candidate_result_id: run.candidate_ref.as_ref().map(|candidate| candidate.logical_id.clone()),
+        candidate_result_id: run
+            .candidate_ref
+            .as_ref()
+            .map(|candidate| candidate.logical_id.clone()),
         commit_decision_kind: Some(run.commit_decision_kind.clone()),
         trace_event_kinds: match run.commit_decision_kind.as_str() {
             "accepted" => vec![
@@ -2961,7 +2985,9 @@ fn replay_projection_from_retained_run(
     }
 }
 
-fn read_replay_projection_record(path: impl AsRef<Path>) -> Result<OxfmlReplayProjectionRecord, String> {
+fn read_replay_projection_record(
+    path: impl AsRef<Path>,
+) -> Result<OxfmlReplayProjectionRecord, String> {
     let source = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     serde_json::from_str(&source).map_err(|error| error.to_string())
 }
