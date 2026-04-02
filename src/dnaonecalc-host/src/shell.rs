@@ -4,9 +4,10 @@ use eframe::egui;
 use egui::TextBuffer as _;
 
 use crate::{
-    CapabilitySnapshotDiffSummary, FormulaEditPacketSummary, FormulaEditorSession,
-    FormulaEvaluationSummary, IsolatedConditionalFormattingCarrier, OneCalcHostProfile,
-    OpenedCapabilitySnapshotSummary, RetainedScenarioStore, RuntimeAdapter,
+    CapabilitySnapshotDiffSummary, CompletionProposalSummary, FormulaEditPacketSummary,
+    FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
+    IsolatedConditionalFormattingCarrier, OneCalcHostProfile, OpenedCapabilitySnapshotSummary,
+    RetainedScenarioStore, RuntimeAdapter,
 };
 
 pub const FORMULA_REGION_ID: &str = "formula";
@@ -145,8 +146,8 @@ pub struct OneCalcShellApp {
     edit_session: FormulaEditorSession,
     latest_edit_packet: FormulaEditPacketSummary,
     latest_evaluation: Option<FormulaEvaluationSummary>,
-    completion_items: Vec<String>,
-    function_help_text: String,
+    completion_items: Vec<CompletionProposalSummary>,
+    function_help: Option<FunctionHelpSummary>,
     rendered_diagnostics: Vec<String>,
     host_profile_id: String,
     packet_register_text: String,
@@ -199,11 +200,8 @@ impl OneCalcShellApp {
         let mut edit_session = FormulaEditorSession::new("onecalc.editor");
         let latest_edit_packet =
             adapter.apply_formula_edit_packet(&mut edit_session, &formula_text);
-        let completion_items = adapter
-            .collect_completion_proposals(&edit_session, formula_text.chars().count())
-            .into_iter()
-            .map(|proposal| format!("{} {}", proposal.proposal_kind, proposal.display_text))
-            .collect();
+        let completion_items =
+            adapter.collect_completion_proposals(&edit_session, formula_text.chars().count());
         let rendered_diagnostics = Self::render_live_diagnostics(&edit_session);
         let result_text = "result: not evaluated yet".to_string();
         let diagnostics_text = match &probe {
@@ -226,7 +224,7 @@ impl OneCalcShellApp {
             latest_edit_packet,
             latest_evaluation: None,
             completion_items,
-            function_help_text: "Current Help: unavailable at cursor".to_string(),
+            function_help: None,
             rendered_diagnostics,
             host_profile_id,
             packet_register_text,
@@ -378,17 +376,38 @@ impl OneCalcShellApp {
                         self.editor_state.selected_text
                     ));
 
-                    columns[1].label("Completions");
-                    if self.completion_items.is_empty() {
-                        columns[1].small("No deterministic proposals at the current cursor.");
-                    } else {
-                        for proposal in self.completion_items.iter().take(6) {
-                            columns[1].monospace(proposal);
+                    columns[1].group(|ui| {
+                        ui.label(format!("Completions ({})", self.completion_items.len()));
+                        ui.separator();
+                        if self.completion_items.is_empty() {
+                            ui.small("No deterministic proposals at the current cursor.");
+                        } else {
+                            for proposal in self.completion_items.iter().take(6) {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.strong(&proposal.proposal_kind);
+                                    ui.monospace(&proposal.display_text);
+                                });
+                            }
                         }
-                    }
-                    columns[1].separator();
-                    columns[1].label("Current Help");
-                    columns[1].monospace(&self.function_help_text);
+                    });
+                    columns[1].add_space(8.0);
+                    columns[1].group(|ui| {
+                        ui.label("Current Help");
+                        ui.separator();
+                        if let Some(help) = &self.function_help {
+                            ui.strong(&help.display_name);
+                            ui.monospace(&help.display_signature);
+                            ui.small(format!("Active argument: {}", help.active_argument_index));
+                            ui.small(format!("Availability: {}", help.availability_summary));
+                            ui.small(if help.provisional {
+                                "Status: provisional"
+                            } else {
+                                "Status: admitted"
+                            });
+                        } else {
+                            ui.small("Current Help: unavailable at cursor");
+                        }
+                    });
                 });
             });
     }
@@ -619,14 +638,16 @@ impl OneCalcShellApp {
                             self.returned_presentation_hint_text, self.host_style_state_text
                         ));
                         ui.separator();
-                        ui.label("Effective Display Preview");
-                        ui.label(self.effective_display_render.rich_text());
-                        ui.small(format!(
-                            "formatting_plane_source={} | emphasis={} | number_format={}",
-                            self.effective_display_render.formatting_plane_source,
-                            self.effective_display_render.emphasis,
-                            self.effective_display_render.number_format
-                        ));
+                        ui.group(|ui| {
+                            ui.label("Effective Display Preview");
+                            ui.label(self.effective_display_render.rich_text().size(20.0));
+                            ui.small(format!(
+                                "formatting_plane_source={} | emphasis={} | number_format={}",
+                                self.effective_display_render.formatting_plane_source,
+                                self.effective_display_render.emphasis,
+                                self.effective_display_render.number_format
+                            ));
+                        });
                         ui.separator();
                         ui.code(&self.result_text);
                     });
@@ -645,28 +666,14 @@ impl OneCalcShellApp {
     fn refresh_completion_proposals(&mut self) {
         self.completion_items = self
             .runtime_adapter
-            .collect_completion_proposals(&self.edit_session, self.editor_state.cursor_index)
-            .into_iter()
-            .map(|proposal| format!("{} {}", proposal.proposal_kind, proposal.display_text))
-            .collect();
+            .collect_completion_proposals(&self.edit_session, self.editor_state.cursor_index);
         self.refresh_function_help();
     }
 
     fn refresh_function_help(&mut self) {
-        self.function_help_text = match self
+        self.function_help = self
             .runtime_adapter
-            .current_function_help(&self.edit_session, self.editor_state.cursor_index)
-        {
-            Some(help) => format!(
-                "Current Help: {}\nsignature: {}\nactive_argument: {}\navailability: {}\nprovisional: {}",
-                help.display_name,
-                help.display_signature,
-                help.active_argument_index,
-                help.availability_summary,
-                help.provisional
-            ),
-            None => "Current Help: unavailable at cursor".to_string(),
-        };
+            .current_function_help(&self.edit_session, self.editor_state.cursor_index);
     }
 
     fn evaluate_current_formula(&mut self) {
@@ -969,7 +976,7 @@ mod tests {
         assert!(app
             .conditional_formatting_policy_text
             .contains("blocked=data_bars"));
-        assert!(app.function_help_text.contains("Current Help"));
+        assert!(app.function_help.is_some());
         assert_eq!(
             app.editor_state.cursor_index,
             app.editor_state.buffer.chars().count()
@@ -1028,10 +1035,12 @@ mod tests {
             false,
         );
 
-        assert!(app
-            .completion_items
-            .iter()
-            .any(|proposal| proposal == "Function SUM"));
+        assert!(
+            app.completion_items
+                .iter()
+                .any(|proposal| proposal.proposal_kind == "Function"
+                    && proposal.display_text == "SUM")
+        );
     }
 
     #[test]
@@ -1042,10 +1051,12 @@ mod tests {
             false,
         );
 
-        assert!(app.function_help_text.contains("Current Help: SUM"));
-        assert!(app.function_help_text.contains("signature: SUM("));
-        assert!(app.function_help_text.contains("availability:"));
-        assert!(app.function_help_text.contains("CatalogKnown"));
+        let help = app
+            .function_help
+            .expect("function help should be available");
+        assert_eq!(help.display_name, "SUM");
+        assert!(help.display_signature.contains("SUM("));
+        assert!(help.availability_summary.contains("CatalogKnown"));
     }
 
     #[test]
