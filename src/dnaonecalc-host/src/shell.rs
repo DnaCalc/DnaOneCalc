@@ -265,6 +265,44 @@ impl OneCalcShellApp {
         ]
     }
 
+    fn request_editor_focus(&mut self) {
+        self.editor_focus_requested = false;
+    }
+
+    fn toggle_support_sidebar(&mut self) {
+        self.support_sidebar_visible = !self.support_sidebar_visible;
+    }
+
+    fn toggle_capability_center(&mut self) {
+        self.capability_center_visible = !self.capability_center_visible;
+        if self.capability_center_visible {
+            self.support_sidebar_visible = true;
+        }
+    }
+
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        let evaluate_pressed = ctx.input(|input| {
+            input.key_pressed(egui::Key::Enter)
+                && input.modifiers.ctrl
+                && !input.modifiers.alt
+                && !input.modifiers.shift
+        });
+        if evaluate_pressed {
+            self.evaluate_current_formula();
+            self.request_editor_focus();
+        }
+
+        if ctx.input(|input| input.key_pressed(egui::Key::F6)) {
+            self.toggle_support_sidebar();
+            self.request_editor_focus();
+        }
+
+        if ctx.input(|input| input.key_pressed(egui::Key::F7)) {
+            self.toggle_capability_center();
+            self.request_editor_focus();
+        }
+    }
+
     fn render_context_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("context_bar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -289,7 +327,7 @@ impl OneCalcShellApp {
                     })
                     .clicked()
                 {
-                    self.support_sidebar_visible = !self.support_sidebar_visible;
+                    self.toggle_support_sidebar();
                 }
                 if ui
                     .button(if self.capability_center_visible {
@@ -299,11 +337,12 @@ impl OneCalcShellApp {
                     })
                     .clicked()
                 {
-                    self.capability_center_visible = !self.capability_center_visible;
-                    if self.capability_center_visible {
-                        self.support_sidebar_visible = true;
-                    }
+                    self.toggle_capability_center();
                 }
+                ui.separator();
+                ui.small("Ctrl+Enter evaluate");
+                ui.small("F6 inspector");
+                ui.small("F7 capability");
             });
         });
     }
@@ -527,7 +566,7 @@ impl OneCalcShellApp {
                         })
                         .clicked()
                     {
-                        self.capability_center_visible = !self.capability_center_visible;
+                        self.toggle_capability_center();
                     }
                 });
                 ui.separator();
@@ -741,6 +780,7 @@ impl OneCalcShellApp {
 
 impl eframe::App for OneCalcShellApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_keyboard_shortcuts(ctx);
         self.render_context_bar(ctx);
         self.render_formula_panel(ctx);
         self.render_support_sidebar(ctx);
@@ -962,6 +1002,22 @@ mod tests {
 
         assert!(app.support_sidebar_visible);
         assert!(!app.capability_center_visible);
+    }
+
+    #[test]
+    fn shell_app_keyboard_toggle_helpers_keep_focus_and_visibility_state_coherent() {
+        let mut app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), false);
+
+        app.toggle_support_sidebar();
+        assert!(!app.support_sidebar_visible);
+
+        app.toggle_capability_center();
+        assert!(app.capability_center_visible);
+        assert!(app.support_sidebar_visible);
+
+        app.editor_focus_requested = true;
+        app.request_editor_focus();
+        assert!(!app.editor_focus_requested);
     }
 
     #[test]
