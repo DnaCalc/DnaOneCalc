@@ -71,9 +71,10 @@ pub use runtime::{
     OpenedReplayCaptureSummary, OpenedTwinCompareSummary, OpenedWitnessSummary, PlatformGate,
     PromotedScenarioIndex, PromotedScenarioIndexRow, PromotedScenarioRegressionSummary,
     RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
-    RetainedRunDiffSummary, RetainedRunReopenInvariantReport, RetainedRunXRaySummary,
-    RuntimeAdapter, ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef,
-    ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
+    ReplayAwareOperationKind, ReplayAwareOperationSummary, RetainedRunDiffSummary,
+    RetainedRunReopenInvariantReport, RetainedRunXRaySummary, RuntimeAdapter,
+    ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef, ScenarioSelectionAction,
+    ScenarioSelectionDetail, UpstreamPressurePacket,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -291,6 +292,29 @@ mod tests {
                 "projection_limitations={}",
                 compare.projection_limitations.join("|")
             ),
+        ]
+    }
+
+    fn replay_operation_golden_lines(operation: &ReplayAwareOperationSummary) -> Vec<String> {
+        vec![
+            format!("operation_id={}", operation.operation_id),
+            format!(
+                "packet_kind={}",
+                operation.packet_kind.as_deref().unwrap_or("none")
+            ),
+            format!(
+                "trigger_kind={}",
+                operation.trigger_kind.as_deref().unwrap_or("none")
+            ),
+            format!("operation_class={}", operation.operation_class),
+            format!("replay_readiness={}", operation.replay_readiness),
+            format!("retained_consequence={}", operation.retained_consequence),
+            format!("semantic_log_boundary={}", operation.semantic_log_boundary),
+            format!(
+                "reproducibility_contract={}",
+                operation.reproducibility_contract
+            ),
+            format!("non_assumptions={}", operation.non_assumptions.join("|")),
         ]
     }
 
@@ -1257,6 +1281,15 @@ mod tests {
             host.session_state().session_id
         );
         assert_eq!(edit_summary.host_recalc_sequence, 1);
+        assert_eq!(edit_summary.replay_operation_id, "edit_accept_recalc");
+        assert_eq!(
+            edit_summary.replay_operation_readiness,
+            "recalc_projection_ready"
+        );
+        assert_eq!(
+            edit_summary.replay_retained_consequence,
+            "persists_formula_version_and_retained_run_when_requested"
+        );
         assert_eq!(edit_summary.trigger_kind, "edit_accept");
         assert_eq!(edit_summary.packet_kind, "edit_accept_recalc");
         assert_eq!(edit_summary.formula_text_version, 2);
@@ -1271,6 +1304,11 @@ mod tests {
             .expect("manual recalc should succeed");
         assert_eq!(manual_summary.host_session_id, edit_summary.host_session_id);
         assert_eq!(manual_summary.host_recalc_sequence, 2);
+        assert_eq!(manual_summary.replay_operation_id, "manual_recalc");
+        assert_eq!(
+            manual_summary.replay_retained_consequence,
+            "reuses_current_formula_state_with_explicit_context"
+        );
         assert_eq!(manual_summary.trigger_kind, "manual");
         assert_eq!(manual_summary.packet_kind, "manual_recalc");
         assert_eq!(manual_summary.formula_text_version, 2);
@@ -1284,12 +1322,60 @@ mod tests {
             .expect("forced recalc should succeed");
         assert_eq!(forced_summary.host_session_id, edit_summary.host_session_id);
         assert_eq!(forced_summary.host_recalc_sequence, 3);
+        assert_eq!(forced_summary.replay_operation_id, "forced_recalc");
+        assert_eq!(
+            forced_summary.replay_retained_consequence,
+            "reuses_current_formula_state_with_forced_provisionality"
+        );
         assert_eq!(forced_summary.trigger_kind, "forced");
         assert_eq!(forced_summary.packet_kind, "forced_recalc");
         assert_eq!(forced_summary.formula_text_version, 2);
         assert_eq!(
             forced_summary.evaluation.worksheet_value_summary,
             "Number(6)"
+        );
+    }
+
+    #[test]
+    fn replay_operation_model_makes_current_and_future_host_operations_explicit() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let model = adapter.replay_operation_model();
+
+        assert_eq!(model.len(), ReplayAwareOperationKind::ALL.len());
+        assert_eq!(
+            replay_operation_golden_lines(&model[0]),
+            vec![
+                "operation_id=edit_accept_recalc".to_string(),
+                "packet_kind=edit_accept_recalc".to_string(),
+                "trigger_kind=edit_accept".to_string(),
+                "operation_class=driven_recalc".to_string(),
+                "replay_readiness=recalc_projection_ready".to_string(),
+                "retained_consequence=persists_formula_version_and_retained_run_when_requested"
+                    .to_string(),
+                "semantic_log_boundary=oxfml_runtime_result_plus_host_retained_artifacts"
+                    .to_string(),
+                "reproducibility_contract=requires_explicit_now_serial_and_random_value"
+                    .to_string(),
+                "non_assumptions=does_not_define_undo_inverse|does_not_imply_macro_capture_stream"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            replay_operation_golden_lines(
+                model.last().expect("macro capture operation should exist")
+            ),
+            vec![
+                "operation_id=macro_capture".to_string(),
+                "packet_kind=none".to_string(),
+                "trigger_kind=none".to_string(),
+                "operation_class=future_host_operation".to_string(),
+                "replay_readiness=not_admitted_yet".to_string(),
+                "retained_consequence=no_current_retained_artifact".to_string(),
+                "semantic_log_boundary=semantic_logging_boundary_not_designed".to_string(),
+                "reproducibility_contract=macro_capture_pipeline_not_proven".to_string(),
+                "non_assumptions=no_host_macro_dsl_exists|no_cross_library_semantic_log_contract_exists"
+                    .to_string(),
+            ]
         );
     }
 

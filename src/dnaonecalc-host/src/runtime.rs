@@ -239,6 +239,69 @@ impl RecalcTriggerKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayAwareOperationKind {
+    EditAcceptRecalc,
+    ManualRecalc,
+    ForcedRecalc,
+    Undo,
+    Redo,
+    MacroCapture,
+}
+
+impl ReplayAwareOperationKind {
+    pub const ALL: [Self; 6] = [
+        Self::EditAcceptRecalc,
+        Self::ManualRecalc,
+        Self::ForcedRecalc,
+        Self::Undo,
+        Self::Redo,
+        Self::MacroCapture,
+    ];
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::EditAcceptRecalc => "edit_accept_recalc",
+            Self::ManualRecalc => "manual_recalc",
+            Self::ForcedRecalc => "forced_recalc",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::MacroCapture => "macro_capture",
+        }
+    }
+
+    pub const fn packet_kind(self) -> Option<HostPacketKind> {
+        match self {
+            Self::EditAcceptRecalc => Some(HostPacketKind::EditAcceptRecalc),
+            Self::ManualRecalc => Some(HostPacketKind::ManualRecalc),
+            Self::ForcedRecalc => Some(HostPacketKind::ForcedRecalc),
+            Self::Undo | Self::Redo | Self::MacroCapture => None,
+        }
+    }
+
+    pub const fn trigger_kind(self) -> Option<RecalcTriggerKind> {
+        match self {
+            Self::EditAcceptRecalc => Some(RecalcTriggerKind::EditAccept),
+            Self::ManualRecalc => Some(RecalcTriggerKind::Manual),
+            Self::ForcedRecalc => Some(RecalcTriggerKind::Forced),
+            Self::Undo | Self::Redo | Self::MacroCapture => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayAwareOperationSummary {
+    pub operation_id: String,
+    pub packet_kind: Option<String>,
+    pub trigger_kind: Option<String>,
+    pub operation_class: String,
+    pub replay_readiness: String,
+    pub retained_consequence: String,
+    pub semantic_log_boundary: String,
+    pub reproducibility_contract: String,
+    pub non_assumptions: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RecalcContext {
     pub trigger_kind: RecalcTriggerKind,
@@ -414,6 +477,9 @@ pub struct DrivenRecalcSummary {
     pub host_profile_id: String,
     pub host_session_id: String,
     pub host_recalc_sequence: u64,
+    pub replay_operation_id: String,
+    pub replay_operation_readiness: String,
+    pub replay_retained_consequence: String,
     pub trigger_kind: String,
     pub packet_kind: String,
     pub formula_text_version: u64,
@@ -1206,6 +1272,13 @@ impl RuntimeAdapter {
             OneCalcHostProfile::OcH1 => OC_H1_PACKET_KINDS,
             OneCalcHostProfile::OcH2 => OC_H2_PACKET_KINDS,
         }
+    }
+
+    pub fn replay_operation_model(&self) -> Vec<ReplayAwareOperationSummary> {
+        ReplayAwareOperationKind::ALL
+            .into_iter()
+            .map(replay_aware_operation_summary)
+            .collect()
     }
 
     pub const fn platform_gate(&self) -> PlatformGate {
@@ -3212,12 +3285,20 @@ impl RuntimeAdapter {
             .as_ref()
             .map(LibraryContextSnapshotRef::compound_ref);
         let evaluation = summarize_runtime_result(result);
+        let replay_operation = replay_aware_operation_summary(match recalc_context.trigger_kind {
+            RecalcTriggerKind::EditAccept => ReplayAwareOperationKind::EditAcceptRecalc,
+            RecalcTriggerKind::Manual => ReplayAwareOperationKind::ManualRecalc,
+            RecalcTriggerKind::Forced => ReplayAwareOperationKind::ForcedRecalc,
+        });
         driven_host.session_state.record_recalc(recalc_context);
 
         Ok(DrivenRecalcSummary {
             host_profile_id: self.host_profile.id().to_string(),
             host_session_id: driven_host.session_state.session_id.clone(),
             host_recalc_sequence: driven_host.session_state.recalc_sequence,
+            replay_operation_id: replay_operation.operation_id,
+            replay_operation_readiness: replay_operation.replay_readiness,
+            replay_retained_consequence: replay_operation.retained_consequence,
             trigger_kind: recalc_context.trigger_kind.id().to_string(),
             packet_kind: recalc_context.packet_kind().id().to_string(),
             formula_text_version: driven_host.formula_text_version,
@@ -3253,6 +3334,99 @@ fn build_driven_runtime_environment(
     RuntimeEnvironment::new()
         .with_structure_context_version(StructureContextVersion(structure_context_version.into()))
         .with_resolved_library_context(None, Some(snapshot_ref), Some(snapshot))
+}
+
+fn replay_aware_operation_summary(
+    operation: ReplayAwareOperationKind,
+) -> ReplayAwareOperationSummary {
+    match operation {
+        ReplayAwareOperationKind::EditAcceptRecalc => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: operation.packet_kind().map(|kind| kind.id().to_string()),
+            trigger_kind: operation.trigger_kind().map(|kind| kind.id().to_string()),
+            operation_class: "driven_recalc".to_string(),
+            replay_readiness: "recalc_projection_ready".to_string(),
+            retained_consequence: "persists_formula_version_and_retained_run_when_requested"
+                .to_string(),
+            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
+            non_assumptions: vec![
+                "does_not_define_undo_inverse".to_string(),
+                "does_not_imply_macro_capture_stream".to_string(),
+            ],
+        },
+        ReplayAwareOperationKind::ManualRecalc => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: operation.packet_kind().map(|kind| kind.id().to_string()),
+            trigger_kind: operation.trigger_kind().map(|kind| kind.id().to_string()),
+            operation_class: "driven_recalc".to_string(),
+            replay_readiness: "recalc_projection_ready".to_string(),
+            retained_consequence: "reuses_current_formula_state_with_explicit_context".to_string(),
+            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
+            non_assumptions: vec![
+                "does_not_mutate_formula_text".to_string(),
+                "does_not_define_undo_inverse".to_string(),
+            ],
+        },
+        ReplayAwareOperationKind::ForcedRecalc => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: operation.packet_kind().map(|kind| kind.id().to_string()),
+            trigger_kind: operation.trigger_kind().map(|kind| kind.id().to_string()),
+            operation_class: "driven_recalc".to_string(),
+            replay_readiness: "recalc_projection_ready".to_string(),
+            retained_consequence: "reuses_current_formula_state_with_forced_provisionality"
+                .to_string(),
+            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
+            non_assumptions: vec![
+                "does_not_define_undo_inverse".to_string(),
+                "does_not_settle_long_term_provenance_policy".to_string(),
+            ],
+        },
+        ReplayAwareOperationKind::Undo => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: None,
+            trigger_kind: None,
+            operation_class: "future_host_operation".to_string(),
+            replay_readiness: "not_admitted_yet".to_string(),
+            retained_consequence: "no_current_retained_artifact".to_string(),
+            semantic_log_boundary: "not_designed".to_string(),
+            reproducibility_contract: "inverse_operation_not_proven".to_string(),
+            non_assumptions: vec![
+                "no_inverse_replay_contract_exists".to_string(),
+                "no_history_compaction_policy_exists".to_string(),
+            ],
+        },
+        ReplayAwareOperationKind::Redo => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: None,
+            trigger_kind: None,
+            operation_class: "future_host_operation".to_string(),
+            replay_readiness: "not_admitted_yet".to_string(),
+            retained_consequence: "no_current_retained_artifact".to_string(),
+            semantic_log_boundary: "not_designed".to_string(),
+            reproducibility_contract: "inverse_operation_not_proven".to_string(),
+            non_assumptions: vec![
+                "no_inverse_replay_contract_exists".to_string(),
+                "no_history_compaction_policy_exists".to_string(),
+            ],
+        },
+        ReplayAwareOperationKind::MacroCapture => ReplayAwareOperationSummary {
+            operation_id: operation.id().to_string(),
+            packet_kind: None,
+            trigger_kind: None,
+            operation_class: "future_host_operation".to_string(),
+            replay_readiness: "not_admitted_yet".to_string(),
+            retained_consequence: "no_current_retained_artifact".to_string(),
+            semantic_log_boundary: "semantic_logging_boundary_not_designed".to_string(),
+            reproducibility_contract: "macro_capture_pipeline_not_proven".to_string(),
+            non_assumptions: vec![
+                "no_host_macro_dsl_exists".to_string(),
+                "no_cross_library_semantic_log_contract_exists".to_string(),
+            ],
+        },
+    }
 }
 
 fn oxfml_replay_projection_record(
