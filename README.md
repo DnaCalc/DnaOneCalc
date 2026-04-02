@@ -30,6 +30,11 @@ Repo layout:
 - [docs/BEADS.md](docs/BEADS.md) is the complete local beads working method.
 - `.beads/` is the execution truth surface for epics and beads.
 
+Verification entrypoints:
+- `powershell -File .\scripts\run-host-acceptance-fast.ps1` runs the dev-velocity smoke family.
+- `powershell -File .\scripts\run-host-integration.ps1` runs the deeper retained/document/workspace integration family.
+- `powershell -File .\scripts\run-host-acceptance-full.ps1` runs the full `dnaonecalc-host` acceptance suite.
+
 Cross-repo rule:
 - This repo may read sibling repos under `C:\Work\DnaCalc` for upstream contracts, evidence, and alignment.
 - This repo must not write to sibling repos. Any required change outside `DnaOneCalc` must be routed through a handoff, prompt, or separate repo-scoped run.

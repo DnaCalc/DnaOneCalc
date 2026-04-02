@@ -13,11 +13,11 @@ try {
     )
 
     foreach ($check in $checks) {
-        Write-Host "run-host-acceptance-fast: $check"
+        Write-Host "run-host-acceptance-fast smoke: $check"
         cargo test -p dnaonecalc-host $check -- --exact
     }
 
-    Write-Host "run-host-acceptance-fast: ok"
+    Write-Host "run-host-acceptance-fast smoke: ok"
 }
 finally {
     Pop-Location
