@@ -1300,7 +1300,10 @@ pub fn launch_shell_with_formula(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{adapter_for, FormulaScenarioFamily};
+    use crate::test_support::{
+        adapter_for, promoted_formatting_scenario, promoted_formula_scenario,
+        FormattingScenarioFamily, FormulaScenarioFamily,
+    };
 
     fn shell_xray_golden_lines(xray: &ShellXRayModel) -> Vec<String> {
         let mut lines = vec![
@@ -1408,7 +1411,9 @@ mod tests {
     fn shell_app_projects_live_diagnostics_and_spans_for_invalid_formula() {
         let app = OneCalcShellApp::with_formula(
             adapter_for(OneCalcHostProfile::OcH0),
-            FormulaScenarioFamily::ExplorerInvalid.formula().to_string(),
+            promoted_formula_scenario(FormulaScenarioFamily::ExplorerInvalid)
+                .formula
+                .to_string(),
             true,
         );
 
@@ -1546,7 +1551,9 @@ mod tests {
     fn shell_app_projects_structured_xray_model_for_invalid_formula_without_eval() {
         let app = OneCalcShellApp::with_formula(
             adapter_for(OneCalcHostProfile::OcH0),
-            FormulaScenarioFamily::ExplorerInvalid.formula().to_string(),
+            promoted_formula_scenario(FormulaScenarioFamily::ExplorerInvalid)
+                .formula
+                .to_string(),
             false,
         );
         let xray = app.xray_model();
@@ -1560,8 +1567,8 @@ mod tests {
     fn shell_app_projects_function_completion_into_editor_flow() {
         let app = OneCalcShellApp::with_formula(
             adapter_for(OneCalcHostProfile::OcH0),
-            FormulaScenarioFamily::ExplorerCompletionStem
-                .formula()
+            promoted_formula_scenario(FormulaScenarioFamily::ExplorerCompletionStem)
+                .formula
                 .to_string(),
             false,
         );
@@ -1592,23 +1599,26 @@ mod tests {
 
     #[test]
     fn effective_display_render_state_derives_from_the_two_formatting_planes() {
+        let scenario =
+            promoted_formatting_scenario(FormattingScenarioFamily::CurrencyHintWithHostAccent);
         let summary = FormulaEvaluationSummary {
             formula_token: "token".to_string(),
-            worksheet_value_summary: "Number(6)".to_string(),
+            worksheet_value_summary: scenario.worksheet_value_summary.to_string(),
             array_preview: None,
             payload_summary: "Number".to_string(),
             returned_value_surface_kind: "OrdinaryValue".to_string(),
-            returned_presentation_hint_status: "number_format:none;style:Currency".to_string(),
-            host_style_state_status: "accent".to_string(),
-            effective_display_status:
-                "presentation_hint:number_format:none;style:Currency;host_style:accent".to_string(),
+            returned_presentation_hint_status: scenario
+                .returned_presentation_hint_status
+                .to_string(),
+            host_style_state_status: scenario.host_style_state_status.to_string(),
+            effective_display_status: scenario.effective_display_status.to_string(),
             commit_decision_kind: "accepted".to_string(),
             trace_event_count: 2,
         };
 
         let render = EffectiveDisplayRenderState::from_summary(&summary);
 
-        assert_eq!(render.display_text, "6");
+        assert_eq!(render.display_text, scenario.expected_display_text);
         assert_eq!(
             render.formatting_plane_source,
             "presentation_hint+host_style"
@@ -1621,8 +1631,8 @@ mod tests {
     fn shell_app_projects_array_results_into_the_main_result_surface_state() {
         let app = OneCalcShellApp::with_formula(
             adapter_for(OneCalcHostProfile::OcH0),
-            FormulaScenarioFamily::ExplorerSequence23
-                .formula()
+            promoted_formula_scenario(FormulaScenarioFamily::ExplorerSequence23)
+                .formula
                 .to_string(),
             true,
         );

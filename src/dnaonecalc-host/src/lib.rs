@@ -164,8 +164,10 @@ mod tests {
 
     use super::*;
     use crate::test_support::{
-        adapter_for, persist_observation_fixture, DrivenHostFixture, FixtureRoot,
-        FormulaScenarioFamily, ObservationScenarioFamily,
+        adapter_for, persist_observation_fixture, promoted_formatting_scenarios,
+        promoted_formula_scenario, promoted_formula_scenarios, promoted_observation_scenario,
+        promoted_observation_scenarios, DrivenHostFixture, FixtureRoot, FormulaScenarioFamily,
+        ObservationScenarioFamily,
     };
 
     fn retained_xray_golden_lines(xray: &RetainedRunXRaySummary) -> Vec<String> {
@@ -229,7 +231,7 @@ mod tests {
     fn runtime_adapter_evaluates_admitted_formula_through_upstream_host() {
         let adapter = adapter_for(OneCalcHostProfile::OcH0);
         let summary = adapter
-            .evaluate_formula(FormulaScenarioFamily::ExplorerSum.formula())
+            .evaluate_formula(promoted_formula_scenario(FormulaScenarioFamily::ExplorerSum).formula)
             .expect("admitted SUM formula should evaluate");
 
         assert!(!summary.formula_token.is_empty());
@@ -260,6 +262,25 @@ mod tests {
         assert_eq!(preview.rows.len(), 6);
         assert_eq!(preview.rows[0], vec!["1", "2", "3", "4", "5", "6"]);
         assert_eq!(preview.rows[5], vec!["36", "37", "38", "39", "40", "41"]);
+    }
+
+    #[test]
+    fn promoted_scenario_corpus_covers_main_product_planes() {
+        assert!(promoted_formula_scenarios()
+            .iter()
+            .any(|scenario| scenario.plane_tags.contains(&"explorer")));
+        assert!(promoted_formula_scenarios()
+            .iter()
+            .any(|scenario| scenario.plane_tags.contains(&"diagnostics")));
+        assert!(promoted_formatting_scenarios()
+            .iter()
+            .any(|scenario| scenario.plane_tags.contains(&"formatting")));
+        assert!(promoted_formula_scenarios()
+            .iter()
+            .any(|scenario| scenario.plane_tags.contains(&"replay")));
+        assert!(promoted_observation_scenarios()
+            .iter()
+            .any(|scenario| scenario.plane_tags.contains(&"observation")));
     }
 
     #[test]
@@ -1688,12 +1709,15 @@ mod tests {
             &store,
             ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
         );
+        let scenario = promoted_observation_scenario(
+            ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
+        );
 
         assert!(persisted.observation_path.exists());
         assert_eq!(persisted.observation.envelope.artifact_kind, "observation");
         assert_eq!(
             persisted.observation.capture.surfaces[0].surface.surface_id,
-            "sheet1_a1_value"
+            scenario.expected_value_surface_id
         );
         assert!(persisted
             .observation
@@ -1707,7 +1731,7 @@ mod tests {
         let reopened = store
             .read_observation(&persisted.observation.observation_id)
             .expect("observation artifact should reopen");
-        assert_eq!(reopened.scenario_id, "xlplay_capture_values_formulae_001");
+        assert_eq!(reopened.scenario_id, scenario.expected_scenario_id);
     }
 
     #[test]
