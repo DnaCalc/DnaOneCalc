@@ -276,12 +276,62 @@ impl RecalcContext {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrivenHostSessionState {
+    pub session_id: String,
+    pub recalc_sequence: u64,
+    pub last_trigger_kind: Option<String>,
+    pub last_packet_kind: Option<String>,
+}
+
+impl DrivenHostSessionState {
+    fn new(
+        host_profile: OneCalcHostProfile,
+        formula_stable_id: &str,
+        structure_context_version: &str,
+    ) -> Self {
+        Self {
+            session_id: format!(
+                "driven-session-{}",
+                stable_hash(&(
+                    host_profile.id(),
+                    formula_stable_id,
+                    structure_context_version,
+                ))
+            ),
+            recalc_sequence: 0,
+            last_trigger_kind: None,
+            last_packet_kind: None,
+        }
+    }
+
+    fn record_recalc(&mut self, recalc_context: RecalcContext) {
+        self.recalc_sequence += 1;
+        self.last_trigger_kind = Some(recalc_context.trigger_kind.id().to_string());
+        self.last_packet_kind = Some(recalc_context.packet_kind().id().to_string());
+    }
+
+    fn restore(
+        &mut self,
+        session_id: impl Into<String>,
+        recalc_sequence: u64,
+        last_trigger_kind: impl Into<String>,
+        last_packet_kind: impl Into<String>,
+    ) {
+        self.session_id = session_id.into();
+        self.recalc_sequence = recalc_sequence;
+        self.last_trigger_kind = Some(last_trigger_kind.into());
+        self.last_packet_kind = Some(last_packet_kind.into());
+    }
+}
+
 pub struct DrivenSingleFormulaHost {
     formula_stable_id: String,
     formula_text: String,
     formula_text_version: u64,
     formula_channel_kind: FormulaChannelKind,
     structure_context_version: String,
+    session_state: DrivenHostSessionState,
     session: RuntimeSessionFacade<'static>,
 }
 
@@ -293,6 +343,7 @@ impl fmt::Debug for DrivenSingleFormulaHost {
             .field("formula_text_version", &self.formula_text_version)
             .field("formula_channel_kind", &self.formula_channel_kind)
             .field("structure_context_version", &self.structure_context_version)
+            .field("session_state", &self.session_state)
             .finish_non_exhaustive()
     }
 }
@@ -318,6 +369,10 @@ impl DrivenSingleFormulaHost {
         &self.structure_context_version
     }
 
+    pub fn session_state(&self) -> &DrivenHostSessionState {
+        &self.session_state
+    }
+
     fn formula_source(&self) -> FormulaSourceRecord {
         FormulaSourceRecord::new(
             self.formula_stable_id.clone(),
@@ -337,16 +392,28 @@ impl DrivenSingleFormulaHost {
         formula_text_version: u64,
         formula_channel_kind: FormulaChannelKind,
         structure_context_version: impl Into<String>,
+        session_id: impl Into<String>,
+        recalc_sequence: u64,
+        last_trigger_kind: impl Into<String>,
+        last_packet_kind: impl Into<String>,
     ) {
         self.formula_text_version = formula_text_version;
         self.formula_channel_kind = formula_channel_kind;
         self.structure_context_version = structure_context_version.into();
+        self.session_state.restore(
+            session_id,
+            recalc_sequence,
+            last_trigger_kind,
+            last_packet_kind,
+        );
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrivenRecalcSummary {
     pub host_profile_id: String,
+    pub host_session_id: String,
+    pub host_recalc_sequence: u64,
     pub trigger_kind: String,
     pub packet_kind: String,
     pub formula_text_version: u64,
@@ -415,6 +482,7 @@ pub struct DocumentRoundTripInvariantReport {
     pub document_id_preserved: bool,
     pub formula_identity_preserved: bool,
     pub structure_context_preserved: bool,
+    pub session_state_preserved: bool,
     pub library_context_snapshot_ref_preserved: bool,
     pub artifact_index_preserved: bool,
     pub effective_display_status_preserved: bool,
@@ -615,6 +683,7 @@ impl DocumentRoundTripInvariantReport {
         self.document_id_preserved
             && self.formula_identity_preserved
             && self.structure_context_preserved
+            && self.session_state_preserved
             && self.library_context_snapshot_ref_preserved
             && self.artifact_index_preserved
             && self.effective_display_status_preserved
@@ -1173,12 +1242,18 @@ impl RuntimeAdapter {
         let session = RuntimeSessionFacade::new(build_driven_runtime_environment(
             structure_context_version.clone(),
         ));
+        let session_state = DrivenHostSessionState::new(
+            self.host_profile,
+            formula_stable_id.as_str(),
+            structure_context_version.as_str(),
+        );
         Ok(DrivenSingleFormulaHost {
             formula_stable_id,
             formula_text,
             formula_text_version: 1,
             formula_channel_kind: FormulaChannelKind::WorksheetA1,
             structure_context_version,
+            session_state,
             session,
         })
     }
@@ -1394,6 +1469,8 @@ impl RuntimeAdapter {
             scenario_run_id,
             scenario_id,
             scenario_ref,
+            host_session_id: recalc_summary.host_session_id.clone(),
+            host_recalc_sequence: recalc_summary.host_recalc_sequence,
             formula_text_version: recalc_summary.formula_text_version,
             formula_token: recalc_summary.evaluation.formula_token.clone(),
             authored_formula_text: driven_host.formula_text().to_string(),
@@ -1452,6 +1529,10 @@ impl RuntimeAdapter {
                 .provenance
                 .structure_context_version
                 .clone(),
+            retained.run.host_session_id.clone(),
+            retained.run.host_recalc_sequence,
+            retained.scenario.recalc_context.trigger_kind.clone(),
+            retained.run.envelope.packet_kind.clone(),
         );
 
         Ok(ReopenedDrivenSingleFormulaRun {
@@ -1499,6 +1580,8 @@ impl RuntimeAdapter {
             formula_channel_kind: format!("{:?}", driven_host.formula_channel_kind()),
             formula_text_version: driven_host.formula_text_version(),
             structure_context_version: driven_host.structure_context_version().to_string(),
+            host_session_id: recalc_summary.host_session_id.clone(),
+            host_recalc_sequence: recalc_summary.host_recalc_sequence,
             host_driving_packet_kind: recalc_context.packet_kind().id().to_string(),
             host_driving_block: "driven_single_formula_host".to_string(),
             recalc_trigger_kind: recalc_context.trigger_kind.id().to_string(),
@@ -1545,6 +1628,10 @@ impl RuntimeAdapter {
             document.formula_text_version,
             parse_formula_channel_kind(&document.formula_channel_kind)?,
             document.structure_context_version.clone(),
+            document.host_session_id.clone(),
+            document.host_recalc_sequence,
+            document.recalc_trigger_kind.clone(),
+            document.host_driving_packet_kind.clone(),
         );
 
         Ok(ReopenedOneCalcDocument {
@@ -1575,6 +1662,14 @@ impl RuntimeAdapter {
                 == persisted_document.document.structure_context_version
                 && reopened.driven_host.structure_context_version()
                     == persisted_document.document.structure_context_version,
+            session_state_preserved: reopened.document.host_session_id
+                == persisted_document.document.host_session_id
+                && reopened.document.host_recalc_sequence
+                    == persisted_document.document.host_recalc_sequence
+                && reopened.driven_host.session_state().session_id
+                    == persisted_document.document.host_session_id
+                && reopened.driven_host.session_state().recalc_sequence
+                    == persisted_document.document.host_recalc_sequence,
             library_context_snapshot_ref_preserved: reopened.document.library_context_snapshot_ref
                 == persisted_document.document.library_context_snapshot_ref,
             artifact_index_preserved: reopened.document.artifact_index
@@ -1595,6 +1690,9 @@ impl RuntimeAdapter {
             }
             if !report.structure_context_preserved {
                 failed.push("structure_context");
+            }
+            if !report.session_state_preserved {
+                failed.push("session_state");
             }
             if !report.library_context_snapshot_ref_preserved {
                 failed.push("library_context_snapshot_ref");
@@ -2910,9 +3008,12 @@ impl RuntimeAdapter {
             .as_ref()
             .map(LibraryContextSnapshotRef::compound_ref);
         let evaluation = summarize_runtime_result(result);
+        driven_host.session_state.record_recalc(recalc_context);
 
         Ok(DrivenRecalcSummary {
             host_profile_id: self.host_profile.id().to_string(),
+            host_session_id: driven_host.session_state.session_id.clone(),
+            host_recalc_sequence: driven_host.session_state.recalc_sequence,
             trigger_kind: recalc_context.trigger_kind.id().to_string(),
             packet_kind: recalc_context.packet_kind().id().to_string(),
             formula_text_version: driven_host.formula_text_version,

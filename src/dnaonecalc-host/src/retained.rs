@@ -46,6 +46,8 @@ pub struct ScenarioRunRecord {
     pub scenario_run_id: String,
     pub scenario_id: String,
     pub scenario_ref: StableArtifactRef,
+    pub host_session_id: String,
+    pub host_recalc_sequence: u64,
     pub formula_text_version: u64,
     pub formula_token: String,
     pub authored_formula_text: String,

@@ -242,6 +242,11 @@ mod tests {
             format!("format={}", document.document.persistence_format_id),
             format!("host_profile={}", document.document.host_profile_id),
             format!("scenario_slug={}", document.document.scenario_slug),
+            format!("host_session_id={}", document.document.host_session_id),
+            format!(
+                "host_recalc_sequence={}",
+                document.document.host_recalc_sequence
+            ),
             format!("packet_kind={}", document.document.host_driving_packet_kind),
             format!("effective_display={}", document.document.effective_display_status),
             format!("artifact_index_count={}", document.document.artifact_index.len()),
@@ -256,10 +261,11 @@ mod tests {
                     .join("|")
             ),
             format!(
-                "invariants=document_id:{};formula_identity:{};structure_context:{};library_context_snapshot_ref:{};artifact_index:{};effective_display_status:{}",
+                "invariants=document_id:{};formula_identity:{};structure_context:{};session_state:{};library_context_snapshot_ref:{};artifact_index:{};effective_display_status:{}",
                 invariants.document_id_preserved,
                 invariants.formula_identity_preserved,
                 invariants.structure_context_preserved,
+                invariants.session_state_preserved,
                 invariants.library_context_snapshot_ref_preserved,
                 invariants.artifact_index_preserved,
                 invariants.effective_display_status_preserved
@@ -1237,6 +1243,11 @@ mod tests {
             )
             .expect("edit-and-accept recalc should succeed");
         assert_eq!(edit_summary.host_profile_id, "OC-H1");
+        assert_eq!(
+            edit_summary.host_session_id,
+            host.session_state().session_id
+        );
+        assert_eq!(edit_summary.host_recalc_sequence, 1);
         assert_eq!(edit_summary.trigger_kind, "edit_accept");
         assert_eq!(edit_summary.packet_kind, "edit_accept_recalc");
         assert_eq!(edit_summary.formula_text_version, 2);
@@ -1249,6 +1260,8 @@ mod tests {
         let manual_summary = adapter
             .manual_recalc(&mut host, RecalcContext::manual(Some(46_000.0), Some(0.25)))
             .expect("manual recalc should succeed");
+        assert_eq!(manual_summary.host_session_id, edit_summary.host_session_id);
+        assert_eq!(manual_summary.host_recalc_sequence, 2);
         assert_eq!(manual_summary.trigger_kind, "manual");
         assert_eq!(manual_summary.packet_kind, "manual_recalc");
         assert_eq!(manual_summary.formula_text_version, 2);
@@ -1260,6 +1273,8 @@ mod tests {
         let forced_summary = adapter
             .forced_recalc(&mut host, RecalcContext::forced(Some(46_000.0), Some(0.25)))
             .expect("forced recalc should succeed");
+        assert_eq!(forced_summary.host_session_id, edit_summary.host_session_id);
+        assert_eq!(forced_summary.host_recalc_sequence, 3);
         assert_eq!(forced_summary.trigger_kind, "forced");
         assert_eq!(forced_summary.packet_kind, "forced_recalc");
         assert_eq!(forced_summary.formula_text_version, 2);
@@ -1366,6 +1381,14 @@ mod tests {
             reopened.driven_host.formula_text_version(),
             recalc_summary.formula_text_version
         );
+        assert_eq!(
+            reopened.driven_host.session_state().session_id,
+            persisted.run.host_session_id
+        );
+        assert_eq!(
+            reopened.driven_host.session_state().recalc_sequence,
+            persisted.run.host_recalc_sequence
+        );
 
         let reopened_summary = fixture
             .adapter
@@ -1375,6 +1398,14 @@ mod tests {
             )
             .expect("reopened driven host should recalc");
         assert_eq!(reopened_summary.host_profile_id, "OC-H1");
+        assert_eq!(
+            reopened_summary.host_session_id,
+            persisted.run.host_session_id
+        );
+        assert_eq!(
+            reopened_summary.host_recalc_sequence,
+            persisted.run.host_recalc_sequence + 1
+        );
         assert_eq!(
             reopened_summary.evaluation.worksheet_value_summary,
             "Number(6)"
@@ -2038,6 +2069,14 @@ mod tests {
             reopened.driven_host.formula_text_version(),
             persisted_document.document.formula_text_version
         );
+        assert_eq!(
+            reopened.driven_host.session_state().session_id,
+            persisted_document.document.host_session_id
+        );
+        assert_eq!(
+            reopened.driven_host.session_state().recalc_sequence,
+            persisted_document.document.host_recalc_sequence
+        );
 
         let reopened_summary = adapter
             .manual_recalc(
@@ -2046,6 +2085,14 @@ mod tests {
             )
             .expect("reopened document should recalc");
         assert_eq!(reopened_summary.host_profile_id, "OC-H1");
+        assert_eq!(
+            reopened_summary.host_session_id,
+            persisted_document.document.host_session_id
+        );
+        assert_eq!(
+            reopened_summary.host_recalc_sequence,
+            persisted_document.document.host_recalc_sequence + 1
+        );
         assert_eq!(
             reopened_summary.evaluation.worksheet_value_summary,
             "Number(6)"
@@ -2098,6 +2145,7 @@ mod tests {
         assert!(invariants.document_id_preserved);
         assert!(invariants.formula_identity_preserved);
         assert!(invariants.structure_context_preserved);
+        assert!(invariants.session_state_preserved);
         assert!(invariants.library_context_snapshot_ref_preserved);
         assert!(invariants.artifact_index_preserved);
         assert!(invariants.effective_display_status_preserved);
@@ -2108,11 +2156,16 @@ mod tests {
                 "format=spreadsheetml2003.onecalc.single_instance.v1".to_string(),
                 "host_profile=OC-H1".to_string(),
                 "scenario_slug=sum-document-invariant".to_string(),
+                format!(
+                    "host_session_id={}",
+                    persisted_document.document.host_session_id
+                ),
+                "host_recalc_sequence=1".to_string(),
                 "packet_kind=edit_accept_recalc".to_string(),
                 "effective_display=none".to_string(),
                 "artifact_index_count=3".to_string(),
                 "artifact_kinds=scenario|scenario_run|capability_ledger_snapshot".to_string(),
-                "invariants=document_id:true;formula_identity:true;structure_context:true;library_context_snapshot_ref:true;artifact_index:true;effective_display_status:true".to_string(),
+                "invariants=document_id:true;formula_identity:true;structure_context:true;session_state:true;library_context_snapshot_ref:true;artifact_index:true;effective_display_status:true".to_string(),
             ]
         );
 
