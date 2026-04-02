@@ -354,140 +354,154 @@ impl OneCalcShellApp {
             });
     }
 
-    fn render_diagnostics_panel(&self, ui: &mut egui::Ui) {
+    fn render_diagnostics_panel(&self, ui: &mut egui::Ui, panel_height: f32) {
         ui.heading("Diagnostics");
         ui.separator();
-        ui.label(&self.diagnostics_text);
-        ui.separator();
-        ui.monospace(format!(
-            "buffer_len={}\ncursor_index={}\nselection={}..{}\nselected_text={}\nedit_formula_token={}\nedit_diagnostic_count={}\ntext_change_range={:?}\nreused_green_tree={}\nreused_red_projection={}\nreused_bound_formula={}",
-            self.editor_state.buffer.chars().count(),
-            self.editor_state.cursor_index,
-            self.editor_state.selection_start,
-            self.editor_state.selection_end,
-            self.editor_state.selected_text,
-            self.latest_edit_packet.formula_token,
-            self.latest_edit_packet.diagnostic_count,
-            self.latest_edit_packet.text_change_range,
-            self.latest_edit_packet.reused_green_tree,
-            self.latest_edit_packet.reused_red_projection,
-            self.latest_edit_packet.reused_bound_formula
-        ));
-        ui.separator();
-        ui.heading("Live Diagnostics");
-        if self.rendered_diagnostics.is_empty() {
-            ui.label("No live diagnostics.");
-        } else {
-            for diagnostic in &self.rendered_diagnostics {
-                ui.label(diagnostic);
-            }
-        }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height((panel_height - 40.0).max(0.0))
+            .show(ui, |ui| {
+                ui.label(&self.diagnostics_text);
+                ui.separator();
+                ui.monospace(format!(
+                    "buffer_len={}\ncursor_index={}\nselection={}..{}\nselected_text={}\nedit_formula_token={}\nedit_diagnostic_count={}\ntext_change_range={:?}\nreused_green_tree={}\nreused_red_projection={}\nreused_bound_formula={}",
+                    self.editor_state.buffer.chars().count(),
+                    self.editor_state.cursor_index,
+                    self.editor_state.selection_start,
+                    self.editor_state.selection_end,
+                    self.editor_state.selected_text,
+                    self.latest_edit_packet.formula_token,
+                    self.latest_edit_packet.diagnostic_count,
+                    self.latest_edit_packet.text_change_range,
+                    self.latest_edit_packet.reused_green_tree,
+                    self.latest_edit_packet.reused_red_projection,
+                    self.latest_edit_packet.reused_bound_formula
+                ));
+                ui.separator();
+                ui.heading("Live Diagnostics");
+                if self.rendered_diagnostics.is_empty() {
+                    ui.label("No live diagnostics.");
+                } else {
+                    for diagnostic in &self.rendered_diagnostics {
+                        ui.label(diagnostic);
+                    }
+                }
+            });
     }
 
-    fn render_capability_center(&self, ui: &mut egui::Ui) {
+    fn render_capability_center(&self, ui: &mut egui::Ui, panel_height: f32) {
         ui.push_id(CAPABILITY_REGION_ID, |ui| {
             ui.heading("Capability Center");
             ui.separator();
-            if let Some(error) = &self.capability_center.last_error {
-                ui.colored_label(egui::Color32::from_rgb(160, 32, 32), error);
-                return;
-            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .max_height((panel_height - 40.0).max(0.0))
+                .show(ui, |ui| {
+                    if let Some(error) = &self.capability_center.last_error {
+                        ui.colored_label(egui::Color32::from_rgb(160, 32, 32), error);
+                        return;
+                    }
 
-            if let Some(snapshot) = &self.capability_center.active_snapshot {
-                ui.monospace(format!(
-                    "snapshot_id={}\nhost_kind={}; runtime_platform={}; runtime_class={}\ncapability_floor={}; seam_pin_set_id={}\nfunction_surface_policy={}",
-                    snapshot.capability_snapshot_id,
-                    snapshot.host_kind,
-                    snapshot.runtime_platform,
-                    snapshot.runtime_class,
-                    snapshot.capability_floor,
-                    snapshot.seam_pin_set_id,
-                    snapshot.function_surface_policy_id
-                ));
-                ui.separator();
-                ui.label("Dependency Ledger");
-                ui.monospace(snapshot.dependency_set.join("\n"));
-                ui.separator();
-                ui.label("Packet Kinds");
-                ui.monospace(snapshot.packet_kind_register.join(", "));
-                ui.separator();
-                ui.label("Mode Availability");
-                for mode in &snapshot.mode_availability {
-                    let reason = mode.reason.as_deref().unwrap_or("none");
-                    ui.monospace(format!("{} = {} ({})", mode.mode_id, mode.state, reason));
-                }
-                ui.separator();
-                ui.label("Provisional Seams");
-                if snapshot.provisional_seams.is_empty() {
-                    ui.small("none");
-                } else {
-                    ui.monospace(snapshot.provisional_seams.join("\n"));
-                }
-                ui.separator();
-                ui.label("Capability Ceilings");
-                if snapshot.capability_ceilings.is_empty() {
-                    ui.small("none");
-                } else {
-                    ui.monospace(snapshot.capability_ceilings.join("\n"));
-                }
-                if !snapshot.lossiness.is_empty() {
+                    if let Some(snapshot) = &self.capability_center.active_snapshot {
+                        ui.monospace(format!(
+                            "snapshot_id={}\nhost_kind={}; runtime_platform={}; runtime_class={}\ncapability_floor={}; seam_pin_set_id={}\nfunction_surface_policy={}",
+                            snapshot.capability_snapshot_id,
+                            snapshot.host_kind,
+                            snapshot.runtime_platform,
+                            snapshot.runtime_class,
+                            snapshot.capability_floor,
+                            snapshot.seam_pin_set_id,
+                            snapshot.function_surface_policy_id
+                        ));
+                        ui.separator();
+                        ui.label("Dependency Ledger");
+                        ui.monospace(snapshot.dependency_set.join("\n"));
+                        ui.separator();
+                        ui.label("Packet Kinds");
+                        ui.monospace(snapshot.packet_kind_register.join(", "));
+                        ui.separator();
+                        ui.label("Mode Availability");
+                        for mode in &snapshot.mode_availability {
+                            let reason = mode.reason.as_deref().unwrap_or("none");
+                            ui.monospace(format!("{} = {} ({})", mode.mode_id, mode.state, reason));
+                        }
+                        ui.separator();
+                        ui.label("Provisional Seams");
+                        if snapshot.provisional_seams.is_empty() {
+                            ui.small("none");
+                        } else {
+                            ui.monospace(snapshot.provisional_seams.join("\n"));
+                        }
+                        ui.separator();
+                        ui.label("Capability Ceilings");
+                        if snapshot.capability_ceilings.is_empty() {
+                            ui.small("none");
+                        } else {
+                            ui.monospace(snapshot.capability_ceilings.join("\n"));
+                        }
+                        if !snapshot.lossiness.is_empty() {
+                            ui.separator();
+                            ui.label("Lossiness");
+                            ui.monospace(snapshot.lossiness.join("\n"));
+                        }
+                    } else {
+                        ui.small("No immutable capability snapshot available yet.");
+                    }
+
                     ui.separator();
-                    ui.label("Lossiness");
-                    ui.monospace(snapshot.lossiness.join("\n"));
-                }
-            } else {
-                ui.small("No immutable capability snapshot available yet.");
-            }
-
-            ui.separator();
-            ui.label("Snapshot Diff");
-            if let Some(diff) = &self.capability_center.snapshot_diff {
-                ui.monospace(format!(
-                    "left={}\nright={}\ndiff_floor={}\nfunction_surface_policy_changed={}\nruntime_class_changed={}",
-                    diff.left_snapshot_id,
-                    diff.right_snapshot_id,
-                    diff.diff_floor,
-                    diff.function_surface_policy_changed,
-                    diff.runtime_class_changed
-                ));
-                for line in &diff.mode_changes {
-                    ui.monospace(format!("mode_change: {line}"));
-                }
-                if !diff.dependencies_added.is_empty() || !diff.dependencies_removed.is_empty() {
-                    ui.monospace(format!(
-                        "dependencies_added={}\ndependencies_removed={}",
-                        diff.dependencies_added.join(","),
-                        diff.dependencies_removed.join(",")
-                    ));
-                }
-                if !diff.packet_kinds_added.is_empty() || !diff.packet_kinds_removed.is_empty() {
-                    ui.monospace(format!(
-                        "packet_kinds_added={}\npacket_kinds_removed={}",
-                        diff.packet_kinds_added.join(","),
-                        diff.packet_kinds_removed.join(",")
-                    ));
-                }
-                if !diff.provisional_seams_added.is_empty()
-                    || !diff.provisional_seams_removed.is_empty()
-                {
-                    ui.monospace(format!(
-                        "provisional_seams_added={}\nprovisional_seams_removed={}",
-                        diff.provisional_seams_added.join(","),
-                        diff.provisional_seams_removed.join(",")
-                    ));
-                }
-                if !diff.capability_ceilings_added.is_empty()
-                    || !diff.capability_ceilings_removed.is_empty()
-                {
-                    ui.monospace(format!(
-                        "capability_ceilings_added={}\ncapability_ceilings_removed={}",
-                        diff.capability_ceilings_added.join(","),
-                        diff.capability_ceilings_removed.join(",")
-                    ));
-                }
-            } else {
-                ui.small("No earlier immutable capability snapshot is available for diff.");
-            }
+                    ui.label("Snapshot Diff");
+                    if let Some(diff) = &self.capability_center.snapshot_diff {
+                        ui.monospace(format!(
+                            "left={}\nright={}\ndiff_floor={}\nfunction_surface_policy_changed={}\nruntime_class_changed={}",
+                            diff.left_snapshot_id,
+                            diff.right_snapshot_id,
+                            diff.diff_floor,
+                            diff.function_surface_policy_changed,
+                            diff.runtime_class_changed
+                        ));
+                        for line in &diff.mode_changes {
+                            ui.monospace(format!("mode_change: {line}"));
+                        }
+                        if !diff.dependencies_added.is_empty()
+                            || !diff.dependencies_removed.is_empty()
+                        {
+                            ui.monospace(format!(
+                                "dependencies_added={}\ndependencies_removed={}",
+                                diff.dependencies_added.join(","),
+                                diff.dependencies_removed.join(",")
+                            ));
+                        }
+                        if !diff.packet_kinds_added.is_empty()
+                            || !diff.packet_kinds_removed.is_empty()
+                        {
+                            ui.monospace(format!(
+                                "packet_kinds_added={}\npacket_kinds_removed={}",
+                                diff.packet_kinds_added.join(","),
+                                diff.packet_kinds_removed.join(",")
+                            ));
+                        }
+                        if !diff.provisional_seams_added.is_empty()
+                            || !diff.provisional_seams_removed.is_empty()
+                        {
+                            ui.monospace(format!(
+                                "provisional_seams_added={}\nprovisional_seams_removed={}",
+                                diff.provisional_seams_added.join(","),
+                                diff.provisional_seams_removed.join(",")
+                            ));
+                        }
+                        if !diff.capability_ceilings_added.is_empty()
+                            || !diff.capability_ceilings_removed.is_empty()
+                        {
+                            ui.monospace(format!(
+                                "capability_ceilings_added={}\ncapability_ceilings_removed={}",
+                                diff.capability_ceilings_added.join(","),
+                                diff.capability_ceilings_removed.join(",")
+                            ));
+                        }
+                    } else {
+                        ui.small("No earlier immutable capability snapshot is available for diff.");
+                    }
+                });
         });
     }
 
@@ -517,23 +531,39 @@ impl OneCalcShellApp {
                     }
                 });
                 ui.separator();
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.group(|ui| self.render_diagnostics_panel(ui));
-                        ui.add_space(8.0);
-                        if self.capability_center_visible {
-                            ui.group(|ui| self.render_capability_center(ui));
-                        } else {
-                            ui.group(|ui| {
-                                ui.heading("Capability Center");
-                                ui.separator();
-                                ui.small(
-                                    "Collapsed to keep the explorer and result surfaces in view.",
-                                );
-                            });
-                        }
+                let inspector_height = ui.available_height().max(0.0);
+                let diagnostics_height = if self.capability_center_visible {
+                    ((inspector_height - 8.0).max(0.0)) * 0.42
+                } else {
+                    inspector_height
+                };
+
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), diagnostics_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.group(|ui| self.render_diagnostics_panel(ui, diagnostics_height));
+                    },
+                );
+
+                if self.capability_center_visible {
+                    ui.add_space(8.0);
+                    let capability_height = ui.available_height().max(0.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), capability_height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.group(|ui| self.render_capability_center(ui, capability_height));
+                        },
+                    );
+                } else {
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        ui.heading("Capability Center");
+                        ui.separator();
+                        ui.small("Collapsed to keep the explorer and result surfaces in view.");
                     });
+                }
             });
     }
 
@@ -542,21 +572,25 @@ impl OneCalcShellApp {
             ui.push_id(RESULT_REGION_ID, |ui| {
                 ui.heading("Result");
                 ui.separator();
-                ui.small(format!(
-                    "returned_presentation_hint={} | host_style_state={}",
-                    self.returned_presentation_hint_text, self.host_style_state_text
-                ));
-                ui.separator();
-                ui.label("Effective Display Preview");
-                ui.label(self.effective_display_render.rich_text());
-                ui.small(format!(
-                    "formatting_plane_source={} | emphasis={} | number_format={}",
-                    self.effective_display_render.formatting_plane_source,
-                    self.effective_display_render.emphasis,
-                    self.effective_display_render.number_format
-                ));
-                ui.separator();
-                ui.code(&self.result_text);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.small(format!(
+                            "returned_presentation_hint={} | host_style_state={}",
+                            self.returned_presentation_hint_text, self.host_style_state_text
+                        ));
+                        ui.separator();
+                        ui.label("Effective Display Preview");
+                        ui.label(self.effective_display_render.rich_text());
+                        ui.small(format!(
+                            "formatting_plane_source={} | emphasis={} | number_format={}",
+                            self.effective_display_render.formatting_plane_source,
+                            self.effective_display_render.emphasis,
+                            self.effective_display_render.number_format
+                        ));
+                        ui.separator();
+                        ui.code(&self.result_text);
+                    });
             });
         });
     }
