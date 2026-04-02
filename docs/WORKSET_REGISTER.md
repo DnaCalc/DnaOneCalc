@@ -104,177 +104,199 @@ It does mean:
    editor shell and interaction model, OxFml edit-packet integration, diagnostics
    projection, keyboard-first verification
 
-### WS-03 Function Surface And First Evaluation Slice
+### WS-03 Function Surface, Metadata Projection, And First Evaluation Slice
 1. purpose:
-   wire the admitted OxFunc surface into OneCalc and deliver the first real
-   dependency-backed formula-evaluation slice through OxFml and OxFunc.
+   wire the admitted OxFunc surface into OneCalc, project the current stable and
+   usable metadata honestly, and deliver the first real dependency-backed
+   formula-evaluation slice that behaves like a usable formula/function explorer.
 2. depends_on:
    `WS-01`, `WS-02`
 3. parent_spec_sections:
-   `3`, `4.3`, `7.1`, `7.4`, `14.2`, `16`
+   `3`, `4.3`, `7.1`, `7.4`, `9.6`, `14.2`, `16`
 4. upstream_dependencies:
    `OxFml`, `OxFunc`
 5. closure_condition:
    OneCalc derives the admitted function surface from OxFunc in code, a user can
-   enter an admitted formula and see a real evaluated result plus honest diagnostics,
-   and the vertical slice has runnable verification.
+   enter an admitted formula, inspect deterministic completion and current help,
+   and see a real evaluated result plus honest diagnostics and surface labels, with
+   runnable verification.
 6. initial_epic_lanes:
    library-context and function-surface integration, evaluate action and result
-   surface, completion and current help path, vertical-slice verification
+   surface, OxFunc metadata and help projection, explorer baseline verification
 
-### WS-04 Driven Single-Formula Host And Retained Runs
+### WS-04 OxFml_V1 Consumer And Downstream Contract Alignment
 1. purpose:
-   realize the H1 driven single-formula host model, implement retained scenario and
-   run handling, and support version-to-version comparison without drifting toward
-   worksheet semantics.
+   move ordinary host runtime and editor behavior onto the landed `OxFml_V1`
+   downstream-consumer surfaces so later work deepens the right seam rather than the
+   historical direct-consumer path.
 2. depends_on:
    `WS-03`
 3. parent_spec_sections:
-   `6.1`, `6.2`, `7.2`, `7.2.1`, `9.1.4`, `10.3`, `16`
+   `4`, `5`, `6`, `7.1`, `7.2`, `9.1.2` through `9.1.5`, `16`
 4. upstream_dependencies:
    `OxFml`, `OxFunc`, `OxReplay`
 5. closure_condition:
-   the driven single-formula host model exists in code, scenarios and scenario runs
-   can be retained and reopened honestly, and retained version-to-version comparison
-   exists for the admitted H1 scope.
+   OneCalc consumes the landed `oxfml_core::consumer` runtime and editor surfaces
+   for its ordinary host path, historical direct-consumer substrate use is removed
+   from ordinary host code, and the migrated slice has runnable verification proving
+   semantic behavior stayed intact.
 6. initial_epic_lanes:
-   driven host model and recalc context, retained scenario and scenario-run handling,
-   retained version comparison, H1 execution verification
+   runtime facade migration, editor facade migration, replay-aware seam alignment,
+   contract verification and cleanup
 
-### WS-05 Artifact Spine, Persistence, Capability Snapshots, And ScenarioCapsule
+### WS-05 Formula/Function Explorer UX And Result Surface Stabilization
 1. purpose:
-   implement the retained artifact backbone, immutable capability snapshots, document
-   persistence, and portable scenario transport needed to make OneCalc work durable.
+   prioritize interactive use of OneCalc as a formula/function explorer by
+   stabilizing workbench information architecture, result visibility,
+   effective-display presentation, and keyboard-first interaction.
 2. depends_on:
    `WS-03`, `WS-04`
 3. parent_spec_sections:
-   `5.3`, `6.0` through `6.10`, `10.4`, `11`, `16`
+   `3`, `5.1`, `7.1`, `8`, `9.1`, `9.6`, `16`
 4. upstream_dependencies:
-   `OxFml`, `OxFunc`, `OxReplay`, `OxXlObs`
+   `OxFml`, `OxFunc`
 5. closure_condition:
-   core artifact identities and envelopes are implemented in code, one isolated
-   document round-trips through the declared persistence format with its required
-   invariants intact, immutable capability snapshots govern retained work, and one
-   scenario can be exported and re-imported as a `ScenarioCapsule` without losing
-   lineage or capability truth.
+   the primary workbench is usable and stable for authoring, exploring functions,
+   and reading results; result and context surfaces do not disappear under resize;
+   and the promoted explorer path has runnable UX regression coverage.
 6. initial_epic_lanes:
-   core artifact model and identities, capability snapshot emission, document
-   persistence round-trip, ScenarioCapsule export and intake
+   workbench information architecture, result and effective-display presentation,
+   function-help and explorer affordances, layout and resize behavior, UX
+   regression verification
 
-### WS-06 Replay, X-Ray, Witness, Explain, And Handoff
+### WS-06 Engine X-Ray And Mechanism Inspection
 1. purpose:
-   make retained replay, semantic inspection, witness generation, and handoff output
-   first-class parts of the product once real runs and retained artifacts exist.
+   make `Live Formula Semantic X-Ray` the second major product perspective by
+   surfacing parse, bind, evaluation, provenance, and host-driving truth over the
+   same active scenario.
 2. depends_on:
    `WS-04`, `WS-05`
 3. parent_spec_sections:
-   `5`, `10.0` through `10.4`, `16`
+   `3`, `5`, `9.6`, `10.0`, `16`
 4. upstream_dependencies:
-   `OxReplay`, `OxFml`, `OxFunc`, `OxXlObs`
+   `OxFml`, `OxFunc`, `OxReplay`
 5. closure_condition:
-   retained runs can open replay and X-Ray surfaces, diff and explain are surfaced
-   honestly for the current replay floor, and witness plus handoff artifacts can be
-   produced from real retained work rather than ad hoc notes.
+   durable X-Ray surfaces show current edit and eval mechanism truth, provenance,
+   and capability or context facts without displacing primary authoring use, and the
+   promoted X-Ray families have runnable verification.
 6. initial_epic_lanes:
-   replay capture and open flow, X-Ray and diff surfaces, witness and explain flow,
-   handoff generation and mode gating
+   parse, bind, and eval artifact projection, trace and provenance surfaces,
+   mechanism drawer or panel UX, X-Ray verification families
 
-### WS-07 Formatting, Effective Display, And Conditional Formatting
+### WS-07 Test Scaffolding, Scenario Corpora, And Acceptance Harness
 1. purpose:
-   implement the formatting and effective-display plane, keep host style state and
-   returned presentation hints explicit, and admit the isolated conditional-formatting
-   subset without overclaiming parity.
+   build deterministic scaffolding and high-coverage integration harnesses that make
+   explorer, X-Ray, replay, and observation work faster to develop and harder to
+   regress.
 2. depends_on:
-   `WS-03`, `WS-05`, `WS-06`
+   `WS-03`, `WS-04`
 3. parent_spec_sections:
-   `8`, `10.1`, `11.3`, `16`
+   `9.1.5`, `9.1.6`, `10.3`, `16`
 4. upstream_dependencies:
-   `OxFml`, `OxFunc`, `OxXlObs`
+   `OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`
 5. closure_condition:
-   base formatting and effective display are rendered and retained honestly, the
-   admitted isolated conditional-formatting subset is implemented with explicit
-   labeling, and the relevant planes remain distinct in product and compare surfaces.
+   OneCalc has reusable fixture hosts, scenario corpora, golden artifact assertions,
+   UI interaction and layout harnesses, and host acceptance automation that expose
+   regressions quickly across the promoted surfaces.
 6. initial_epic_lanes:
-   presentation-hint and style-state composition, effective-display rendering,
-   conditional-formatting subset integration, formatting verification families
+   deterministic fixture hosts and stubs, retained scenario corpus and promoted
+   families, golden artifact and persistence assertions, UI and layout harnesses,
+   host acceptance matrix automation
 
-### WS-08 Windows Observation And Twin-Oracle Comparison
+### WS-08 Driven Single-Formula Host, Retained Runs, Persistence, Capability Snapshots, And ScenarioCapsule
 1. purpose:
-   establish the Windows-only live Excel observation lane and make OneCalc's twin
-   compare story real through retained `Observation` and `Comparison` artifacts.
+   realize the H1 driven single-formula host model and the durable artifact spine
+   needed before serious replay work.
 2. depends_on:
    `WS-05`, `WS-06`, `WS-07`
 3. parent_spec_sections:
+   `5.3`, `6.0` through `6.10`, `7.2`, `10.3`, `10.4`, `11`, `16`
+4. upstream_dependencies:
+   `OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`
+5. closure_condition:
+   the driven host model, retained scenarios and runs, document round-trip,
+   capability snapshots, and `ScenarioCapsule` transport work as one coherent
+   durable spine without drifting toward worksheet semantics.
+6. initial_epic_lanes:
+   driven host model and recalc triggers, retained scenario and scenario-run
+   handling, document persistence and invariants, capability snapshot and capsule
+   flows
+
+### WS-09 Replay Substrate Proving Ground, Semantic Logging, And Handoff Foundations
+1. purpose:
+   treat replay as the highest-risk current proving lane by determining how retained
+   operations, semantic logging, reproducible runs, witness production, and handoff
+   output should flow through `OxReplay` and the adjacent `Ox*` seams.
+2. depends_on:
+   `WS-06`, `WS-07`, `WS-08`
+3. parent_spec_sections:
+   `10.0` through `10.4`, `14.3`, `16`, `17`
+4. upstream_dependencies:
+   `OxReplay`, `OxFml`, `OxFunc`, `OxXlPlay`
+5. closure_condition:
+   OneCalc can emit and reopen honest replay-bearing retained artifacts for the
+   current lane floor, the replay operation model is explicit, and unresolved seam
+   gaps are captured as structured upstream pressure rather than local invention.
+6. initial_epic_lanes:
+   replay operation and event model, replay capture and retained lineage,
+   diff/explain/witness/handoff baseline, cross-repo replay seam pressure, replay
+   proving tests
+
+### WS-10 Windows Observation And Twin-Oracle Comparison
+1. purpose:
+   make replay, observation, and compare the third major product perspective through
+   Windows `OxXlPlay` capture and honest retained comparison.
+2. depends_on:
+   `WS-08`, `WS-09`
+3. parent_spec_sections:
    `5.1`, `10.1` through `10.3`, `14.3`, `16`, `17.1`
 4. upstream_dependencies:
-   `OxXlObs`, `OxReplay`
+   `OxXlPlay`, `OxReplay`
 5. closure_condition:
    the Windows desktop host can capture Excel observations, persist observation and
-   comparison artifacts with provenance and lossiness surfaced explicitly, and drive a
-   twin compare workflow with reliability badges and widening-pressure output.
+   comparison artifacts with provenance and lossiness surfaced explicitly, and drive
+   a twin compare workflow with reliability badges and widening-pressure output.
 6. initial_epic_lanes:
    Windows observation capture integration, observation and comparison persistence,
-   twin compare view, widening-request and compare-pressure workflow
+   twin compare workbench surfaces, widening-request workflow, compare regression
+   families
 
-### WS-09 Extension ABI, Add-Ins, And RTD
+### WS-11 Workspace Management, Capability Center, Scenario Library, And Acceptance
 1. purpose:
-   implement the admitted desktop extension ABI, provider loading, invocation, and
-   the constrained RTD subset while keeping unsupported hosts and later VBA-backed
-   expansion visibly gated.
+   complete supporting workspace and honesty surfaces once the explorer, X-Ray, and
+   replay lanes exist, without letting them crowd out the main workbench.
 2. depends_on:
-   `WS-03`, `WS-05`
-3. parent_spec_sections:
-   `7.3`, `12`, `14.4`, `16`, `17.2`
-4. upstream_dependencies:
-   `OxFml`, `OxFunc`, later `OxVba`
-5. closure_condition:
-   declared desktop hosts can load and execute the admitted extension subset
-   honestly, RTD support exists only within the admitted platform and semantic gate,
-   and unsupported hosts are visibly blocked rather than implied.
-6. initial_epic_lanes:
-   extension ABI and exclusion register, provider loading and invocation, RTD subset
-   and lifecycle, platform honesty and later-VBA pressure
-
-### WS-10 Workspace Management, Capability Center, Scenario Library, And Acceptance
-1. purpose:
-   complete the user-facing workspace and honesty surfaces, grow the promoted
-   scenario library, and make acceptance evidence and upstream pressure routine
-   product operations.
-2. depends_on:
-   `WS-05`, `WS-06`, `WS-07`, `WS-08`, `WS-09`
+   `WS-08`, `WS-09`, `WS-10`
 3. parent_spec_sections:
    `5.2`, `5.3`, `9.1.1`, `9.1.5`, `9.1.6`, `9.5`, `9.6`, `10.3`, `16`, `17`
 4. upstream_dependencies:
-   `OxFml`, `OxFunc`, `OxReplay`, `OxXlObs`, later `OxVba`
+   `OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`, later `OxVba`
 5. closure_condition:
    multi-file workspace management exists without introducing cross-instance
-   semantics, the capability center and diff flows surface actual executable truth,
-   promoted scenarios and acceptance evidence are managed in-product, and upstream
-   pressure or widening output is generated as an ordinary consequence of real runs.
+   semantics, the capability center and diff flows surface actual executable truth
+   as a supporting surface, promoted scenarios and acceptance evidence are managed
+   in-product, and corpus hardening becomes an ordinary product operation.
 6. initial_epic_lanes:
-   workspace management, capability center and diff flows, scenario library and
-   promotion, host acceptance matrix and regression evidence, upstream-pressure
-   workflows
+   workspace management, capability center UX, scenario library and promotion, host
+   acceptance matrix and regression evidence, corpus hardening and release evidence
 
-### WS-11 OxFml_V1 Consumer Seam Migration
+### WS-12 Extension ABI, RTD, XLL Packaging, And Later OxVba Pressure
 1. purpose:
-   refactor OneCalc's runtime, editor, and replay integration onto the landed
-   `OxFml_V1` consumer facade surface so that later product work no longer
-   deepens dependence on historical root exports, proving-host helpers, or
-   manual packet assembly patterns.
+   land RTD and add-in work as follow-on worksets after the explorer, X-Ray, and
+   replay floors are stable; this lane is lower product-definition risk but high
+   technical complexity and likely upstream seam pressure.
 2. depends_on:
-   `WS-03`, `WS-04`, `WS-05`, `WS-06`
+   `WS-08`, `WS-11`
 3. parent_spec_sections:
-   `4`, `5`, `6`, `7.1`, `7.2`, `9.1.4`, `10`, `16`
+   `7.3`, `12`, `14.4`, `16`, `17.2`
 4. upstream_dependencies:
-   `OxFml_V1`, `OxFunc`, `OxReplay`
+   `OxFml`, `OxFunc`, `OxReplay`, later `OxVba`
 5. closure_condition:
-   OneCalc consumes the landed `oxfml_core::consumer::runtime`,
-   `oxfml_core::consumer::editor`, and `oxfml_core::consumer::replay` surfaces
-   for its ordinary runtime, driven/session, editor, and replay-aware retained
-   flows; historical direct-consumer substrate use is removed from ordinary host
-   code; and the migrated slice has runnable verification proving semantic and
-   retained behavior stayed intact.
+   declared desktop hosts can load and execute the admitted extension subset
+   honestly, RTD support exists only within the admitted platform and semantic gate,
+   XLL and `.so` packaging preserve the same declared ABI behavior, and unsupported
+   hosts or lanes are visibly blocked rather than implied.
 6. initial_epic_lanes:
-   runtime facade migration, editor facade migration, replay facade migration,
-   seam verification and cleanup
+   ABI subset register and safety model, provider loading and RTD lifecycle, XLL and
+   `.so` packaging, platform honesty and later-OxVba pressure, extension conformance
+   and test harness

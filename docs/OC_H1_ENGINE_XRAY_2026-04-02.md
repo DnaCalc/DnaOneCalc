@@ -1,12 +1,12 @@
 # OC-H1 Engine X-Ray
 
-> Snapshot date: `2026-03-31`
+> Snapshot date: `2026-04-02`
 >
-> Stage: first real `OC-H1` driven single-formula host slice, including retained runs and retained run comparison.
+> Stage: current `OC-H1` explorer-and-xray spine, realigned against the landed `OxFml_V1` downstream-consumer contract, the current OxFunc metadata/help contract, and the current OxReplay OneCalc consumption model.
 >
-> Scope: current `DnaOneCalc` engine path only.
-> Exclusions for this pass: `OxReplay`, GUI rendering and widget layout, product-surface presentation details.
-> Focus: how `DnaOneCalc` initializes and uses `OxFml` and `OxFunc`, how state and immutable structures flow, and what this implies for concurrency, async, and future snapshot/epoch design.
+> Scope: current `DnaOneCalc` engine path and the upstream seam alignment that now frames it.
+> Exclusions for this pass: final replay/observation/compare architecture, GUI rendering and widget layout, and extension ABI/RTD rollout.
+> Focus: how `DnaOneCalc` initializes and uses `OxFml` and `OxFunc`, which upstream contracts now frame that code, what state and immutable structures flow through the current slice, and what this implies for the next explorer, X-Ray, and replay iterations.
 
 ## 1. What This Document Is For
 
@@ -19,6 +19,7 @@ It is meant to answer these questions precisely:
 3. What data structures are created, cloned, cached, or reused across edit and eval?
 4. Where is mutable state kept, and where are immutable versioned artifacts already present?
 5. How close is the current design to a future model with snapshot-based, concurrent, and eventually async-friendly execution?
+6. How should this engine slice now be read against the current `OxReplay` alignment, and what still sits outside the engine path described here?
 
 This is not a product-spec note. It is a code map.
 
@@ -30,7 +31,8 @@ The current engine spine is:
 2. derive an admitted `LibraryContextSnapshot`,
 3. use `OxFml` language-service APIs for edit/diagnostic/completion/help,
 4. use `OxFml` host APIs for real evaluation through `SingleFormulaHost`,
-5. surface the reduced result back to OneCalc.
+5. surface the reduced result back to OneCalc as explorer and X-Ray truth,
+6. stop short of a fully designed replay/observation operation model.
 
 ## 3. High-Level Ownership Map
 
@@ -56,7 +58,7 @@ oxreplay-abstractions = { path = "../../../OxReplay/src/oxreplay-abstractions" }
 
 For this document, only `oxfml_core` and the OxFunc function-lane data exports matter.
 
-### 3.2 Upstream OxFml Code Actually Exercised
+### 3.2 Upstream OxFml Code And Contracts Actually Exercised
 
 The OneCalc engine currently relies on these OxFml areas:
 
@@ -68,16 +70,34 @@ The OneCalc engine currently relies on these OxFml areas:
 - `../OxFml/crates/oxfml_core/src/eval/mod.rs`
 - `../OxFml/crates/oxfml_core/src/language_service/mod.rs`
 
-### 3.3 Upstream OxFunc Inputs Actually Exercised
+The current alignment documents that now frame this engine slice are:
+
+- `../OxFml/docs/spec/OXFML_CONSUMER_INTERFACE_AND_FACADE_CONTRACT_V1.md`
+- `../OxFml/docs/spec/OXFML_DNA_ONECALC_DOWNSTREAM_CONSUMER_CONTRACT.md`
+- `../OxFml/docs/spec/OXFML_PUBLIC_API_AND_RUNTIME_SERVICE_SKETCH.md`
+
+### 3.3 Upstream OxFunc Inputs And Contracts Actually Exercised
 
 OneCalc does not currently link a large OxFunc runtime facade directly.
 Instead, it consumes the OxFunc function-lane exports and derives an execution-admitted library snapshot.
 
 Embedded upstream sources:
 
+- `../OxFunc/docs/function-lane/OXFUNC_DOWNSTREAM_METADATA_AND_HELP_CONTRACT.md`
 - `../OxFunc/docs/function-lane/OXFUNC_LIBRARY_CONTEXT_SNAPSHOT_EXPORT_V1.csv`
 - `../OxFunc/docs/function-lane/W50_DEFERRED_CURRENT_VERSION_INVENTORY.csv`
 - `../OxFunc/docs/function-lane/W51_IN_SCOPE_CURRENT_VERSION_NOT_COMPLETE_INVENTORY.csv`
+
+### 3.4 Upstream OxReplay Alignment That Now Frames This Slice
+
+The code path mapped in this note still stops before full replay orchestration.
+But the current X-Ray of this engine has to be read against the replay alignment that now exists.
+
+The main facts are:
+
+1. OneCalc now has a documented `OxReplay` consumption model and should consume replay as shared infrastructure rather than as a second replay-host shell.
+2. The current honest replay floor for OneCalc remains `OxFml` through `C3.explain_valid` plus the first accepted `OxXlPlay` observation-source seam.
+3. The app-facing operation model for replay-aware host actions is still not designed or proven end to end, so this document describes the pre-replay engine spine rather than a finished replay architecture.
 
 ## 4. Top-Level Call Graph
 
@@ -1427,21 +1447,25 @@ If the question is about edit, completion, and help, start here:
 
 1. repeated catalog rebuild on hot edit/help/eval paths,
 2. no unified edit+eval artifact cache yet,
-3. no multi-epoch runtime service yet,
-4. sync provider model limits async and distributed host interactions,
-5. current evaluation path creates a fresh `SingleFormulaHost` per top-level OneCalc eval call.
+3. no unified explorer-plus-X-Ray session model yet,
+4. no multi-epoch runtime service yet,
+5. sync provider model limits async and distributed host interactions,
+6. current evaluation path creates a fresh `SingleFormulaHost` per top-level OneCalc eval call,
+7. the replay- and observation-aware operation model is still outside this engine slice and remains the highest-risk next proving area.
 
 ### 19.2 Opportunities
 
 1. promote function-surface catalog and admitted snapshot to long-lived immutable shared state,
 2. converge edit and eval around a shared per-formula engine/session object,
-3. make structure/library epochs explicit and typed,
-4. cache semantic plans by bind hash + library snapshot ref + structure epoch,
-5. support concurrent evaluation during structural update by pinning old immutable artifacts while compiling new ones.
+3. expose durable X-Ray projections from that same shared engine/session object,
+4. build deterministic fixture and golden-test scaffolding around the current slice before replay widening,
+5. make structure/library epochs explicit and typed,
+6. cache semantic plans by bind hash + library snapshot ref + structure epoch,
+7. support concurrent evaluation during structural update by pinning old immutable artifacts while compiling new ones.
 
 ## 20. Bottom Line
 
-The current OneCalc engine is no longer a shell around notes; it has a real edit and evaluation spine.
+The current OneCalc engine is no longer a shell around notes; it has a real explorer-and-X-Ray spine.
 
 The most important architectural fact is this:
 
@@ -1449,9 +1473,15 @@ the code already has the right **shape** for a future high-performance, concurre
 
 The most important current limitation is this:
 
-OneCalc does not yet retain and reuse those artifacts at the product-engine level. It rebuilds too much transient state and still splits edit and eval across separate cache owners.
+OneCalc does not yet retain and reuse those artifacts at the product-engine level. It rebuilds too much transient state, still splits edit and eval across separate cache owners, and still sits before a settled replay-bearing operation model.
 
 That is a solvable problem, and the present seams are good enough that solving it should be evolutionary rather than a rewrite.
+
+The practical next-step read is:
+
+1. stabilize the explorer UX around this engine slice,
+2. project stronger X-Ray surfaces from the same underlying truth,
+3. then enter replay and observation work with stronger deterministic scaffolding rather than treating it as a routine extension of the current host.
 
 ## Appendix A. Signature Index
 

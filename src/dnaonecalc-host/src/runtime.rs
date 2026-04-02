@@ -1074,7 +1074,7 @@ impl RuntimeAdapter {
                         scenario_id: row.scenario_id.clone(),
                         source_row_id: row.row_id.clone(),
                         target_lane: if row.comparison_status != "available" {
-                            "OxXlObs".to_string()
+                            "OxXlPlay".to_string()
                         } else {
                             "OxFml".to_string()
                         },
@@ -2311,7 +2311,7 @@ impl RuntimeAdapter {
                 capability_mode(
                     "Excel-observed",
                     "available",
-                    Some("Windows OxXlObs capture-run integration persists retained Observation artifacts"),
+                    Some("Windows OxXlPlay capture-run integration persists retained Observation artifacts"),
                 ),
                 capability_mode(
                     "Twin compare",
@@ -2368,7 +2368,7 @@ impl RuntimeAdapter {
         let observation_id = format!("observation-{}", sanitize_slug(&source.provenance.run_id));
         let emitted_at_unix_ms = unix_time_millis()?;
         let source_artifact_ref = StableArtifactRef {
-            artifact_kind: "oxxlobs_bundle".to_string(),
+            artifact_kind: "oxxlplay_bundle".to_string(),
             logical_id: source
                 .bundle_path
                 .as_ref()
@@ -2382,7 +2382,7 @@ impl RuntimeAdapter {
                 .replay_manifest_path
                 .as_ref()
                 .map(|path| StableArtifactRef {
-                    artifact_kind: "oxxlobs_replay_manifest".to_string(),
+                    artifact_kind: "oxxlplay_replay_manifest".to_string(),
                     logical_id: path.display().to_string(),
                     content_hash: None,
                 });
@@ -2391,7 +2391,7 @@ impl RuntimeAdapter {
                 .normalized_replay_path
                 .as_ref()
                 .map(|path| StableArtifactRef {
-                    artifact_kind: "oxxlobs_normalized_replay".to_string(),
+                    artifact_kind: "oxxlplay_normalized_replay".to_string(),
                     logical_id: path.display().to_string(),
                     content_hash: None,
                 });
@@ -2434,18 +2434,18 @@ impl RuntimeAdapter {
             },
             observation_id,
             scenario_id: source.provenance.scenario_id.clone(),
-            source_lane_id: "OxXlObs/Excel-observed".to_string(),
-            source_schema_id: "oxxlobs.capture_surface_basic.v1".to_string(),
+            source_lane_id: "OxXlPlay/Excel-observed".to_string(),
+            source_schema_id: "oxxlplay.capture_surface_basic.v1".to_string(),
             source_artifact_ref,
             capture_mode: "capture-run".to_string(),
             projection_status: projection_status.to_string(),
             provenance_ref: StableArtifactRef {
-                artifact_kind: "oxxlobs_provenance".to_string(),
+                artifact_kind: "oxxlplay_provenance".to_string(),
                 logical_id: source.provenance_path.display().to_string(),
                 content_hash: None,
             },
             capture_loss_ref: StableArtifactRef {
-                artifact_kind: "oxxlobs_capture".to_string(),
+                artifact_kind: "oxxlplay_capture".to_string(),
                 logical_id: source.capture_path.display().to_string(),
                 content_hash: None,
             },
@@ -2738,7 +2738,7 @@ impl RuntimeAdapter {
             witness_ref: comparison.envelope.stable_ref(),
             capability_snapshot_ref,
             requested_action_kind: "widen_observation_envelope".to_string(),
-            target_lane: "OxXlObs/DnaOneCalc".to_string(),
+            target_lane: "OxXlPlay/DnaOneCalc".to_string(),
             expected_behavior: "the observation envelope should cover the validation dimensions needed by the active twin compare".to_string(),
             observed_behavior: format!(
                 "current compare envelope={} blocked dimensions={}",

@@ -10,16 +10,17 @@ This local charter defines the narrower role, scope, and ownership of
 `DnaOneCalc` is the single-formula proving host for the DNA Calc stack.
 
 Its job is to:
-1. host one isolated formula scenario at a time,
+1. make one isolated formula scenario explorable as a serious interactive product,
 2. drive `OxFml` and `OxFunc` honestly,
-3. expose replay, comparison, witness, and handoff flows through a serious product UI,
-4. validate behavior against Excel through `OxXlObs` where available,
+3. expose mechanism-facing `Live Formula Semantic X-Ray` surfaces over that same scenario,
+4. prove retained replay, comparison, and Excel-observation flows through `OxReplay` and `OxXlPlay`,
 5. pressure upstream repos with structured evidence rather than local reinvention.
 
 ## 2. Product Identity
-The primary product identity is:
-1. `Twin Oracle Workbench`
-2. `Live Formula Semantic X-Ray`
+The ordered product expression is:
+1. `Formula / Function Explorer` as the first interactive surface,
+2. `Live Formula Semantic X-Ray` as the second perspective over the same scenario,
+3. `Twin Oracle Workbench` as the third proving surface for retained replay, observation, and compare.
 
 This repo is not:
 1. a worksheet engine,
@@ -34,7 +35,7 @@ Primary runtime dependencies:
 3. `OxReplay`
 
 Primary empirical validation dependency:
-1. `OxXlObs`
+1. `OxXlPlay`
 
 Staged later dependency:
 1. `OxVba`
@@ -44,15 +45,22 @@ Runtime non-dependency:
 
 `OxCalc` remains informative seam-reference material only.
 
+Current interpretation:
+1. `OxFml` and `OxFunc` are the first-order explorer dependencies,
+2. `OxReplay` is a first-order proving dependency and the highest-risk current design lane,
+3. `OxXlPlay` is the Windows-first empirical validation lane,
+4. `OxVba` remains later design input for add-ins and host tooling.
+
 ## 4. Ownership Boundary
 `DnaOneCalc` owns:
 1. product shell,
 2. host policy,
 3. persistence,
-4. extension hosting,
-5. scenario orchestration,
-6. replay and comparison presentation,
-7. upstream handoff production.
+4. scenario orchestration,
+5. replay and comparison presentation,
+6. upstream handoff production,
+7. host-level test scaffolding, retained scenario corpora, and acceptance harnesses,
+8. extension hosting.
 
 `DnaOneCalc` does not own:
 1. formula semantics,
@@ -75,11 +83,18 @@ It excludes:
 3. workbook graph semantics,
 4. worksheet `REGISTER.ID` / `CALL` as a product lane.
 
-## 6. Evidence Rule
+## 6. Delivery Order
+The current delivery order is:
+1. stabilize interactive formula/function explorer UX and result surfaces,
+2. widen mechanism inspection and X-Ray surfaces,
+3. prove retained replay, observation, and compare as honest product lanes,
+4. land RTD, XLL, and later OxVba-driven extension work after the above floors are stable.
+
+## 7. Evidence Rule
 Every meaningful session should be capable of becoming retained evidence.
 Every retained evidence item should be capable of becoming an upstream work request.
 
-## 7. Cross-Repo Boundary Rule
+## 8. Cross-Repo Boundary Rule
 This repo may read sibling repos under the shared `DnaCalc` root for seam consumption, evidence intake, and architectural alignment.
 
 Those sibling repos are read-only from the perspective of this repo.

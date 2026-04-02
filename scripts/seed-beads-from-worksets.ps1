@@ -509,11 +509,11 @@ try {
         -Type "epic" `
         -Priority "P3" `
         -Labels "WS-08,windows" `
-        -Description "Run scope: integrate Windows-only Excel observation through OxXlObs and build the twin-compare path with provenance, lossiness, and reliability made explicit." `
+        -Description "Run scope: integrate Windows-only Excel observation through OxXlPlay and build the twin-compare path with provenance, lossiness, and reliability made explicit." `
         -Acceptance "Evidence: Windows observation capture works, Observation and Comparison artifacts are produced from real runs, and the product can open the twin-compare path."
 
     $ids.ws08_t1 = New-Issue `
-        -Title "Integrate Windows OxXlObs capture-run and persist Observation artifacts with provenance and lossiness" `
+        -Title "Integrate Windows OxXlPlay capture-run and persist Observation artifacts with provenance and lossiness" `
         -Type "task" `
         -Priority "P3" `
         -Labels "WS-08,windows" `

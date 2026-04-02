@@ -80,30 +80,30 @@ pub struct LoadedObservationSourceBundle {
 pub fn invoke_live_windows_capture(
     output_root: impl AsRef<Path>,
 ) -> Result<LoadedObservationSourceBundle, String> {
-    let oxxlobs_root = oxxlobs_repo_root();
+    let oxxlplay_root = oxxlplay_repo_root();
     let scenario_path =
-        oxxlobs_root.join("docs/test-corpus/excel/xlobs_capture_values_formulae_001/scenario.json");
+        oxxlplay_root.join("docs/test-corpus/excel/xlplay_capture_values_formulae_001/scenario.json");
     let output_root = output_root.as_ref();
     fs::create_dir_all(output_root).map_err(|error| error.to_string())?;
 
     let status = Command::new("cargo")
         .arg("run")
         .arg("-p")
-        .arg("oxxlobs-cli")
+        .arg("oxxlplay-cli")
         .arg("--")
         .arg("capture-run")
         .arg("--scenario")
         .arg(&scenario_path)
         .arg("--output-dir")
         .arg(output_root)
-        .current_dir(&oxxlobs_root)
+        .current_dir(&oxxlplay_root)
         .status()
-        .map_err(|error| format!("failed to start OxXlObs capture-run: {error}"))?;
+        .map_err(|error| format!("failed to start OxXlPlay capture-run: {error}"))?;
 
     if !status.success() {
         return match status.code() {
-            Some(code) => Err(format!("OxXlObs capture-run exited with code {code}")),
-            None => Err("OxXlObs capture-run exited without a status code".to_string()),
+            Some(code) => Err(format!("OxXlPlay capture-run exited with code {code}")),
+            None => Err("OxXlPlay capture-run exited without a status code".to_string()),
         };
     }
 
@@ -138,12 +138,12 @@ pub fn load_observation_source_bundle(
     })
 }
 
-fn oxxlobs_repo_root() -> PathBuf {
+fn oxxlplay_repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("..")
-        .join("OxXlObs")
+        .join("OxXlPlay")
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {

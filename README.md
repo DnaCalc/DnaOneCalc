@@ -5,12 +5,12 @@
 `DNA Calc` is the broader family of repos that together build a serious,
 evidence-driven calculation stack: formula semantics in `OxFml`, function
 semantics in `OxFunc`, replay and diff infrastructure in `OxReplay`,
-Excel-observation capture in `OxXlObs`, and host products such as
+Excel-observation capture in `OxXlPlay`, and host products such as
 `DnaOneCalc` that exercise those lanes together. `DnaOneCalc` is the
 user-facing single-formula host in that larger system, not a standalone or
 independent calculator project.
 
-It is a serious user-facing application and a co-development surface for `OxFml`, `OxFunc`, `OxReplay`, `OxXlObs`, and later `OxVba`. Its central product expression is the `Twin Oracle Workbench` with `Live Formula Semantic X-Ray`: author a scenario, run it, inspect semantic and replay artifacts, compare against Excel where available, retain evidence, and emit upstream-ready handoffs.
+It is a serious user-facing application and a co-development surface for `OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`, and later `OxVba`. Its central product expression is the `Twin Oracle Workbench` with `Live Formula Semantic X-Ray`: author a scenario, run it, inspect semantic and replay artifacts, compare against Excel where available, retain evidence, and emit upstream-ready handoffs.
 
 This repo is intentionally slim at the top level.
 

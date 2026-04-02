@@ -786,7 +786,7 @@ mod tests {
             witness_ref: witness_ref.clone(),
             capability_snapshot_ref: capability_snapshot_ref.clone(),
             requested_action_kind: "widen_compare".to_string(),
-            target_lane: "OxXlObs".to_string(),
+            target_lane: "OxXlPlay".to_string(),
             expected_behavior: "stable".to_string(),
             observed_behavior: "stable".to_string(),
             supporting_artifact_refs: vec![replay.capture.envelope.stable_ref()],
@@ -1041,7 +1041,7 @@ mod tests {
         assert!(packets[0]
             .blocker_ids
             .contains(&"comparison_missing".to_string()));
-        assert_eq!(packets[0].target_lane, "OxXlObs");
+        assert_eq!(packets[0].target_lane, "OxXlPlay");
     }
 
     #[test]
@@ -1651,8 +1651,8 @@ mod tests {
             .join("..")
             .join("..")
             .join("..")
-            .join("OxXlObs")
-            .join("states/excel/xlobs_capture_values_formulae_001");
+            .join("OxXlPlay")
+            .join("states/excel/xlplay_capture_values_formulae_001");
 
         let persisted = adapter
             .persist_observation_from_existing_source(&store, &source_root)
@@ -1676,7 +1676,7 @@ mod tests {
         let reopened = store
             .read_observation(&persisted.observation.observation_id)
             .expect("observation artifact should reopen");
-        assert_eq!(reopened.scenario_id, "xlobs_capture_values_formulae_001");
+        assert_eq!(reopened.scenario_id, "xlplay_capture_values_formulae_001");
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1704,8 +1704,8 @@ mod tests {
             .join("..")
             .join("..")
             .join("..")
-            .join("OxXlObs")
-            .join("states/excel/xlobs_capture_values_formulae_001");
+            .join("OxXlPlay")
+            .join("states/excel/xlplay_capture_values_formulae_001");
         let observation = adapter
             .persist_observation_from_existing_source(&store, &source_root)
             .expect("observation should persist");
@@ -1759,8 +1759,8 @@ mod tests {
             .join("..")
             .join("..")
             .join("..")
-            .join("OxXlObs")
-            .join("states/excel/xlobs_capture_values_formulae_001");
+            .join("OxXlPlay")
+            .join("states/excel/xlplay_capture_values_formulae_001");
         let observation = adapter
             .persist_observation_from_existing_source(&store, &source_root)
             .expect("observation should persist");
@@ -1779,7 +1779,7 @@ mod tests {
             .open_handoff_packet(&store, &handoff.handoff.handoff_id)
             .expect("handoff should open");
 
-        assert_eq!(opened.target_lane, "OxXlObs/DnaOneCalc");
+        assert_eq!(opened.target_lane, "OxXlPlay/DnaOneCalc");
         assert_eq!(opened.requested_action_kind, "widen_observation_envelope");
         assert_eq!(opened.status, "ready");
 

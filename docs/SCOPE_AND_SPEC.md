@@ -58,29 +58,30 @@ The right reading is:
 The core mission of `DNA OneCalc` is:
 1. accept a formula string of arbitrary supported complexity,
 2. evaluate it through `OxFml` and `OxFunc`,
-3. present the result and effective display state in an attractive interactive host,
-4. emit replayable evidence through `OxReplay`,
-5. compare and replay scenarios against Excel through `OxXlObs`,
-6. grow a durable scenario library that validates the stack against Excel and pressures the upstream repos productively.
+3. present the result, help, diagnostics, and effective display state in a serious interactive host,
+4. expose mechanism-facing `Live Formula Semantic X-Ray` surfaces over the same active scenario,
+5. emit replayable evidence through `OxReplay`,
+6. compare and replay scenarios against Excel through `OxXlPlay`,
+7. grow a durable scenario library that validates the stack against Excel and pressures the upstream repos productively.
 
-The strongest product direction is:
-1. `DNA OneCalc` as the stack’s `Twin Oracle Workbench`,
-2. with `Live Formula Semantic X-Ray` as the primary product expression of that workbench.
+The ordered product direction is:
+1. `Formula / Function Explorer` first,
+2. `Live Formula Semantic X-Ray` second,
+3. `Twin Oracle Workbench` third.
 
 That means the central user experience is not merely:
 1. type a formula,
 2. see a value.
 
 It is:
-1. author a scenario,
-2. run it in DNA,
-3. inspect the parse tree,
-4. inspect the evaluation trace,
-5. inspect semantic provenance,
-6. compare against Excel on Windows,
-7. explain mismatches,
-8. distill witnesses,
-9. emit upstream-ready handoff packets.
+1. author and edit a formula,
+2. inspect help, diagnostics, result, and effective display,
+3. open X-Ray views for parse, bind, evaluation, and provenance,
+4. retain the run and reopen it reproducibly,
+5. compare against Excel on Windows where that lane is available,
+6. explain mismatches,
+7. distill witnesses where the lane floor supports it,
+8. emit upstream-ready handoff packets.
 
 In short:
 1. every meaningful session should be capable of becoming retained evidence,
@@ -93,7 +94,7 @@ Primary runtime dependencies:
 3. `OxReplay`
 
 Primary empirical validation dependency:
-1. `OxXlObs`
+1. `OxXlPlay`
 
 Staged later dependency:
 1. `OxVba`
@@ -106,7 +107,7 @@ Ownership split:
 2. `OxFml` owns formula-language semantics, host-policy seams, semantic formatting, formula-semantic conditional-formatting carriers, and the canonical formula-edit language-service substrate used by hosts.
 3. `OxFunc` owns value and function semantics, library/runtime context seams, registered-external function machinery, and the authoritative function-help or signature-metadata truth that OxFml should project into host-facing editor packets.
 4. `OxReplay` owns replay bundle, replay execution, diff, explain, witness, and adapter/conformance infrastructure.
-5. `OxXlObs` owns live Excel-facing observation and capture.
+5. `OxXlPlay` owns live Excel-facing observation and capture.
 6. `OxVba` owns VBA semantics and later VBA-backed extension tooling.
 
 Important rule:
@@ -144,7 +145,7 @@ The most relevant current OxCalc references are:
 Interpretation rule:
 1. `OxFml` remains authoritative for evaluator-side semantics and canonical shared seam meaning,
 2. `OxCalc` remains an important reference owner for coordinator-facing and consumed-host-packet seam shape,
-3. `DNA OneCalc` should treat both repos as part of the reference surface for this seam even while only consuming `OxFml`, `OxFunc`, `OxReplay`, and `OxXlObs` at runtime.
+3. `DNA OneCalc` should treat both repos as part of the reference surface for this seam even while only consuming `OxFml`, `OxFunc`, `OxReplay`, and `OxXlPlay` at runtime.
 
 Current concrete read from the refreshed OxCalc seam docs:
 1. the first implementation-backed host packet already carries more than a bare formula string, including caller-anchor facts, structure-context versioning, typed host-query facts, table-context carriage, and a `library_context_snapshot`,
@@ -218,22 +219,32 @@ The authoritative OxFunc surface and overlay slice is enumerated in Section `19.
 ## 5. Product Expression
 `DNA OneCalc` should be a serious product, not only a harness.
 
-The defining surface is `Live Formula Semantic X-Ray`.
+The ordered product perspectives are:
+1. `Formula / Function Explorer`,
+2. `Live Formula Semantic X-Ray`,
+3. `Twin Oracle Workbench`.
 
-That surface should make the following first-class:
+The explorer perspective should make the following first-class:
 1. formula text,
 2. host-driving and recalc context,
 3. live diagnostics,
 4. deterministic completion and validated completion application,
 5. function and argument help during editing,
-6. result and effective display,
-7. parse tree,
-8. evaluation trace,
-9. replay state,
-10. semantic diff,
-11. provenance,
-12. witness state,
-13. upstream handoff readiness.
+6. result and effective display.
+
+The X-Ray perspective should make the following first-class:
+1. parse tree,
+2. evaluation trace,
+3. semantic provenance,
+4. diffable mechanism state,
+5. capability and host-context truth relevant to interpretation.
+
+The workbench perspective should make the following first-class:
+1. replay state,
+2. semantic diff,
+3. observation and comparison state,
+4. witness state,
+5. upstream handoff readiness.
 
 The named workbench modes are:
 1. `DNA-only`
@@ -249,14 +260,17 @@ These should be treated as named product modes with explicit capability gates, n
 
 ### 5.1 Product Promises
 `DNA OneCalc` being a serious product should mean the following concrete host promises:
-1. keyboard-first formula authoring and inspection,
-2. visible host profile, packet kind, and function-surface policy,
-3. visible platform limits and provisionality state,
-4. retained scenario authoring rather than session-only work,
-5. replay, diff, explain, and handoff controls as first-class UI surfaces,
-6. a visible capability center and exportable capability snapshot for the exact dependency set in use,
-7. importable and exportable `Scenario Capsule` transport for real evidence sharing,
-8. no silent overclaim about parity, platform reach, or upstream seam maturity.
+1. keyboard-first formula and function exploration,
+2. visible result, effective display, and currently available formatting truth,
+3. visible diagnostics, completion, and help integrated into the main editing flow,
+4. durable X-Ray surfaces over the same authored scenario,
+5. visible host profile, packet kind, and function-surface policy,
+6. visible platform limits and provisionality state,
+7. retained scenario authoring rather than session-only work,
+8. replay, diff, explain, and handoff controls once the retained and replay floors are honestly admitted,
+9. a visible capability center and exportable capability snapshot for the exact dependency set in use as a supporting honesty surface,
+10. importable and exportable `Scenario Capsule` transport for real evidence sharing,
+11. no silent overclaim about parity, platform reach, or upstream seam maturity.
 
 ### 5.2 Mode Gate Discipline
 Each named workbench mode must declare:
@@ -274,7 +288,9 @@ If a mode cannot satisfy its declared floor, the UI must:
 ### 5.3 Capability Observatory And Dependency Ledger
 `DNA OneCalc` should include a first-class `Capability Observatory`.
 
-This is not a diagnostics afterthought. It is the product surface that states what the current host build and dependency set can honestly do.
+This is not a diagnostics afterthought.
+It is a supporting honesty surface that states what the current host build and dependency set can honestly do.
+It should support the explorer, X-Ray, replay, and compare surfaces rather than compete with them for primary attention.
 
 The observatory should have two coordinated forms:
 1. a machine-readable `CapabilityLedgerSnapshot`,
@@ -308,7 +324,7 @@ The snapshot should minimally contain:
 2. `schema_id` and `schema_version`,
 3. emitted-at timestamp and emitter build identity,
 4. host kind, platform, and runtime class,
-5. exact dependency identities for `OxFml`, `OxFunc`, `OxReplay`, `OxXlObs`, and extension providers where loaded,
+5. exact dependency identities for `OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`, and extension providers where loaded,
 6. seam pin set and dependency pin set,
 7. active host-profile ladder and packet-kind register,
 8. admitted function-surface labels and the overlay inputs from which they were derived,
@@ -422,7 +438,7 @@ It should minimally record:
 
 ### 6.3 Observation
 An external truth artifact, most importantly:
-1. Windows-only Excel-observed output through `OxXlObs`.
+1. Windows-only Excel-observed output through `OxXlPlay`.
 
 It should minimally record:
 1. `observation_id`,
@@ -603,8 +619,8 @@ Current upstream reference slice for the artifact spine:
 1. `..\\..\\OxReplay\docs\spec\OXREPLAY_BUNDLE_WITNESS_AND_REGISTRY_MODEL.md`,
 2. `..\\..\\OxReplay\docs\spec\OXREPLAY_ADAPTER_AND_CONFORMANCE_MODEL.md`,
 3. `..\\..\\OxReplay\docs\spec\DNA_RECALC_HOST.md`,
-4. `..\\..\\OxXlObs\docs\spec\OXXLOBS_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
-5. `..\\..\\OxXlObs\docs\spec\OXXLOBS_SCENARIO_REGISTER.md`.
+4. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
+5. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_SCENARIO_REGISTER.md`.
 
 ### 6.8 Shared Artifact Envelope
 Every retained artifact should carry a common engineering envelope even where the inner payload differs by artifact kind.
@@ -911,7 +927,7 @@ They fit because `DNA OneCalc` is:
 1. `OxFml` remains authoritative for semantic formatting, formatting-sensitive evaluator behavior, and conditional-formatting formula carriers where those are formula-significant.
 2. `DNA OneCalc` owns persisted style state, carrier records, rendering, effective-format computation in the product host, and honest cross-platform capability declaration.
 3. `OxReplay` must see formatting-significant and conditional-formatting-significant consequences.
-4. `OxXlObs` is the empirical comparison source for Excel-facing formatting and conditional-formatting truth on Windows.
+4. `OxXlPlay` is the empirical comparison source for Excel-facing formatting and conditional-formatting truth on Windows.
 
 Current carrier split:
 1. hosts own conditional-formatting and data-validation carrier records, target-range attachment, rule fields, and rendering policy,
@@ -943,7 +959,7 @@ Current working composition model:
 Verification rule:
 1. Excel behavior is normative for the final composition rule,
 2. the working model above is the current engineering starting point,
-3. promoted display claims must be verified empirically through `OxXlObs` and retained evidence,
+3. promoted display claims must be verified empirically through `OxXlPlay` and retained evidence,
 4. if the working model and Excel evidence diverge, the spec must be corrected.
 
 Inspection rule:
@@ -987,8 +1003,8 @@ Current upstream reference slice for this plane:
 2. `..\\..\\OxFml\docs\spec\OXFML_HOST_RUNTIME_AND_EXTERNAL_REQUIREMENTS.md`,
 3. `..\\..\\OxFml\docs\spec\OXFML_DNA_ONECALC_HOST_POLICY_BASELINE.md`,
 4. `..\\..\\OxFunc\docs\function-lane\FUNCTION_SLICE_RETURN_SURFACE_AND_PUBLICATION_HINT_CONTRACT_PRELIM.md`,
-5. `..\\..\\OxXlObs\docs\spec\OXXLOBS_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
-6. `..\\..\\OxXlObs\docs\spec\OXXLOBS_SCENARIO_REGISTER.md`.
+5. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
+6. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_SCENARIO_REGISTER.md`.
 
 ## 9. UI, Runtime, And Platform Model
 ### 9.1 Runtime Shape
@@ -1005,7 +1021,7 @@ Important rule:
 ### 9.1.1 Platform Honesty Matrix
 | Host | Shared UI Core | Live Excel Compare | Native Extensions | OxVba-sensitive Host Work |
 |---|---|---|---|---|
-| Windows desktop | `Leptos` + Tauri | Yes, Windows-only through `OxXlObs` | Yes | Later, Windows-first |
+| Windows desktop | `Leptos` + Tauri | Yes, Windows-only through `OxXlPlay` | Yes | Later, Windows-first |
 | Linux desktop | `Leptos` + Tauri | No live Excel | Yes | Only if explicitly supported later |
 | Browser/WASM | `Leptos` web host | No | No native add-ins | No |
 
@@ -1022,7 +1038,7 @@ The first engineering realization should keep these internal strata explicit:
    adapt OneCalc host packets to OxFml and OxFunc runtime surfaces, execute runs, and normalize returned value surfaces.
 4. `Replay and comparison facade`
    responsibilities:
-   validate replay artifacts, invoke replay, diff, explain, distill where available, and merge OxXlObs evidence into comparison workflows.
+   validate replay artifacts, invoke replay, diff, explain, distill where available, and merge OxXlPlay evidence into comparison workflows.
 5. `Persistence facade`
    responsibilities:
    map `Document` and related artifacts to the declared persistence format, perform round-trip loading and saving, and preserve artifact identity.
@@ -1106,10 +1122,12 @@ Rule:
 ### 9.1.5 Verification And Acceptance Surfaces
 The first engineering implementation should maintain explicit verification layers:
 1. service-level tests for `ScenarioService`, `ExecutionService`, `ReplayService`, `ComparisonService`, and `PersistenceService`,
-2. snapshot or golden tests for canonical artifact JSON and persisted `SpreadsheetML 2003` mappings,
-3. UI interaction tests for editor basics, keyboard flow, compare view, and handoff readiness checks,
-4. retained scenario tests that exercise at least one H0 path, one H1 path, one replay path, and one Windows-only comparison path where available,
-5. platform smoke tests for Windows desktop, Linux desktop, and browser or WASM host.
+2. seam and fixture-host tests that pin the admitted upstream contracts and current snapshot-backed host facts,
+3. snapshot or golden tests for canonical artifact JSON, X-Ray projections, capability snapshots, and persisted `SpreadsheetML 2003` mappings,
+4. UI interaction and layout tests for editor basics, keyboard flow, resize persistence, scrolling behavior, compare view, and handoff readiness checks,
+5. retained scenario and integration tests that exercise at least one H0 path, one H1 path, one explorer path, one X-Ray path, one replay path, and one Windows-only comparison path where available,
+6. platform smoke tests for Windows desktop, Linux desktop, and browser or WASM host,
+7. development scaffolding that keeps deterministic scenario corpora and promoted regression families runnable as ordinary local checks.
 
 ### 9.1.6 Host Acceptance Matrix
 Host acceptance should use a shared-core gate plus host-specific mandatory additions.
@@ -1125,7 +1143,7 @@ Shared core, mandatory on all hosts:
 8. clear status/header truth and keyboard-usable main flows.
 
 Windows desktop mandatory additions:
-1. live `OxXlObs` compare workflow for the first comparison envelope,
+1. live `OxXlPlay` compare workflow for the first comparison envelope,
 2. provenance/reliability labeling for live Excel observations,
 3. version-to-version scenario replay/compare,
 4. native add-in loading for the admitted Excel-C-API subset,
@@ -1279,52 +1297,57 @@ The core rule from the design pack is adopted: the semantic surfaces must stay i
 #### 9.6.2 Screen Inventory And Priority
 P0 surfaces:
 1. `Workbench`
-2. `Compare view`
-3. `Scenario Library`
-4. `Handoff Review`
-5. `X-Ray drawer`
+2. `X-Ray drawer`
+3. `Result and host-context surfaces inside the Workbench`
 
 P1 surfaces:
-1. `Document / Instance Manager`
-2. `Environment / Capability Center`
-3. `Witness detail`
-4. `Observation import / attach`
+1. `Compare view`
+2. `Scenario Library`
+3. `Environment / Capability Center`
+4. `Handoff Review`
+5. `Witness detail`
 
 P2 surface:
-1. `Extension center`
+1. `Document / Instance Manager`
+2. `Observation import / attach`
+3. `Extension center`
 
 Working interpretation:
-1. the workbench remains editor-first,
-2. compare remains a first-class mode rather than a hidden diagnostics appendix,
-3. the library is an evidence corpus view rather than a recent-files browser,
-4. handoff review is a primary product surface, not a later admin tool.
+1. the workbench remains explorer-first,
+2. X-Ray is the second perspective over the same scenario rather than a detached developer tool,
+3. compare and replay are first-class product lanes but follow explorer and X-Ray stabilization,
+4. the capability center is a supporting honesty surface rather than the main workbench experience,
+5. the library is an evidence corpus view rather than a recent-files browser.
 
 #### 9.6.3 Core UX Flows
 The first promoted flows should be:
-1. author and run,
+1. author and explore a formula or function,
 2. diagnose an error,
-3. compare with Excel,
-4. explain and retain witness,
-5. emit handoff,
-6. export or import a scenario capsule,
-7. browse and reopen prior evidence.
+3. inspect help, result, and effective display behavior,
+4. open X-Ray and inspect the current mechanisms,
+5. retain and reopen prior evidence,
+6. compare with Excel,
+7. explain and retain witness,
+8. emit handoff,
+9. export or import a scenario capsule.
 
 The design implication is that `Scenario`, `Comparison`, `Witness`, and `Handoff` are all ordinary product objects, not developer-only artifacts.
 
 #### 9.6.4 Interaction And Command Model
 The first serious command surface should include:
 1. `Run / Re-run`
-2. `Switch mode`
-3. `Open compare`
-4. `Open replay`
-5. `Open diff`
-6. `Open explain`
-7. `Retain witness`
-8. `Draft handoff`
-9. `Export scenario capsule`
-10. `Import scenario capsule`
-11. `Fork scenario`
-12. `Open capability center`
+2. `Open or close X-Ray`
+3. `Switch mode`
+4. `Open compare`
+5. `Open replay`
+6. `Open diff`
+7. `Open explain`
+8. `Retain witness`
+9. `Draft handoff`
+10. `Export scenario capsule`
+11. `Import scenario capsule`
+12. `Fork scenario`
+13. `Open capability center`
 
 Interaction rules adopted from the design pack:
 1. the formula editor is the default focus target,
@@ -1372,13 +1395,18 @@ It should provide:
 8. a diff view against an earlier capability snapshot where available.
 
 Working rules:
-1. the context bar should show compact capability truth,
-2. the `Capability Center` should be the expanded view for that same truth rather than a separate status model,
-3. users should be able to copy or export the current capability snapshot for issue filing, handoff generation, and version-to-version comparison,
-4. the Capability Center should explain disabled or hidden modes by pointing back to capability facts rather than generic error messages.
+1. it must not obscure the primary editor or result surfaces by default,
+2. if it is docked, it should preserve resize state and provide its own scrolling behavior,
+3. the context bar should show compact capability truth,
+4. the `Capability Center` should be the expanded view for that same truth rather than a separate status model,
+5. users should be able to copy or export the current capability snapshot for review, handoff generation, and version-to-version comparison,
+6. the Capability Center should explain disabled or hidden modes by pointing back to capability facts rather than generic error messages.
 
 ## 10. Replay, Comparison, And Scenario Library
-Replay is not optional garnish. It is one of the project’s reasons to exist.
+Replay, comparison, and scenario-library work are the third major product perspective.
+They are not optional garnish, but they are also the highest current design-risk area because the app-facing operation model across `OxReplay`, `OxFml`, `OxFunc`, and host-owned retained actions is not yet fully designed or proven.
+
+The next delivery order should therefore stabilize the explorer and X-Ray surfaces first, then treat replay and observation as the first serious proving ground for retained operation logging, reproducible runs, explain or witness flows, and Excel comparison.
 
 `DNA OneCalc` should be the first user-facing host that routinely makes this possible:
 1. author scenario,
@@ -1390,8 +1418,8 @@ Replay is not optional garnish. It is one of the project’s reasons to exist.
 7. emit handoff.
 
 Required directions:
-1. `DNA OneCalc -> OxReplay -> compare to Excel/OxXlObs evidence`
-2. `OxXlObs/Excel capture -> OxReplay -> replay/explain against DNA OneCalc`
+1. `DNA OneCalc -> OxReplay -> compare to Excel/OxXlPlay evidence`
+2. `OxXlPlay/Excel capture -> OxReplay -> replay/explain against DNA OneCalc`
 
 Windows-only rule:
 1. live Excel-facing comparison is Windows-only,
@@ -1403,7 +1431,7 @@ The first serious UI wave should expose named workbench modes under the followin
 | Mode | Minimum floor | Platforms | Output floor | Label rule |
 |---|---|---|---|---|
 | `DNA-only` | `OxFml` + `OxFunc` execution path | All declared hosts | `ScenarioRun` | Never imply Excel parity |
-| `Excel-observed` | live `OxXlObs` capture path | Windows desktop only | `Observation` | Must show Windows-only status |
+| `Excel-observed` | live `OxXlPlay` capture path | Windows desktop only | `Observation` | Must show Windows-only status |
 | `Twin compare` | `ScenarioRun` plus accepted comparison envelope | Windows for live compare; retained artifacts elsewhere | `Comparison` | Must show reliability badge and projection limits |
 | `Replay` | accepted OneCalc replay intake surface through `OxReplay` | All hosts that can read retained artifacts | validated replay view | Must show capability floor relied upon |
 | `Diff` | typed diff surface and comparable artifacts | Same as replay-capable hosts | diff artifact | Must show lossy or provisional inputs |
@@ -1415,10 +1443,10 @@ The first serious UI wave should expose named workbench modes under the followin
 `DNA OneCalc` should assume the following current honest floor unless retained upstream evidence says otherwise:
 1. `OxFml` replay support is currently honest through `C3.explain_valid`; do not assume `C4.distill_valid` or `C5.pack_valid`,
 2. `OxFunc` has useful local replay artifacts and manifests, but no accepted direct `OxReplay` intake floor that OneCalc should depend on separately from `OxFml`,
-3. `OxXlObs` now has a dedicated OneCalc observation-consumer contract, but the live exercised observation family is still narrow,
-4. the first honest comparison-ready observation family is still `xlobs_capture_values_formulae_001`, with direct cell-value and formula-text comparison only,
-5. `OxXlObs` surfaces must be treated as `direct`, `derived`, or `unavailable`, and `unavailable` surfaces are not comparison-eligible,
-6. the current `OxXlObs` replay-facing normalized view is explicitly `lossy`,
+3. `OxXlPlay` now has a dedicated OneCalc observation-consumer contract, but the live exercised observation family is still narrow,
+4. the first honest comparison-ready observation family is still `xlplay_capture_values_formulae_001`, with direct cell-value and formula-text comparison only,
+5. `OxXlPlay` surfaces must be treated as `direct`, `derived`, or `unavailable`, and `unavailable` surfaces are not comparison-eligible,
+6. the current `OxXlPlay` replay-facing normalized view is explicitly `lossy`,
 7. `OxVba` replay-facing consumption falls outside the current scope.
 
 Operational consequence:
@@ -1438,7 +1466,7 @@ Every comparison surface shown in the UI or retained in artifacts should carry a
 The first scenario families promoted into comparison and replay spines should favor:
 1. OxFunc rows with stable semantic closure or explicit doc-modeled seam contracts,
 2. OxFml lanes whose host and replay artifacts are already deterministic and typed,
-3. OxXlObs scenarios with retained provenance-rich bundle emission and no hidden capture assumptions.
+3. OxXlPlay scenarios with retained provenance-rich bundle emission and no hidden capture assumptions.
 
 Avoid making these the first product-claim families unless the scenario is explicitly marked provisional:
 1. `W051` OxFunc rows whose broader promotion packet is still open,
@@ -1463,7 +1491,7 @@ The scenario library must also produce:
 1. structured requirement deltas,
 2. seam clarification requests,
 3. repo-addressable upstream work requests,
-4. concrete widening requests for `OxXlObs` whenever OneCalc comparison design outruns the currently exercised observation envelope.
+4. concrete widening requests for `OxXlPlay` whenever OneCalc comparison design outruns the currently exercised observation envelope.
 
 ### 10.4 Scenario Capsule Transport Rule
 Every serious retained scenario family should be exportable and importable as a `ScenarioCapsule`.
@@ -1493,10 +1521,10 @@ Current upstream reference slice for replay, comparison, and scenario growth:
 2. `..\\..\\OxReplay\docs\spec\OXREPLAY_ADAPTER_AND_CONFORMANCE_MODEL.md`,
 3. `..\\..\\OxReplay\docs\spec\OXREPLAY_BUNDLE_WITNESS_AND_REGISTRY_MODEL.md`,
 4. `..\\..\\OxReplay\docs\spec\DNA_RECALC_HOST.md`,
-5. `..\\..\\OxReplay\docs\spec\OXREPLAY_OXXLOBS_OBSERVATION_SEAM.md`,
-6. `..\\..\\OxXlObs\docs\spec\OXXLOBS_ARCHITECTURE_AND_CAPTURE_MODEL.md`,
-7. `..\\..\\OxXlObs\docs\spec\OXXLOBS_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
-8. `..\\..\\OxXlObs\docs\spec\OXXLOBS_SCENARIO_REGISTER.md`,
+5. `..\\..\\OxReplay\docs\spec\OXREPLAY_OXXLPLAY_OBSERVATION_SEAM.md`,
+6. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_ARCHITECTURE_AND_CAPTURE_MODEL.md`,
+7. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md`,
+8. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_SCENARIO_REGISTER.md`,
 9. `..\\..\\OxFml\docs\spec\OXFML_REPLAY_APPLIANCE_ADAPTER_V1.md`,
 10. `..\\..\\OxFml\docs\spec\fec-f3e\FEC_F3E_TESTING_AND_REPLAY.md`,
 11. `..\\..\\OxFunc\docs\function-lane\OXFUNC_REPLAY_APPLIANCE_PACKET_ADAPTER_V1.md`.
@@ -1600,6 +1628,11 @@ Hard rule:
 
 ## 12. Extension And Add-In Model
 The desktop extension path should be defined as a portable C ABI contract.
+
+Delivery-order rule:
+1. this lane remains in scope,
+2. but it follows explorer stabilization, X-Ray stabilization, and the first replay or observation proving work,
+3. because its desired operation is clearer than the replay lane even though its technical implementation complexity is high.
 
 The admitted subset should be defined against the public Excel SDK reference corpus already curated in Foundation `reference/`, so that OneCalc implements a precise public-source subset rather than a loosely Excel-like add-in story.
 
@@ -1758,15 +1791,15 @@ When this note is turned into repo-local execution surfaces:
 
 ### 13.4 Major Derived Implementation Areas
 The engineering areas that the repo must eventually realize are:
-1. host shell, editor viability, and formula-language service integration,
-2. `OC-H0` execution and result or display surface,
-3. replay capture, X-Ray inspection, witness handling, and handoff generation,
-4. driven single-formula host behavior and version-to-version scenario comparison,
-5. formatting and isolated-instance conditional formatting,
-6. one-instance persistence and `ScenarioCapsule` transport,
-7. Windows twin-oracle comparison through `OxXlObs`,
-8. desktop extension ABI, add-in loading, and RTD,
-9. capability observatory, corpus hardening, and upstream pressure.
+1. host shell, formula/function explorer UX, and formula-language service integration,
+2. `OC-H0` execution plus result, effective-display, and promoted formatting surfaces,
+3. durable X-Ray, provenance, and mechanism inspection,
+4. deterministic test scaffolding, retained scenario corpora, and host acceptance harnesses,
+5. driven single-formula host behavior, retained runs, persistence, capability snapshots, and `ScenarioCapsule` transport,
+6. replay capture, operation logging, explain/witness/handoff flows, and replay substrate proving work,
+7. Windows twin-oracle comparison through `OxXlPlay`,
+8. workspace, capability center, scenario library, corpus hardening, and acceptance evidence,
+9. desktop extension ABI, add-in loading, RTD, and later `OxVba` pressure.
 
 These areas are design obligations.
 Their detailed execution order belongs in the repo-local workset register and bead graph rather than in this engineering specification.
@@ -1796,19 +1829,21 @@ This section summarizes the current honest floor that `DNA OneCalc` should desig
 1. `OxReplay` now has an explicit `DNA OneCalc` consumption model, but `DNA ReCalc` remains the generic replay host,
 2. the current honest replay floor for OneCalc is `OxFml` through `C3.explain_valid`, not broad `C4` or `C5`,
 3. `OxFunc` does not currently provide a separately accepted direct replay-intake floor that OneCalc should depend on,
-4. `OxXlObs` now has a dedicated OneCalc observation-consumer contract and a real Windows live-driver baseline, but the live exercised surface is still narrow,
+4. `OxXlPlay` now has a dedicated OneCalc observation-consumer contract and a real Windows live-driver baseline, but the live exercised surface is still narrow,
 5. the first comparison-ready observation envelope is still only direct cell value and direct formula-text comparison for one retained scenario family,
-6. the current `OxXlObs` normalized replay view is explicitly `lossy`, and richer comparison fidelity must consult the source observation bundle and sidecars,
-7. live Excel comparison is Windows-only, while retained replay, diff, explain, and observation-artifact consumption may be used on other platforms.
+6. the current `OxXlPlay` normalized replay view is explicitly `lossy`, and richer comparison fidelity must consult the source observation bundle and sidecars,
+7. live Excel comparison is Windows-only, while retained replay, diff, explain, and observation-artifact consumption may be used on other platforms,
+8. the app-facing replay operation model across `OxReplay`, `OxFml`, `OxFunc`, and host-owned retained actions remains a high-risk proving ground rather than a settled infrastructure layer.
 
 ### 14.4 Extension And VBA Floor
-1. the portable native-extension ABI is an admitted current scope item for `DNA OneCalc` and is intentionally defined as a tight subset of the Excel C API,
-2. Windows `.xll` packaging and Linux `.so` packaging should preserve the same admitted ABI and behavior,
-3. the admitted surface freezes `XLOPER12` only and the `Excel12(...)` host-call subset needed for `xlfRegister` Form 1, `xlfEvaluate`, `xlUDF`, and `xlfRtd`,
-4. `DNA OneCalc` supports host-loaded function registration and RTD under that admitted subset, without thereby admitting worksheet `REGISTER.ID` / `CALL` semantics,
-5. OxVba's real current floor remains embedded host runtime execution with host-provided root objects and partial host-export discovery, so `DNA OneCalc` should treat OxVba as design input and co-development pressure rather than as a shipped add-in toolchain,
-6. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host explicitly supplies cross-platform replacements,
-7. the Linux RTD activation model remains an admitted design task inside the current scope rather than a reason to weaken the frozen ABI direction.
+1. the portable native-extension ABI remains an admitted current scope item for `DNA OneCalc`, but it is not the first stabilization target for the next iteration,
+2. this lane is lower risk from a product-definition standpoint because the desired operation is comparatively clear, but it remains high technical complexity and likely upstream seam pressure,
+3. Windows `.xll` packaging and Linux `.so` packaging should preserve the same admitted ABI and behavior,
+4. the admitted surface freezes `XLOPER12` only and the `Excel12(...)` host-call subset needed for `xlfRegister` Form 1, `xlfEvaluate`, `xlUDF`, and `xlfRtd`,
+5. `DNA OneCalc` supports host-loaded function registration and RTD under that admitted subset, without thereby admitting worksheet `REGISTER.ID` / `CALL` semantics,
+6. OxVba's real current floor remains embedded host runtime execution with host-provided root objects and partial host-export discovery, so `DNA OneCalc` should treat OxVba as design input and co-development pressure rather than as a shipped add-in toolchain,
+7. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host explicitly supplies cross-platform replacements,
+8. the Linux RTD activation model remains an admitted design task inside the current scope rather than a reason to weaken the frozen ABI direction.
 
 ## 15. Start-Now Judgment
 `DnaOneCalc` should be started now.
@@ -1817,58 +1852,68 @@ That is honest because:
 1. `OxFml` already has a real single-formula host floor,
 2. `OxFunc` already has a real library/runtime seam,
 3. `OxReplay` is already usable infrastructure,
-4. `OxXlObs` already provides a live Excel evidence lane,
+4. `OxXlPlay` already provides a live Excel evidence lane,
 5. `OxCalc` now has an explicit downstream-host seam-reference note,
 6. `OxReplay` now has an explicit `DNA OneCalc` consumption model,
 7. the missing work is now mostly about host definition, integration, gating, and product shaping rather than waiting for a hypothetical future lane to exist.
 
 What must remain explicit:
-1. `OxFml` and `OxFunc` seams are usable but not forever-frozen,
-2. `DNA OneCalc` must not quietly slide toward `OxCalc`,
-3. formatting and conditional formatting belong here, but honest staged delivery still matters,
-4. the OxFml editor-language-service floor is already real enough to integrate against, but shared host packet freezing and OxFunc-backed help payload closure are still active seam work,
-5. live Excel comparison is Windows-only,
-6. hosted web and browser/WASM begin without native add-ins,
-7. the current replay and Excel-observation floor is still narrower than a broad parity story and must stay labeled that way,
-8. the primary product expression is `Live Formula Semantic X-Ray`,
-9. repo execution should be derived from this spec through a workset register and bead graph rather than by reopening the scope model here.
+1. the next iteration order is explorer first, X-Ray second, replay or observation proving third, and extensions after those floors stabilize,
+2. `OxFml` and `OxFunc` seams are usable but not forever-frozen,
+3. `DNA OneCalc` must not quietly slide toward `OxCalc`,
+4. formatting and conditional formatting belong here, but honest staged delivery still matters,
+5. the OxFml editor-language-service floor is already real enough to integrate against, but shared host packet freezing and OxFunc-backed help payload closure are still active seam work,
+6. live Excel comparison is Windows-only,
+7. hosted web and browser/WASM begin without native add-ins,
+8. the current replay and Excel-observation floor is still narrower than a broad parity story and must stay labeled that way,
+9. the app-facing replay or operation model is still high risk because it is not yet designed or proven end to end,
+10. the extension lane is later work, with lower product-definition risk but higher technical complexity,
+11. repo execution should be derived from this spec through a workset register and bead graph rather than by reopening the scope model here.
 
 ## 16. Success Criteria
 The first serious `DNA OneCalc` scope should be considered real only when:
 1. the repo-derived control surfaces required by this spec are published coherently,
 2. a formula string can be entered and evaluated through `OxFml` and `OxFunc` against an explicitly pinned admitted function surface,
-3. the host profile is explicit and visible,
-4. packet kind, provisionality state, and comparison or replay capability floor are visible in the UI,
-5. the capability center can show and export the effective dependency, seam, replay, observation, and extension truth for the current workspace,
-6. OxFml-derived diagnostics are visible and trustworthy in the editor,
-7. deterministic completion and currently-available function or argument help are integrated into the editor flow,
-8. base formatting and effective-display state are visible and honest,
-9. replay output can be emitted for at least one nontrivial scenario family,
-10. at least one retained scenario family is validated against Excel-facing evidence through `OxXlObs` with provenance and lossiness made explicit,
-11. at least one retained formatting or conditional-formatting family exists,
-12. the UI is usable and keyboard-first,
-13. persisted documents round-trip through the declared initial file format with formatting state intact,
-14. replay capture, replay execution, diff, explain, and retained-scenario control are all available through the UI,
-15. one scenario can be exported and re-imported as a `ScenarioCapsule` without losing lineage or capability truth,
-16. extension support is either real for the declared desktop host or explicitly out of scope for that host profile.
+3. the formula/function explorer is usable, keyboard-first, and stable under ordinary resize and navigation behavior,
+4. OxFml-derived diagnostics are visible and trustworthy in the editor,
+5. deterministic completion and currently available function or argument help are integrated into the editor flow,
+6. base formatting and effective-display state are visible and honest,
+7. the X-Ray surfaces expose current parse, bind, evaluation, and provenance truth for the promoted scenario families,
+8. deterministic test scaffolding, promoted scenario corpora, and high-coverage integration checks exist for the promoted explorer and X-Ray paths,
+9. the host profile is explicit and visible,
+10. packet kind, provisionality state, and comparison or replay capability floor are visible in the UI,
+11. the capability center can show and export the effective dependency, seam, replay, observation, and extension truth for the current workspace,
+12. replay output can be emitted for at least one nontrivial scenario family,
+13. replay capture, replay execution, diff, explain, and retained-scenario control are all available through the UI for the current honest lane floor,
+14. at least one retained scenario family is validated against Excel-facing evidence through `OxXlPlay` with provenance and lossiness made explicit,
+15. at least one retained formatting or conditional-formatting family exists,
+16. persisted documents round-trip through the declared initial file format with formatting state intact,
+17. one scenario can be exported and re-imported as a `ScenarioCapsule` without losing lineage or capability truth,
+18. extension support is either real for the declared desktop host or explicitly out of scope for that host profile.
 
 ## 17. Residual Design Pressure
-The main scope holes have now been closed in this document. The remaining pressure points are narrower implementation and upstream-alignment items.
+The main scope holes have now been closed in this document.
+The remaining pressure points are now concentrated in next-iteration sequencing, replay-risk reduction, and upstream-alignment items.
 
 ### 17.1 Current Upstream Pressure Items
 1. the final OxFml shared immutable edit-packet freeze,
 2. the final OxFunc help and signature payload contract,
-3. widening the OxXlObs observation/comparison envelope beyond value and formula text,
-4. app-facing `OxReplay` service tightening for non-`DNA ReCalc` hosts,
-5. replay artifact-chain closure across `OxFml`, `OxFunc`, and `OxReplay`,
-6. OneCalc-driven seam-sync and naming cleanup where OxFml and OxCalc still describe shared seam intent differently.
+3. app-facing `OxReplay` service tightening for non-`DNA ReCalc` hosts,
+4. replay artifact-chain closure across `OxFml`, `OxFunc`, and `OxReplay`,
+5. widening the OxXlPlay observation/comparison envelope beyond value and formula text,
+6. OneCalc-driven seam-sync and naming cleanup where OxFml and OxCalc still describe shared seam intent differently,
+7. later extension and RTD seam hardening where OneCalc becomes the first serious downstream proving host.
 
 ### 17.2 Current OneCalc-Owned Design Tasks
-1. the Linux minimal COM-like activation registry and host contract for the admitted RTD subset,
-2. the exact admitted Excel-SDK subset register and exclusion list for the OneCalc extension ABI,
-3. the exact XML extension-lane usage policy for `SpreadsheetML 2003`,
-4. the retained-workspace UX for managing multiple isolated OneCalc files together,
-5. the richer internal comparison dimensions once upstream evidence widens.
+1. explorer-first workbench UX stabilization, including result visibility, scrolling, and durable resize behavior,
+2. the exact durable X-Ray panel and explanation model for current mechanism truth,
+3. the replay-aware operation model for undo or redo, semantic logging, macro-recording-style capture, and reproducible runs,
+4. deterministic test scaffolding, promoted scenario corpora, and host acceptance automation,
+5. the retained-workspace UX for managing multiple isolated OneCalc files together,
+6. the exact admitted Excel-SDK subset register and exclusion list for the OneCalc extension ABI,
+7. the Linux minimal COM-like activation registry and host contract for the admitted RTD subset,
+8. the exact XML extension-lane usage policy for `SpreadsheetML 2003`,
+9. the richer internal comparison dimensions once upstream evidence widens.
 
 ### 17.3 Explicitly Out Of Current Scope Unless Reopened By New Spec Work
 1. broad worksheet-style name or reference binding in OneCalc,
@@ -1885,7 +1930,7 @@ If a future repo bootstrap, charter, or work packet conflicts with this document
 2. keep replay and comparison first-class,
 3. keep the artifact spine explicit,
 4. keep the extension contract honest by platform,
-5. keep the product centered on `Live Formula Semantic X-Ray`,
+5. keep the product ordered as explorer first, X-Ray second, and replay/compare proving third,
 6. prefer one strong engineering spec plus repo-local workset register and bead graph over multiplying narrative planning docs.
 
 ## 19. Authoritative Upstream Reference Set
@@ -1976,26 +2021,26 @@ This section records the current upstream document set that `DNA OneCalc` should
 12. `..\\..\\OxReplay\docs\spec\OXREPLAY_WITNESS_LIFECYCLE_TRANSITIONS.md` - local lifecycle transition floor.
 13. `..\\..\\OxReplay\docs\spec\OXREPLAY_INITIAL_ADAPTER_INTAKE_PLAN.md` - current lane-intake ordering and scope.
 14. `..\\..\\OxReplay\docs\spec\OXREPLAY_CAPABILITY_AND_PACK_TRACEABILITY.md` - capability-to-pack traceability companion.
-15. `..\\..\\OxReplay\docs\spec\OXREPLAY_OXXLOBS_OBSERVATION_SEAM.md` - current observation-to-replay seam with `OxXlObs`.
+15. `..\\..\\OxReplay\docs\spec\OXREPLAY_OXXLPLAY_OBSERVATION_SEAM.md` - current observation-to-replay seam with `OxXlPlay`.
 
-### 19.5 OxXlObs
-1. `..\\..\\OxXlObs\README.md` - repo role, implementation direction, and Windows live-driver posture.
-2. `..\\..\\OxXlObs\CHARTER.md` - observation ownership boundary and replay-ready evidence rule.
-3. `..\\..\\OxXlObs\OPERATIONS.md` - provenance, lossiness, and handoff discipline.
-4. `..\\..\\OxXlObs\docs\spec\README.md` - canonical local spec index.
-5. `..\\..\\OxXlObs\docs\IN_PROGRESS_FEATURE_WORKLIST.md` - current workset and consumer status.
-6. `..\\..\\OxXlObs\CURRENT_BLOCKERS.md` - blocker truth.
-7. `..\\..\\OxXlObs\docs\spec\OXXLOBS_ONECALC_OBSERVATION_CONSUMER_CONTRACT.md` - canonical OneCalc-facing observation-consumer contract and comparison-envelope rule.
-8. `..\\..\\OxXlObs\docs\spec\OXXLOBS_SCOPE_AND_BOUNDARY.md` - clean split between observation and replay/semantic ownership.
-9. `..\\..\\OxXlObs\docs\spec\OXXLOBS_ARCHITECTURE_AND_CAPTURE_MODEL.md` - observation strata and current stable live capture path.
-10. `..\\..\\OxXlObs\docs\spec\OXXLOBS_ENVIRONMENT_AND_PROVENANCE_MODEL.md` - environment and provenance contract.
-11. `..\\..\\OxXlObs\docs\spec\OXXLOBS_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md` - observation-bundle and replay-handoff contract.
-12. `..\\..\\OxXlObs\docs\spec\OXXLOBS_CAPABILITY_AND_PACK_TRACEABILITY.md` - local observation capability ladder.
-13. `..\\..\\OxXlObs\docs\spec\OXXLOBS_SCENARIO_REGISTER.md` - stable scenario register and retained-root map.
-14. `..\\..\\OxXlObs\docs\spec\OXXLOBS_CLI_CONTRACT.md` - declared CLI contract, with only `capture-run` currently exercised.
-15. `..\\..\\OxXlObs\docs\spec\OXXLOBS_IMPLEMENTATION_BASELINE.md` - current implementation truth and Windows bridge shape.
-16. `..\\..\\OxXlObs\docs\test-runs\W006_STABLE_WINDOWS_EXECUTION_DRIVER.md` - best current evidence for what is actually exercised live on Windows.
-17. `..\\..\\OxXlObs\docs\test-runs\W007_FIRST_CROSS_REPO_REPLAY_AND_DIFF_CONSUMPTION.md` - best current evidence for replay-facing comparison readiness and its present limits.
+### 19.5 OxXlPlay
+1. `..\\..\\OxXlPlay\README.md` - repo role, implementation direction, and Windows live-driver posture.
+2. `..\\..\\OxXlPlay\CHARTER.md` - observation ownership boundary and replay-ready evidence rule.
+3. `..\\..\\OxXlPlay\OPERATIONS.md` - provenance, lossiness, and handoff discipline.
+4. `..\\..\\OxXlPlay\docs\spec\README.md` - canonical local spec index.
+5. `..\\..\\OxXlPlay\docs\IN_PROGRESS_FEATURE_WORKLIST.md` - current workset and consumer status.
+6. `..\\..\\OxXlPlay\CURRENT_BLOCKERS.md` - blocker truth.
+7. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_ONECALC_OBSERVATION_CONSUMER_CONTRACT.md` - canonical OneCalc-facing observation-consumer contract and comparison-envelope rule.
+8. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_SCOPE_AND_BOUNDARY.md` - clean split between observation and replay/semantic ownership.
+9. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_ARCHITECTURE_AND_CAPTURE_MODEL.md` - observation strata and current stable live capture path.
+10. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_ENVIRONMENT_AND_PROVENANCE_MODEL.md` - environment and provenance contract.
+11. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_BUNDLE_EMISSION_AND_HANDOFF_MODEL.md` - observation-bundle and replay-handoff contract.
+12. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_CAPABILITY_AND_PACK_TRACEABILITY.md` - local observation capability ladder.
+13. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_SCENARIO_REGISTER.md` - stable scenario register and retained-root map.
+14. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_CLI_CONTRACT.md` - declared CLI contract, with only `capture-run` currently exercised.
+15. `..\\..\\OxXlPlay\docs\spec\OXXLPLAY_IMPLEMENTATION_BASELINE.md` - current implementation truth and Windows bridge shape.
+16. `..\\..\\OxXlPlay\docs\test-runs\W006_STABLE_WINDOWS_EXECUTION_DRIVER.md` - best current evidence for what is actually exercised live on Windows.
+17. `..\\..\\OxXlPlay\docs\test-runs\W007_FIRST_CROSS_REPO_REPLAY_AND_DIFF_CONSUMPTION.md` - best current evidence for replay-facing comparison readiness and its present limits.
 
 ### 19.6 OxCalc Seam-Reference Set
 1. `..\\..\\OxCalc\README.md` - lane role and dependency constitution.
@@ -2037,7 +2082,7 @@ This section records the current upstream document set that `DNA OneCalc` should
 3. `OxFml` currently documents broader reference-bearing facts for specific semantic lanes, while the intended OneCalc public model is now driven single-formula and excludes the dereference seam; that boundary is explicit but still needs cleaner upstream/downstream synchronization.
 4. `OxFunc` now has a materially better downstream integration baseline through its new metadata/help contract and surface-labeling policy, but structured help prose, argument descriptions, formatted signature strings, and the runtime provider materialization remain open.
 5. `OxReplay` now has a `DNA OneCalc` consumption model, but OneCalc still consumes replay as infrastructure rather than through a dedicated app-facing host contract, and the current accepted floor remains uneven across lanes.
-6. `OxXlObs` now has a dedicated `DNA OneCalc` observation-consumer contract, but its live exercised surface is still narrow, its comparison envelope is still limited to a first observation family, and its current replay-facing normalized view remains explicitly `lossy`.
+6. `OxXlPlay` now has a dedicated `DNA OneCalc` observation-consumer contract, but its live exercised surface is still narrow, its comparison envelope is still limited to a first observation family, and its current replay-facing normalized view remains explicitly `lossy`.
 7. `OxVba` now has a clearer project-format direction through `.basproj`, but add-in generation and XLL support are still planned rather than implemented; OneCalc cannot currently rely on a shipped OxVba add-in toolchain.
 8. No `Ox*` repo currently owns a stable `SpreadsheetML 2003` isolated-instance persistence contract for `DNA OneCalc`; that mapping remains a `DnaOneCalc`-local design lane informed by Foundation reference corpus rather than current upstream product docs.
 
