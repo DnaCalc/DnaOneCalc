@@ -158,6 +158,54 @@ struct ExplorerRegressionState {
     diagnostics_height_fraction: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParseXRayView {
+    formula_token: String,
+    diagnostic_count: usize,
+    text_change_range: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BindXRayView {
+    reused_green_tree: bool,
+    reused_red_projection: bool,
+    reused_bound_formula: bool,
+    current_help_name: String,
+    availability_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EvalXRayView {
+    worksheet_value_summary: String,
+    payload_summary: String,
+    effective_display_status: String,
+    returned_surface_kind: String,
+    returned_presentation_hint_status: String,
+    host_style_state_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TraceXRayView {
+    trace_event_count: usize,
+    commit_decision_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProvenanceXRayView {
+    host_profile_id: String,
+    packet_register_text: String,
+    latest_capability_snapshot_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellXRayModel {
+    parse: ParseXRayView,
+    bind: BindXRayView,
+    evaluation: Option<EvalXRayView>,
+    trace: Option<TraceXRayView>,
+    provenance: ProvenanceXRayView,
+}
+
 pub struct OneCalcShellApp {
     runtime_adapter: RuntimeAdapter,
     capability_store: RetainedScenarioStore,
@@ -307,6 +355,60 @@ impl OneCalcShellApp {
             capability_scroll_enabled: self.capability_center_visible,
             xray_scroll_enabled: self.xray_visible,
             diagnostics_height_fraction: self.diagnostics_height_fraction(),
+        }
+    }
+
+    fn xray_model(&self) -> ShellXRayModel {
+        let parse = ParseXRayView {
+            formula_token: self.latest_edit_packet.formula_token.clone(),
+            diagnostic_count: self.latest_edit_packet.diagnostic_count,
+            text_change_range: format!("{:?}", self.latest_edit_packet.text_change_range),
+        };
+        let bind = BindXRayView {
+            reused_green_tree: self.latest_edit_packet.reused_green_tree,
+            reused_red_projection: self.latest_edit_packet.reused_red_projection,
+            reused_bound_formula: self.latest_edit_packet.reused_bound_formula,
+            current_help_name: self
+                .function_help
+                .as_ref()
+                .map(|help| help.display_name.clone())
+                .unwrap_or_else(|| "unavailable".to_string()),
+            availability_summary: self
+                .function_help
+                .as_ref()
+                .map(|help| help.availability_summary.clone())
+                .unwrap_or_else(|| "unavailable".to_string()),
+        };
+        let evaluation = self.latest_evaluation.as_ref().map(|summary| EvalXRayView {
+            worksheet_value_summary: summary.worksheet_value_summary.clone(),
+            payload_summary: summary.payload_summary.clone(),
+            effective_display_status: summary.effective_display_status.clone(),
+            returned_surface_kind: summary.returned_value_surface_kind.clone(),
+            returned_presentation_hint_status: summary.returned_presentation_hint_status.clone(),
+            host_style_state_status: summary.host_style_state_status.clone(),
+        });
+        let trace = self
+            .latest_evaluation
+            .as_ref()
+            .map(|summary| TraceXRayView {
+                trace_event_count: summary.trace_event_count,
+                commit_decision_kind: summary.commit_decision_kind.clone(),
+            });
+        let provenance = ProvenanceXRayView {
+            host_profile_id: self.host_profile_id.clone(),
+            packet_register_text: self.packet_register_text.clone(),
+            latest_capability_snapshot_id: self
+                .latest_capability_snapshot_id
+                .clone()
+                .unwrap_or_else(|| "unavailable".to_string()),
+        };
+
+        ShellXRayModel {
+            parse,
+            bind,
+            evaluation,
+            trace,
+            provenance,
         }
     }
 
@@ -697,6 +799,7 @@ impl OneCalcShellApp {
             return;
         }
 
+        let xray = self.xray_model();
         egui::SidePanel::left(XRAY_REGION_ID)
             .resizable(true)
             .default_width(XRAY_DEFAULT_WIDTH)
@@ -712,9 +815,9 @@ impl OneCalcShellApp {
                             ui.separator();
                             ui.monospace(format!(
                                 "formula_token={}\nparse_diagnostic_count={}\ntext_change_range={:?}",
-                                self.latest_edit_packet.formula_token,
-                                self.latest_edit_packet.diagnostic_count,
-                                self.latest_edit_packet.text_change_range
+                                xray.parse.formula_token,
+                                xray.parse.diagnostic_count,
+                                xray.parse.text_change_range
                             ));
                         });
                         ui.add_space(8.0);
@@ -722,26 +825,27 @@ impl OneCalcShellApp {
                             ui.label("Bind");
                             ui.separator();
                             ui.monospace(format!(
-                                "reused_bound_formula={}\nreused_red_projection={}\ncurrent_help={}",
-                                self.latest_edit_packet.reused_bound_formula,
-                                self.latest_edit_packet.reused_red_projection,
-                                self.function_help
-                                    .as_ref()
-                                    .map(|help| help.display_name.as_str())
-                                    .unwrap_or("unavailable")
+                                "reused_green_tree={}\nreused_red_projection={}\nreused_bound_formula={}\ncurrent_help={}\navailability={}",
+                                xray.bind.reused_green_tree,
+                                xray.bind.reused_red_projection,
+                                xray.bind.reused_bound_formula,
+                                xray.bind.current_help_name,
+                                xray.bind.availability_summary
                             ));
                         });
                         ui.add_space(8.0);
                         ui.group(|ui| {
                             ui.label("Eval");
                             ui.separator();
-                            if let Some(summary) = &self.latest_evaluation {
+                            if let Some(summary) = &xray.evaluation {
                                 ui.monospace(format!(
-                                    "worksheet_value={}\npayload_summary={}\neffective_display={}\nreturned_surface={}",
+                                    "worksheet_value={}\npayload_summary={}\neffective_display={}\nreturned_surface={}\nreturned_presentation_hint={}\nhost_style_state={}",
                                     summary.worksheet_value_summary,
                                     summary.payload_summary,
                                     summary.effective_display_status,
-                                    summary.returned_value_surface_kind
+                                    summary.returned_surface_kind,
+                                    summary.returned_presentation_hint_status,
+                                    summary.host_style_state_status
                                 ));
                             } else {
                                 ui.small("No evaluated runtime result is available yet.");
@@ -751,7 +855,7 @@ impl OneCalcShellApp {
                         ui.group(|ui| {
                             ui.label("Trace");
                             ui.separator();
-                            if let Some(summary) = &self.latest_evaluation {
+                            if let Some(summary) = &xray.trace {
                                 ui.monospace(format!(
                                     "trace_event_count={}\ncommit_decision={}",
                                     summary.trace_event_count, summary.commit_decision_kind
@@ -766,11 +870,9 @@ impl OneCalcShellApp {
                             ui.separator();
                             ui.monospace(format!(
                                 "host_profile={}\npacket_register={}\nlatest_capability_snapshot={}",
-                                self.host_profile_id,
-                                self.packet_register_text,
-                                self.latest_capability_snapshot_id
-                                    .as_deref()
-                                    .unwrap_or("unavailable")
+                                xray.provenance.host_profile_id,
+                                xray.provenance.packet_register_text,
+                                xray.provenance.latest_capability_snapshot_id
                             ));
                         });
                     });
@@ -1219,6 +1321,47 @@ mod tests {
         assert!(XRAY_DEFAULT_WIDTH >= XRAY_MIN_WIDTH);
         assert!(INSPECTOR_DIAGNOSTICS_SPLIT > 0.0);
         assert!(INSPECTOR_DIAGNOSTICS_SPLIT < 1.0);
+    }
+
+    #[test]
+    fn shell_app_projects_structured_xray_model_from_runtime_truth() {
+        let app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), true);
+        let xray = app.xray_model();
+
+        assert!(!xray.parse.formula_token.is_empty());
+        assert_eq!(xray.parse.diagnostic_count, 0);
+        assert_eq!(xray.bind.current_help_name, "SUM");
+        assert!(xray.bind.availability_summary.contains("CatalogKnown"));
+
+        let evaluation = xray
+            .evaluation
+            .expect("evaluated formula should project an eval xray section");
+        assert!(evaluation.worksheet_value_summary.contains("Number(6"));
+        assert_eq!(evaluation.returned_presentation_hint_status, "none");
+
+        let trace = xray
+            .trace
+            .expect("evaluated formula should project a trace xray section");
+        assert!(trace.trace_event_count > 0);
+        assert_eq!(xray.provenance.host_profile_id, "OC-H0");
+        assert!(xray
+            .provenance
+            .latest_capability_snapshot_id
+            .contains("capability"));
+    }
+
+    #[test]
+    fn shell_app_projects_structured_xray_model_for_invalid_formula_without_eval() {
+        let app = OneCalcShellApp::with_formula(
+            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
+            "=SUM(1,".to_string(),
+            false,
+        );
+        let xray = app.xray_model();
+
+        assert!(xray.parse.diagnostic_count > 0);
+        assert!(xray.evaluation.is_none());
+        assert!(xray.trace.is_none());
     }
 
     #[test]
