@@ -163,6 +163,35 @@ mod tests {
 
     use super::*;
 
+    fn retained_xray_golden_lines(xray: &RetainedRunXRaySummary) -> Vec<String> {
+        vec![
+            format!("packet_kind={}", xray.packet_kind),
+            format!("worksheet_value={}", xray.worksheet_value_summary),
+            format!("payload={}", xray.payload_summary),
+            format!("effective_display={}", xray.effective_display_status),
+            format!("formatting_truth_plane={}", xray.formatting_truth_plane),
+            format!(
+                "conditional_formatting_scope={}",
+                xray.conditional_formatting_scope
+            ),
+            format!("blocked_dimensions={}", xray.blocked_dimensions.join("|")),
+            format!(
+                "replay_floor={}",
+                xray.replay_floor.as_deref().unwrap_or("none")
+            ),
+            format!(
+                "replay_projection_family={}",
+                xray.replay_projection_source_artifact_family
+                    .as_deref()
+                    .unwrap_or("none")
+            ),
+            format!(
+                "replay_projection_phase={}",
+                xray.replay_projection_phase.as_deref().unwrap_or("none")
+            ),
+        ]
+    }
+
     #[test]
     fn dependency_probe_uses_real_upstream_libraries() {
         let report = run_dependency_probe().expect("dependency probe should succeed");
@@ -1382,6 +1411,21 @@ mod tests {
         assert!(xray
             .blocked_dimensions
             .contains(&"conditional_formatting_rules_not_attached_to_retained_run".to_string()));
+        assert_eq!(
+            retained_xray_golden_lines(&xray),
+            vec![
+                "packet_kind=edit_accept_recalc".to_string(),
+                "worksheet_value=Number(6)".to_string(),
+                "payload=Number".to_string(),
+                "effective_display=none".to_string(),
+                "formatting_truth_plane=returned_presentation_hint+host_style_state=>effective_display".to_string(),
+                "conditional_formatting_scope=Conditional Formatting: admitted=fill_color|font_color|bold|italic|underline|simple_border|number_format_override|local_icon_set blocked=data_bars|two_color_scale|three_color_scale|rich_icon_sets|multi_range_priority_graph|stop_if_true_graph|workbook_global_scope".to_string(),
+                "blocked_dimensions=conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+                "replay_floor=cap.C1.replay_valid (normalized_replay_open)".to_string(),
+                "replay_projection_family=runtime_formula_result".to_string(),
+                "replay_projection_phase=CommittedOrRejected".to_string(),
+            ]
+        );
 
         let diff = adapter
             .diff_retained_run_xray(

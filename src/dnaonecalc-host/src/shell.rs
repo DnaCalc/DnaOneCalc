@@ -1190,6 +1190,44 @@ pub fn launch_shell_with_formula(
 mod tests {
     use super::*;
 
+    fn shell_xray_golden_lines(xray: &ShellXRayModel) -> Vec<String> {
+        let mut lines = vec![
+            format!("parse.diagnostic_count={}", xray.parse.diagnostic_count),
+            format!("bind.current_help={}", xray.bind.current_help_name),
+            format!("bind.availability={}", xray.bind.availability_summary),
+            format!(
+                "provenance.host_profile={}",
+                xray.provenance.host_profile_id
+            ),
+            format!(
+                "provenance.packet_register={}",
+                xray.provenance.packet_register_text
+            ),
+        ];
+
+        if let Some(evaluation) = &xray.evaluation {
+            lines.push(format!(
+                "eval.worksheet_value={}",
+                evaluation.worksheet_value_summary
+            ));
+            lines.push(format!("eval.payload={}", evaluation.payload_summary));
+            lines.push(format!(
+                "eval.effective_display={}",
+                evaluation.effective_display_status
+            ));
+        }
+
+        if let Some(trace) = &xray.trace {
+            lines.push(format!("trace.event_count={}", trace.trace_event_count));
+            lines.push(format!(
+                "trace.commit_decision={}",
+                trace.commit_decision_kind
+            ));
+        }
+
+        lines
+    }
+
     #[test]
     fn shell_app_exposes_the_promoted_shell_regions() {
         assert_eq!(
@@ -1348,6 +1386,29 @@ mod tests {
             .provenance
             .latest_capability_snapshot_id
             .contains("capability"));
+    }
+
+    #[test]
+    fn shell_app_xray_golden_lines_stay_stable_for_the_promoted_sum_family() {
+        let app = OneCalcShellApp::new(RuntimeAdapter::new(OneCalcHostProfile::OcH0), true);
+        let xray = app.xray_model();
+
+        assert_eq!(
+            shell_xray_golden_lines(&xray),
+            vec![
+                "parse.diagnostic_count=0".to_string(),
+                "bind.current_help=SUM".to_string(),
+                "bind.availability=parse_bind=CatalogKnown; semantic_plan=CatalogKnown; runtime=CatalogKnown; post_dispatch=CatalogKnown".to_string(),
+                "provenance.host_profile=OC-H0".to_string(),
+                "provenance.packet_register=formula_edit, edit_accept_recalc, replay_capture"
+                    .to_string(),
+                "eval.worksheet_value=Number(6)".to_string(),
+                "eval.payload=Number".to_string(),
+                "eval.effective_display=none".to_string(),
+                "trace.event_count=2".to_string(),
+                "trace.commit_decision=accepted".to_string(),
+            ]
+        );
     }
 
     #[test]
