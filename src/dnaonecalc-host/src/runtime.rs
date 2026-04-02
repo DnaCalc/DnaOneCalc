@@ -18,7 +18,7 @@ use oxfml_core::{
     BindContext, FormulaChannelKind, FormulaSourceRecord, LibraryContextSnapshotRef,
     StructureContextVersion, TypedContextQueryBundle,
 };
-use oxfunc_core::value::EvalValue;
+use oxfunc_core::value::{ArrayCellValue, EvalArray, EvalValue};
 use oxreplay_abstractions::CapabilityLevel;
 use oxreplay_core::{is_replay_ready, load_oxfml_v1_replay_projection, ReplayView};
 use serde::{Deserialize, Serialize};
@@ -189,6 +189,7 @@ pub struct FormulaEditPacketSummary {
 pub struct FormulaEvaluationSummary {
     pub formula_token: String,
     pub worksheet_value_summary: String,
+    pub array_preview: Option<ArrayPreviewSummary>,
     pub payload_summary: String,
     pub returned_value_surface_kind: String,
     pub returned_presentation_hint_status: String,
@@ -196,6 +197,21 @@ pub struct FormulaEvaluationSummary {
     pub effective_display_status: String,
     pub commit_decision_kind: String,
     pub trace_event_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrayPreviewSummary {
+    pub row_count: usize,
+    pub column_count: usize,
+    pub rows: Vec<Vec<String>>,
+    pub hidden_row_count: usize,
+    pub hidden_column_count: usize,
+}
+
+impl ArrayPreviewSummary {
+    pub fn is_truncated(&self) -> bool {
+        self.hidden_row_count > 0 || self.hidden_column_count > 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3004,10 +3020,12 @@ fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSu
     let returned_presentation_hint_status =
         summarize_presentation_hint(result.returned_value_surface.presentation_hint);
     let host_style_state_status = summarize_host_style_state();
+    let array_preview = summarize_array_preview(&result.published_worksheet_value);
 
     FormulaEvaluationSummary {
         formula_token: result.source.formula_token().0,
         worksheet_value_summary: summarize_eval_value(&result.published_worksheet_value),
+        array_preview,
         payload_summary: result.returned_value_surface.payload_summary.clone(),
         returned_value_surface_kind: format!("{:?}", result.returned_value_surface.kind),
         returned_presentation_hint_status: returned_presentation_hint_status.clone(),
@@ -3280,6 +3298,59 @@ fn summarize_eval_value(value: &EvalValue) -> String {
         }
         EvalValue::Reference(reference) => format!("Reference({})", reference.target),
         EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
+    }
+}
+
+const ARRAY_PREVIEW_MAX_ROWS: usize = 6;
+const ARRAY_PREVIEW_MAX_COLUMNS: usize = 6;
+
+fn summarize_array_preview(value: &EvalValue) -> Option<ArrayPreviewSummary> {
+    let EvalValue::Array(array) = value else {
+        return None;
+    };
+
+    Some(build_array_preview(array))
+}
+
+fn build_array_preview(array: &EvalArray) -> ArrayPreviewSummary {
+    let shape = array.shape();
+    let preview_row_count = shape.rows.min(ARRAY_PREVIEW_MAX_ROWS);
+    let preview_column_count = shape.cols.min(ARRAY_PREVIEW_MAX_COLUMNS);
+    let mut rows = Vec::with_capacity(preview_row_count);
+
+    for row_index in 0..preview_row_count {
+        let mut row = Vec::with_capacity(preview_column_count);
+        for column_index in 0..preview_column_count {
+            let cell = array
+                .get(row_index, column_index)
+                .expect("preview bounds checked against array shape");
+            row.push(format_array_cell_value(cell));
+        }
+        rows.push(row);
+    }
+
+    ArrayPreviewSummary {
+        row_count: shape.rows,
+        column_count: shape.cols,
+        rows,
+        hidden_row_count: shape.rows.saturating_sub(preview_row_count),
+        hidden_column_count: shape.cols.saturating_sub(preview_column_count),
+    }
+}
+
+fn format_array_cell_value(value: &ArrayCellValue) -> String {
+    match value {
+        ArrayCellValue::Number(number) => number.to_string(),
+        ArrayCellValue::Text(text) => format!("\"{}\"", text.to_string_lossy()),
+        ArrayCellValue::Logical(value) => {
+            if *value {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
+        }
+        ArrayCellValue::Error(code) => format!("{code:?}"),
+        ArrayCellValue::EmptyCell => "<empty>".to_string(),
     }
 }
 

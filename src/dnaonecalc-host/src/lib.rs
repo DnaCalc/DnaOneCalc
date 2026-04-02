@@ -61,7 +61,7 @@ pub use retained::{
     RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord, WitnessRecord,
 };
 pub use runtime::{
-    AcceptanceMatrix, AcceptanceMatrixRow, CapabilitySnapshotDiffSummary,
+    AcceptanceMatrix, AcceptanceMatrixRow, ArrayPreviewSummary, CapabilitySnapshotDiffSummary,
     CompletionProposalSummary, DocumentRoundTripInvariantReport, DrivenRecalcSummary,
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
@@ -229,11 +229,32 @@ mod tests {
 
         assert!(!summary.formula_token.is_empty());
         assert_eq!(summary.worksheet_value_summary, "Number(6)");
+        assert_eq!(summary.array_preview, None);
         assert_eq!(summary.payload_summary, "Number");
         assert_eq!(summary.returned_presentation_hint_status, "none");
         assert_eq!(summary.host_style_state_status, "none");
         assert_eq!(summary.effective_display_status, "none");
         assert_eq!(summary.commit_decision_kind, "accepted");
+    }
+
+    #[test]
+    fn runtime_adapter_evaluates_array_formula_with_bounded_preview() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH0);
+        let summary = adapter
+            .evaluate_formula("=SEQUENCE(8,7)")
+            .expect("admitted array formula should evaluate");
+
+        assert_eq!(summary.worksheet_value_summary, "Array(8x7)");
+        let preview = summary
+            .array_preview
+            .expect("array-valued results should include a bounded preview");
+        assert_eq!(preview.row_count, 8);
+        assert_eq!(preview.column_count, 7);
+        assert_eq!(preview.hidden_row_count, 2);
+        assert_eq!(preview.hidden_column_count, 1);
+        assert_eq!(preview.rows.len(), 6);
+        assert_eq!(preview.rows[0], vec!["1", "2", "3", "4", "5", "6"]);
+        assert_eq!(preview.rows[5], vec!["36", "37", "38", "39", "40", "41"]);
     }
 
     #[test]

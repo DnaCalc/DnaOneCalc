@@ -4,8 +4,8 @@ use eframe::egui;
 use egui::TextBuffer as _;
 
 use crate::{
-    CapabilitySnapshotDiffSummary, CompletionProposalSummary, FormulaEditPacketSummary,
-    FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
+    ArrayPreviewSummary, CapabilitySnapshotDiffSummary, CompletionProposalSummary,
+    FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
     IsolatedConditionalFormattingCarrier, OneCalcHostProfile, OpenedCapabilitySnapshotSummary,
     RetainedScenarioStore, RuntimeAdapter,
 };
@@ -949,6 +949,14 @@ impl OneCalcShellApp {
                                 self.effective_display_render.number_format
                             ));
                         });
+                        if let Some(preview) = self
+                            .latest_evaluation
+                            .as_ref()
+                            .and_then(|summary| summary.array_preview.as_ref())
+                        {
+                            ui.separator();
+                            render_array_preview(ui, preview);
+                        }
                         ui.separator();
                         ui.code(&self.result_text);
                     });
@@ -1203,6 +1211,61 @@ fn decode_display_text(summary: &str) -> String {
     }
 
     summary.to_string()
+}
+
+fn array_preview_overflow_note(preview: &ArrayPreviewSummary) -> Option<String> {
+    if !preview.is_truncated() {
+        return None;
+    }
+
+    let preview_row_count = preview.rows.len();
+    let preview_column_count = preview.rows.first().map_or(0, Vec::len);
+    let mut hidden_parts = Vec::new();
+
+    if preview.hidden_row_count > 0 {
+        hidden_parts.push(format!("{} more row(s)", preview.hidden_row_count));
+    }
+    if preview.hidden_column_count > 0 {
+        hidden_parts.push(format!("{} more column(s)", preview.hidden_column_count));
+    }
+
+    Some(format!(
+        "showing {preview_row_count} x {preview_column_count}; {} not shown",
+        hidden_parts.join(", ")
+    ))
+}
+
+fn render_array_preview(ui: &mut egui::Ui, preview: &ArrayPreviewSummary) {
+    let preview_column_count = preview.rows.first().map_or(0, Vec::len);
+
+    ui.group(|ui| {
+        ui.label(format!(
+            "Array Preview ({} x {})",
+            preview.row_count, preview.column_count
+        ));
+        if let Some(note) = array_preview_overflow_note(preview) {
+            ui.small(note);
+        }
+        ui.add_space(4.0);
+        egui::Grid::new("result_array_preview_grid")
+            .striped(true)
+            .min_col_width(56.0)
+            .show(ui, |ui| {
+                ui.small("");
+                for column_index in 0..preview_column_count {
+                    ui.small(format!("C{}", column_index + 1));
+                }
+                ui.end_row();
+
+                for (row_index, row) in preview.rows.iter().enumerate() {
+                    ui.small(format!("R{}", row_index + 1));
+                    for cell in row {
+                        ui.monospace(cell);
+                    }
+                    ui.end_row();
+                }
+            });
+    });
 }
 
 pub fn launch_shell(smoke_mode: bool) -> Result<(), eframe::Error> {
@@ -1529,6 +1592,7 @@ mod tests {
         let summary = FormulaEvaluationSummary {
             formula_token: "token".to_string(),
             worksheet_value_summary: "Number(6)".to_string(),
+            array_preview: None,
             payload_summary: "Number".to_string(),
             returned_value_surface_kind: "OrdinaryValue".to_string(),
             returned_presentation_hint_status: "number_format:none;style:Currency".to_string(),
@@ -1548,5 +1612,46 @@ mod tests {
         );
         assert_eq!(render.emphasis, "host:accent");
         assert_eq!(render.number_format, "none");
+    }
+
+    #[test]
+    fn shell_app_projects_array_results_into_the_main_result_surface_state() {
+        let app = OneCalcShellApp::with_formula(
+            RuntimeAdapter::new(OneCalcHostProfile::OcH0),
+            "=SEQUENCE(2,3)".to_string(),
+            true,
+        );
+
+        let preview = app
+            .latest_evaluation
+            .as_ref()
+            .and_then(|summary| summary.array_preview.as_ref())
+            .expect("array formulas should produce a preview");
+        assert_eq!(preview.row_count, 2);
+        assert_eq!(preview.column_count, 3);
+        assert_eq!(
+            preview.rows,
+            vec![
+                vec!["1".to_string(), "2".to_string(), "3".to_string()],
+                vec!["4".to_string(), "5".to_string(), "6".to_string()],
+            ]
+        );
+        assert!(app.result_text.contains("worksheet_value: Array(2x3)"));
+    }
+
+    #[test]
+    fn array_preview_overflow_note_makes_bounded_rendering_explicit() {
+        let preview = ArrayPreviewSummary {
+            row_count: 8,
+            column_count: 7,
+            rows: vec![vec!["1".to_string(); 6]; 6],
+            hidden_row_count: 2,
+            hidden_column_count: 1,
+        };
+
+        assert_eq!(
+            array_preview_overflow_note(&preview),
+            Some("showing 6 x 6; 2 more row(s), 1 more column(s) not shown".to_string())
+        );
     }
 }
