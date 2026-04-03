@@ -2531,7 +2531,7 @@ impl RuntimeAdapter {
             provenance: XRayProvenanceSummary {
                 host_profile_id: reopened.scenario.host_profile_id,
                 platform_gate_text: self.platform_gate().message().to_string(),
-                latest_host_driving_packet_kind: reopened.scenario.host_driving_packet_kind,
+                latest_host_driving_packet_kind: reopened.run.envelope.packet_kind.clone(),
                 packet_register_text: capability_snapshot.packet_kind_register.join(", "),
                 latest_capability_snapshot_id: capability_snapshot_id,
                 capability_floor: capability_snapshot.capability_floor,

@@ -378,6 +378,17 @@ mod tests {
         ]
     }
 
+    fn replay_operation_for_packet_kind(
+        adapter: &RuntimeAdapter,
+        packet_kind: &str,
+    ) -> ReplayAwareOperationSummary {
+        adapter
+            .replay_operation_model()
+            .into_iter()
+            .find(|operation| operation.packet_kind.as_deref() == Some(packet_kind))
+            .expect("replay-aware operation should exist for packet kind")
+    }
+
     #[test]
     fn dependency_probe_uses_real_upstream_libraries() {
         let report = run_dependency_probe().expect("dependency probe should succeed");
@@ -1772,6 +1783,229 @@ mod tests {
             bundle_report.scenario_id.as_deref(),
             Some(opened.scenario_id.as_str())
         );
+    }
+
+    #[test]
+    fn replay_substrate_proving_family_tracks_reopened_runs_and_operation_boundaries() {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("replay-substrate-proving");
+        let store = fixture_root.retained_store();
+
+        let (edit_context, edit_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let edit = fixture.persist_run(
+            &store,
+            &edit_context,
+            &edit_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let edit_capture = fixture.emit_replay_capture(&store, &edit);
+
+        let manual_context = RecalcContext::manual(Some(46_000.0), Some(0.25));
+        let manual_summary = fixture
+            .adapter
+            .manual_recalc(&mut fixture.host, manual_context.clone())
+            .expect("manual recalc should succeed");
+        let manual = fixture.persist_run(
+            &store,
+            &manual_context,
+            &manual_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let manual_capture = fixture.emit_replay_capture(&store, &manual);
+
+        let mut reopened = fixture
+            .adapter
+            .reopen_driven_scenario_run(&store, &manual.run.scenario_run_id)
+            .expect("manual retained run should reopen");
+        let forced_context = RecalcContext::forced(Some(46_000.0), Some(0.25));
+        let forced_summary = fixture
+            .adapter
+            .forced_recalc(&mut reopened.driven_host, forced_context.clone())
+            .expect("forced recalc should succeed on reopened host");
+        let forced = fixture
+            .adapter
+            .persist_driven_scenario_run(
+                &store,
+                &reopened.driven_host,
+                &forced_context,
+                &forced_summary,
+                promoted_formula_scenario(FormulaScenarioFamily::RetainedSumBaseline).scenario_slug,
+            )
+            .expect("forced retained run should persist");
+        let forced_capture = fixture
+            .adapter
+            .emit_replay_capture_for_run(&store, &forced.run.scenario_run_id)
+            .expect("forced retained run should emit replay capture");
+
+        assert_eq!(edit.run.envelope.packet_kind, "edit_accept_recalc");
+        assert_eq!(manual.run.envelope.packet_kind, "manual_recalc");
+        assert_eq!(forced.run.envelope.packet_kind, "forced_recalc");
+        assert_eq!(manual.run.host_recalc_sequence, edit.run.host_recalc_sequence + 1);
+        assert_eq!(forced.run.host_recalc_sequence, manual.run.host_recalc_sequence + 1);
+
+        let edit_operation =
+            replay_operation_for_packet_kind(&fixture.adapter, &edit.run.envelope.packet_kind);
+        let manual_operation =
+            replay_operation_for_packet_kind(&fixture.adapter, &manual.run.envelope.packet_kind);
+        let forced_operation =
+            replay_operation_for_packet_kind(&fixture.adapter, &forced.run.envelope.packet_kind);
+        assert_eq!(edit_operation.operation_id, edit_summary.replay_operation_id);
+        assert_eq!(
+            manual_operation.operation_id,
+            manual_summary.replay_operation_id
+        );
+        assert_eq!(
+            forced_operation.operation_id,
+            forced_summary.replay_operation_id
+        );
+        assert_eq!(
+            manual_operation.retained_consequence,
+            manual_summary.replay_retained_consequence
+        );
+        assert_eq!(
+            forced_operation.retained_consequence,
+            forced_summary.replay_retained_consequence
+        );
+
+        let reopened_manual = store
+            .reopen_run(&manual.run.scenario_run_id)
+            .expect("manual run should reopen from retained store");
+        let reopened_forced = store
+            .reopen_run(&forced.run.scenario_run_id)
+            .expect("forced run should reopen from retained store");
+        assert_eq!(reopened_manual.run.envelope.packet_kind, "manual_recalc");
+        assert_eq!(reopened_forced.run.envelope.packet_kind, "forced_recalc");
+        assert_eq!(
+            reopened_manual
+                .run
+                .replay_capture_ref
+                .as_ref()
+                .expect("manual run should point to replay capture")
+                .logical_id,
+            manual_capture.capture.replay_capture_id
+        );
+        assert_eq!(
+            reopened_forced
+                .run
+                .replay_capture_ref
+                .as_ref()
+                .expect("forced run should point to replay capture")
+                .logical_id,
+            forced_capture.capture.replay_capture_id
+        );
+
+        let manual_xray = fixture
+            .adapter
+            .open_retained_run_xray(&store, &manual.run.scenario_run_id)
+            .expect("manual xray should open");
+        let forced_xray = fixture
+            .adapter
+            .open_retained_run_xray(&store, &forced.run.scenario_run_id)
+            .expect("forced xray should open");
+        assert_eq!(
+            manual_xray.provenance.latest_host_driving_packet_kind,
+            "manual_recalc"
+        );
+        assert_eq!(
+            forced_xray.provenance.latest_host_driving_packet_kind,
+            "forced_recalc"
+        );
+        assert_eq!(
+            manual_xray
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.replay_projection_phase.as_deref()),
+            Some("CommittedOrRejected")
+        );
+        assert_eq!(
+            forced_xray
+                .trace
+                .as_ref()
+                .and_then(|trace| trace.replay_projection_phase.as_deref()),
+            Some("CommittedOrRejected")
+        );
+
+        let replay_diff = fixture
+            .adapter
+            .diff_retained_run_replay_inputs(
+                &store,
+                &manual.run.scenario_run_id,
+                &forced.run.scenario_run_id,
+            )
+            .expect("manual and forced retained runs should map onto replay diff inputs");
+        assert!(replay_diff.equivalent);
+        assert!(replay_diff.mismatches.is_empty());
+
+        let witness = fixture
+            .adapter
+            .generate_retained_witness(
+                &store,
+                &manual.run.scenario_run_id,
+                &forced.run.scenario_run_id,
+            )
+            .expect("replay witness should generate from reopened retained runs");
+        let opened_witness = fixture
+            .adapter
+            .open_witness(&store, &witness.witness.witness_id)
+            .expect("witness should reopen");
+        assert!(opened_witness.replay_diff_equivalent);
+        assert_eq!(opened_witness.replay_mismatch_count, 0);
+        assert!(opened_witness
+            .blocked_dimensions
+            .contains(&"host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string()));
+        assert!(opened_witness
+            .semantic_log_boundary_ids
+            .contains(&"oxfml_runtime_result_plus_host_retained_artifacts".to_string()));
+        assert!(opened_witness
+            .seam_gaps
+            .contains(&"no_cross_library_semantic_log_contract_exists".to_string()));
+
+        let handoff = fixture
+            .adapter
+            .generate_handoff_packet(&store, &witness.witness.witness_id)
+            .expect("handoff should generate from replay witness");
+        let opened_handoff = fixture
+            .adapter
+            .open_handoff_packet(&store, &handoff.handoff.handoff_id)
+            .expect("handoff should reopen");
+        assert_eq!(opened_handoff.status, "ready");
+        assert_eq!(
+            opened_handoff.replay_projection_phase.as_deref(),
+            Some("CommittedOrRejected")
+        );
+        assert!(opened_handoff
+            .blocked_dimensions
+            .contains(&"host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string()));
+        assert!(opened_handoff
+            .semantic_log_boundary_ids
+            .contains(&"oxfml_runtime_result_plus_host_retained_artifacts".to_string()));
+        assert!(opened_handoff
+            .seam_gaps
+            .contains(&"no_cross_library_semantic_log_contract_exists".to_string()));
+
+        let packets = fixture
+            .adapter
+            .build_replay_upstream_pressure_packets(&store)
+            .expect("replay pressure packets should build from retained witness evidence");
+        assert!(packets.iter().any(|packet| {
+            packet.target_lane == "OxReplay"
+                && packet
+                    .evidence_artifact_ids
+                    .contains(&manual.run.scenario_run_id)
+                && packet
+                    .evidence_artifact_ids
+                    .contains(&forced.run.scenario_run_id)
+                && packet
+                    .evidence_artifact_ids
+                    .contains(&witness.witness.witness_id)
+        }));
+        assert!(edit_capture.bundle_manifest_path.exists());
+        assert!(manual_capture.bundle_manifest_path.exists());
+        assert!(forced_capture.bundle_manifest_path.exists());
     }
 
     #[test]

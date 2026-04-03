@@ -8,6 +8,7 @@ try {
         "tests::h1_runs_persist_scenario_and_scenario_run_and_reopen_through_runtime"
         "tests::retained_run_xray_and_diff_surfaces_open_on_real_retained_data"
         "tests::retained_runs_map_onto_current_oxreplay_diff_and_explain_inputs_without_local_reinterpretation"
+        "tests::replay_substrate_proving_family_tracks_reopened_runs_and_operation_boundaries"
         "tests::semantic_logging_boundary_model_makes_owner_split_and_seam_gaps_explicit"
         "tests::replay_witnesses_generate_structured_upstream_pressure_packets_for_seam_gaps"
         "tests::retained_witness_generation_uses_real_diff_state_and_keeps_blocked_dimensions_explicit"
