@@ -2711,6 +2711,80 @@ mod tests {
     }
 
     #[test]
+    fn compare_regression_family_uses_retained_oxxlplay_fixtures_and_keeps_live_capture_gate_explicit(
+    ) {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let fixture_root = FixtureRoot::new("compare-regression-family");
+        let store = fixture_root.retained_store();
+        let (context, summary) =
+            fixture.edit_accept(FormulaScenarioFamily::ObservationCompareSum, 46_000.0, 0.25);
+        let retained = fixture.persist_run(
+            &store,
+            &context,
+            &summary,
+            FormulaScenarioFamily::ObservationCompareSum,
+        );
+        let observation = persist_observation_fixture(
+            &fixture.adapter,
+            &store,
+            ObservationScenarioFamily::XlPlayCaptureValuesFormulae001,
+        );
+
+        let comparison = fixture
+            .adapter
+            .compare_run_with_observation(
+                &store,
+                &retained.run.scenario_run_id,
+                &observation.observation.observation_id,
+            )
+            .expect("comparison should persist from retained OxXlPlay fixtures");
+        let opened_compare = fixture
+            .adapter
+            .open_twin_compare(&store, &comparison.comparison.comparison_id)
+            .expect("compare view should open");
+        let widening_handoff = fixture
+            .adapter
+            .generate_observation_widening_handoff(&store, &comparison.comparison.comparison_id)
+            .expect("widening handoff should persist");
+        let opened_handoff = fixture
+            .adapter
+            .open_handoff_packet(&store, &widening_handoff.handoff.handoff_id)
+            .expect("handoff should open");
+
+        assert_eq!(opened_compare.reliability_badge, "direct");
+        assert_eq!(
+            opened_compare.observation_id,
+            observation.observation.observation_id
+        );
+        assert!(opened_compare
+            .projection_limitations
+            .contains(&"display_state_not_in_current_observation_envelope".to_string()));
+        assert_eq!(opened_handoff.target_lane, "OxXlPlay/DnaOneCalc");
+        assert_eq!(opened_handoff.requested_action_kind, "widen_observation_envelope");
+        assert_eq!(opened_handoff.status, "ready");
+
+        if cfg!(windows) {
+            assert_eq!(
+                fixture
+                    .adapter
+                    .live_windows_capture_gate()
+                    .expect("windows hosts should admit live capture gating"),
+                "live_windows_capture_admitted"
+            );
+        } else {
+            let error = fixture
+                .adapter
+                .live_windows_capture_gate()
+                .expect_err("non-Windows hosts should keep live capture blocked");
+            assert!(error.contains("Windows-only"));
+            assert!(error.contains("retained OxXlPlay fixtures"));
+        }
+    }
+
+    #[test]
     fn widening_request_handoff_emits_from_real_compare_state() {
         let mut fixture = DrivenHostFixture::new(
             OneCalcHostProfile::OcH1,

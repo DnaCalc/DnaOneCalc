@@ -2184,8 +2184,17 @@ impl RuntimeAdapter {
         store: &RetainedScenarioStore,
         output_root: impl AsRef<Path>,
     ) -> Result<PersistedObservation, String> {
+        self.live_windows_capture_gate()?;
         let source = invoke_live_windows_capture(output_root)?;
         self.persist_observation_from_source(store, source)
+    }
+
+    pub fn live_windows_capture_gate(&self) -> Result<&'static str, String> {
+        if cfg!(windows) {
+            Ok("live_windows_capture_admitted")
+        } else {
+            Err("live Windows observation capture is Windows-only; use retained OxXlPlay fixtures for compare regression outside Windows".to_string())
+        }
     }
 
     pub fn persist_observation_from_existing_source(
