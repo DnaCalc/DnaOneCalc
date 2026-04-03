@@ -197,6 +197,18 @@ pub struct WitnessRecord {
     pub explain_floor: String,
     pub explanation_lines: Vec<String>,
     pub blocked_dimensions: Vec<String>,
+    #[serde(default)]
+    pub replay_diff_equivalent: bool,
+    #[serde(default)]
+    pub replay_mismatch_count: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replay_explain_query_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replay_explain_summary: String,
+    #[serde(default)]
+    pub semantic_log_boundary_ids: Vec<String>,
+    #[serde(default)]
+    pub seam_gaps: Vec<String>,
     pub emitted_at_unix_ms: u64,
 }
 
@@ -220,6 +232,16 @@ pub struct HandoffPacketRecord {
     pub observed_behavior: String,
     pub supporting_artifact_refs: Vec<StableArtifactRef>,
     pub reliability_state: String,
+    #[serde(default)]
+    pub blocked_dimensions: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replay_explain_query_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replay_explain_summary: String,
+    #[serde(default)]
+    pub semantic_log_boundary_ids: Vec<String>,
+    #[serde(default)]
+    pub seam_gaps: Vec<String>,
     pub status: String,
     pub readiness: Vec<HandoffReadinessRecord>,
     pub emitted_at_unix_ms: u64,

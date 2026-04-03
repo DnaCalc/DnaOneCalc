@@ -1025,6 +1025,14 @@ mod tests {
             explain_floor: "retained_diff".to_string(),
             explanation_lines: vec!["stable".to_string()],
             blocked_dimensions: vec!["excel_observation".to_string()],
+            replay_diff_equivalent: false,
+            replay_mismatch_count: 1,
+            replay_explain_query_id: "explain-index-smoke".to_string(),
+            replay_explain_summary: "stable".to_string(),
+            semantic_log_boundary_ids: vec![
+                "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            ],
+            seam_gaps: vec!["no_cross_library_semantic_log_contract_exists".to_string()],
             emitted_at_unix_ms: 2,
         };
         let handoff = HandoffPacketRecord {
@@ -1059,6 +1067,13 @@ mod tests {
             observed_behavior: "stable".to_string(),
             supporting_artifact_refs: vec![replay.capture.envelope.stable_ref()],
             reliability_state: "narrow".to_string(),
+            blocked_dimensions: vec!["excel_observation".to_string()],
+            replay_explain_query_id: "explain-index-smoke".to_string(),
+            replay_explain_summary: "stable".to_string(),
+            semantic_log_boundary_ids: vec![
+                "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            ],
+            seam_gaps: vec!["no_cross_library_semantic_log_contract_exists".to_string()],
             status: "ready".to_string(),
             readiness: vec![HandoffReadinessRecord {
                 item_id: "capability_snapshot".to_string(),
@@ -1315,10 +1330,18 @@ mod tests {
 
         assert_eq!(packets.len(), 1);
         assert_eq!(packets[0].scenario_id, "scenario-one");
+        assert_eq!(packets[0].packet_kind, "acceptance_gap");
         assert!(packets[0]
             .blocker_ids
             .contains(&"comparison_missing".to_string()));
         assert_eq!(packets[0].target_lane, "OxXlPlay");
+        assert_eq!(
+            packets[0].evidence_artifact_ids,
+            vec!["run-one".to_string(), "cap-one".to_string()]
+        );
+        assert!(packets[0]
+            .summary
+            .contains("acceptance row promoted-scenario:one is blocked"));
     }
 
     #[test]
@@ -1996,7 +2019,19 @@ mod tests {
             .adapter
             .open_witness(&store, &persisted.witness.witness_id)
             .expect("witness should open");
-        assert_eq!(opened.explain_floor, "retained_diff_explain_summary");
+        assert_eq!(
+            opened.explain_floor,
+            "retained_replay_floor_plus_host_diff_summary"
+        );
+        assert!(opened
+            .explanation_lines
+            .iter()
+            .any(|line| line.contains("replay_equivalent=true")));
+        assert_eq!(opened.replay_explain_query_id, "explain-equivalent");
+        assert_eq!(
+            opened.replay_explain_summary,
+            "scenarios are equivalent on the current normalized replay surface"
+        );
         assert!(opened
             .explanation_lines
             .iter()
@@ -2006,7 +2041,16 @@ mod tests {
             .contains(&"distill_not_integrated".to_string()));
         assert!(opened
             .blocked_dimensions
-            .contains(&"no_oxreplay_explain_adapter_invocation_yet".to_string()));
+            .contains(&"replay_explain_surface_is_summary_only".to_string()));
+        assert!(opened
+            .blocked_dimensions
+            .contains(&"host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string()));
+        assert!(opened
+            .semantic_log_boundary_ids
+            .contains(&"oxfml_runtime_result_plus_host_retained_artifacts".to_string()));
+        assert!(opened
+            .seam_gaps
+            .contains(&"no_cross_library_semantic_log_contract_exists".to_string()));
         assert!(opened.replay_projection_aliases.is_empty());
     }
 
@@ -2073,10 +2117,104 @@ mod tests {
                 .logical_id
         );
         assert!(opened.replay_projection_alias.is_none());
+        assert_eq!(opened.replay_explain_query_id, "explain-equivalent");
+        assert_eq!(
+            opened.replay_explain_summary,
+            "scenarios are equivalent on the current normalized replay surface"
+        );
+        assert!(opened
+            .blocked_dimensions
+            .contains(&"host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string()));
+        assert!(opened
+            .semantic_log_boundary_ids
+            .contains(&"oxfml_runtime_result_plus_host_retained_artifacts".to_string()));
+        assert!(opened
+            .seam_gaps
+            .contains(&"no_cross_library_semantic_log_contract_exists".to_string()));
         assert_eq!(
             opened.replay_projection_phase.as_deref(),
             Some("CommittedOrRejected")
         );
+    }
+
+    #[test]
+    fn replay_witnesses_generate_structured_upstream_pressure_packets_for_seam_gaps() {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("replay-upstream-pressure");
+        let store = fixture_root.retained_store();
+
+        let (left_context, left_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let left = fixture.persist_run(
+            &store,
+            &left_context,
+            &left_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let left_replay = fixture.emit_replay_capture(&store, &left);
+
+        let (right_context, right_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let right = fixture.persist_run(
+            &store,
+            &right_context,
+            &right_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
+        let right_replay = fixture.emit_replay_capture(&store, &right);
+
+        fixture
+            .adapter
+            .generate_retained_witness(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("witness should generate");
+
+        let packets = fixture
+            .adapter
+            .build_replay_upstream_pressure_packets(&store)
+            .expect("replay pressure packets should build");
+
+        assert_eq!(packets.len(), 2);
+        let oxreplay = packets
+            .iter()
+            .find(|packet| packet.target_lane == "OxReplay")
+            .expect("oxreplay pressure packet should exist");
+        assert_eq!(oxreplay.packet_kind, "replay_seam_gap");
+        assert!(oxreplay
+            .blocker_ids
+            .contains(&"host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string()));
+        assert!(oxreplay
+            .blocker_ids
+            .contains(&"replay_owned_retained_artifact_contract_not_defined".to_string()));
+        assert!(oxreplay
+            .evidence_artifact_ids
+            .contains(&left.run.scenario_run_id));
+        assert!(oxreplay
+            .evidence_artifact_ids
+            .contains(&right.run.scenario_run_id));
+        assert!(oxreplay
+            .evidence_artifact_ids
+            .contains(&left_replay.capture.replay_capture_id));
+        assert!(oxreplay
+            .evidence_artifact_ids
+            .contains(&right_replay.capture.replay_capture_id));
+
+        let oxfunc = packets
+            .iter()
+            .find(|packet| packet.target_lane == "OxFunc")
+            .expect("oxfunc pressure packet should exist");
+        assert_eq!(oxfunc.packet_kind, "replay_seam_gap");
+        assert_eq!(
+            oxfunc.blocker_ids,
+            vec!["oxfunc_direct_replay_intake_not_admitted".to_string()]
+        );
+        assert!(oxfunc.summary.contains("OxFunc"));
     }
 
     #[test]

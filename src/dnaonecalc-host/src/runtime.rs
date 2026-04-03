@@ -694,6 +694,12 @@ pub struct OpenedWitnessSummary {
     pub explanation_lines: Vec<String>,
     pub blocked_dimensions: Vec<String>,
     pub replay_projection_aliases: Vec<String>,
+    pub replay_diff_equivalent: bool,
+    pub replay_mismatch_count: usize,
+    pub replay_explain_query_id: String,
+    pub replay_explain_summary: String,
+    pub semantic_log_boundary_ids: Vec<String>,
+    pub seam_gaps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -706,6 +712,11 @@ pub struct OpenedHandoffPacketSummary {
     pub capability_snapshot_id: String,
     pub replay_projection_alias: Option<String>,
     pub replay_projection_phase: Option<String>,
+    pub blocked_dimensions: Vec<String>,
+    pub replay_explain_query_id: String,
+    pub replay_explain_summary: String,
+    pub semantic_log_boundary_ids: Vec<String>,
+    pub seam_gaps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -817,10 +828,13 @@ pub struct PromotedScenarioRegressionSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamPressurePacket {
     pub packet_id: String,
+    pub packet_kind: String,
     pub scenario_id: String,
     pub source_row_id: String,
     pub target_lane: String,
     pub blocker_ids: Vec<String>,
+    pub evidence_artifact_ids: Vec<String>,
+    pub summary: String,
 }
 
 impl DocumentRoundTripInvariantReport {
@@ -1320,6 +1334,7 @@ impl RuntimeAdapter {
                             row.scenario_id,
                             blocker_ids.join("+")
                         ),
+                        packet_kind: "acceptance_gap".to_string(),
                         scenario_id: row.scenario_id.clone(),
                         source_row_id: row.row_id.clone(),
                         target_lane: if row.comparison_status != "available" {
@@ -1328,10 +1343,86 @@ impl RuntimeAdapter {
                             "OxFml".to_string()
                         },
                         blocker_ids,
+                        evidence_artifact_ids: vec![
+                            row.latest_run_id.clone(),
+                            row.capability_snapshot_id.clone(),
+                        ],
+                        summary: format!(
+                            "acceptance row {} is blocked by {}",
+                            row.row_id,
+                            if row.comparison_status != "available" {
+                                "comparison coverage gaps"
+                            } else {
+                                "witness or handoff coverage gaps"
+                            }
+                        ),
                     })
                 }
             })
             .collect()
+    }
+
+    pub fn build_replay_upstream_pressure_packets(
+        &self,
+        store: &RetainedScenarioStore,
+    ) -> Result<Vec<UpstreamPressurePacket>, String> {
+        let witnesses = store.list_witnesses()?;
+        let mut packets = Vec::new();
+
+        for witness in witnesses {
+            let left_run = store.reopen_run(&witness.left_run_ref.logical_id)?;
+            let right_run = store.reopen_run(&witness.right_run_ref.logical_id)?;
+            let mut blocker_groups = std::collections::BTreeMap::<String, Vec<String>>::new();
+
+            for blocker in witness
+                .blocked_dimensions
+                .iter()
+                .chain(witness.seam_gaps.iter())
+            {
+                let entry = blocker_groups
+                    .entry(upstream_lane_for_replay_gap(blocker).to_string())
+                    .or_default();
+                if !entry.contains(blocker) {
+                    entry.push(blocker.clone());
+                }
+            }
+
+            for (target_lane, blocker_ids) in blocker_groups {
+                packets.push(UpstreamPressurePacket {
+                    packet_id: format!(
+                        "upstream-pressure:replay:{}:{}",
+                        witness.witness_id, target_lane
+                    ),
+                    packet_kind: "replay_seam_gap".to_string(),
+                    scenario_id: witness.scenario_id.clone(),
+                    source_row_id: witness.witness_id.clone(),
+                    target_lane: target_lane.clone(),
+                    blocker_ids: blocker_ids.clone(),
+                    evidence_artifact_ids: [
+                        Some(left_run.run.scenario_run_id.clone()),
+                        Some(right_run.run.scenario_run_id.clone()),
+                        left_run.run.replay_capture_ref.as_ref().map(|item| item.logical_id.clone()),
+                        right_run
+                            .run
+                            .replay_capture_ref
+                            .as_ref()
+                            .map(|item| item.logical_id.clone()),
+                        Some(witness.witness_id.clone()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                    summary: format!(
+                        "witness {} exposes replay floor gaps for {}: {}",
+                        witness.witness_id,
+                        target_lane,
+                        blocker_ids.join("|")
+                    ),
+                });
+            }
+        }
+
+        Ok(packets)
     }
 
     pub fn packet_kinds(&self) -> &'static [HostPacketKind] {
@@ -2505,12 +2596,37 @@ impl RuntimeAdapter {
         right_run_id: &str,
     ) -> Result<PersistedWitness, String> {
         let diff = self.diff_retained_run_xray(store, left_run_id, right_run_id)?;
+        let replay_diff = self.diff_retained_run_replay_inputs(store, left_run_id, right_run_id)?;
+        let replay_explain =
+            self.explain_retained_run_replay_diff(store, left_run_id, right_run_id)?;
         let left = store.reopen_run(left_run_id)?;
         let right = store.reopen_run(right_run_id)?;
+        let semantic_boundaries = [
+            semantic_logging_boundary_for_run(&left.run),
+            semantic_logging_boundary_for_run(&right.run),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(Vec::<SemanticLoggingBoundarySummary>::new(), |mut acc, boundary| {
+            if !acc.iter().any(|item| item.boundary_id == boundary.boundary_id) {
+                acc.push(boundary);
+            }
+            acc
+        });
+        let seam_gaps = semantic_boundaries
+            .iter()
+            .flat_map(|boundary| boundary.seam_gaps.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         let emitted_at_unix_ms = unix_time_millis()?;
         let witness_id = format!("witness-{}-{}", left_run_id, right_run_id);
-        let explain_floor = "retained_diff_explain_summary".to_string();
+        let explain_floor = "retained_replay_floor_plus_host_diff_summary".to_string();
         let explanation_lines = vec![
+            format!("replay_equivalent={}", replay_diff.equivalent),
+            format!("replay_mismatch_count={}", replay_diff.mismatches.len()),
+            format!("replay_explain_query_id={}", replay_explain.query_id),
+            format!("replay_explain_summary={}", replay_explain.summary),
             format!("same_scenario={}", diff.same_scenario),
             format!("formula_text_changed={}", diff.formula_text_changed),
             format!("worksheet_value_match={}", diff.worksheet_value_match),
@@ -2520,11 +2636,17 @@ impl RuntimeAdapter {
                 diff.capability_snapshot_changed
             ),
             format!("replay_pair_openable={}", diff.replay_pair_openable),
+            format!(
+                "semantic_log_boundaries={}",
+                semantic_boundaries
+                    .iter()
+                    .map(|boundary| boundary.boundary_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
         ];
-        let blocked_dimensions = vec![
-            "distill_not_integrated".to_string(),
-            "no_oxreplay_explain_adapter_invocation_yet".to_string(),
-        ];
+        let blocked_dimensions =
+            blocked_dimensions_for_replay_witness(&diff, &replay_diff, &semantic_boundaries);
         let replay_projection_aliases = [
             left.run.replay_projection.as_ref(),
             right.run.replay_projection.as_ref(),
@@ -2554,6 +2676,9 @@ impl RuntimeAdapter {
                 "replay_projection_phases={}",
                 replay_projection_phases.join("|")
             ));
+        }
+        if !seam_gaps.is_empty() {
+            explanation_lines.push(format!("seam_gaps={}", seam_gaps.join("|")));
         }
         let content_hash = stable_hash(&(
             &witness_id,
@@ -2597,6 +2722,15 @@ impl RuntimeAdapter {
             explain_floor,
             explanation_lines,
             blocked_dimensions,
+            replay_diff_equivalent: replay_diff.equivalent,
+            replay_mismatch_count: replay_diff.mismatches.len(),
+            replay_explain_query_id: replay_explain.query_id,
+            replay_explain_summary: replay_explain.summary,
+            semantic_log_boundary_ids: semantic_boundaries
+                .iter()
+                .map(|boundary| boundary.boundary_id.clone())
+                .collect(),
+            seam_gaps,
             emitted_at_unix_ms,
         };
 
@@ -2622,6 +2756,12 @@ impl RuntimeAdapter {
             explanation_lines: witness.explanation_lines,
             blocked_dimensions: witness.blocked_dimensions,
             replay_projection_aliases,
+            replay_diff_equivalent: witness.replay_diff_equivalent,
+            replay_mismatch_count: witness.replay_mismatch_count,
+            replay_explain_query_id: witness.replay_explain_query_id,
+            replay_explain_summary: witness.replay_explain_summary,
+            semantic_log_boundary_ids: witness.semantic_log_boundary_ids,
+            seam_gaps: witness.seam_gaps,
         })
     }
 
@@ -2632,6 +2772,7 @@ impl RuntimeAdapter {
     ) -> Result<PersistedHandoffPacket, String> {
         let witness = store.read_witness(witness_id)?;
         let source_run = store.reopen_run(&witness.left_run_ref.logical_id)?;
+        let comparison_run = store.reopen_run(&witness.right_run_ref.logical_id)?;
         let replay_projection_alias = source_run
             .run
             .replay_projection
@@ -2689,6 +2830,18 @@ impl RuntimeAdapter {
                 item_id: "lossiness_explicit".to_string(),
                 satisfied: true,
             },
+            HandoffReadinessRecord {
+                item_id: "blocked_dimensions_explicit".to_string(),
+                satisfied: !witness.blocked_dimensions.is_empty(),
+            },
+            HandoffReadinessRecord {
+                item_id: "replay_explain_summary_present".to_string(),
+                satisfied: !witness.replay_explain_summary.is_empty(),
+            },
+            HandoffReadinessRecord {
+                item_id: "semantic_logging_boundaries_present".to_string(),
+                satisfied: !witness.semantic_log_boundary_ids.is_empty(),
+            },
         ];
         let status = if readiness.iter().all(|item| item.satisfied) {
             "ready"
@@ -2737,16 +2890,33 @@ impl RuntimeAdapter {
             capability_snapshot_ref,
             requested_action_kind: "clarify_contract".to_string(),
             target_lane: "OxReplay/DnaOneCalc".to_string(),
-            expected_behavior: "replay, explain, and handoff surfaces should remain capability-gated and lineage-complete".to_string(),
+            expected_behavior: "replay, explain, witness, and handoff surfaces should remain capability-gated, lineage-complete, and explicit about blocked dimensions".to_string(),
             observed_behavior: format!(
-                "witness floor={} with blocked dimensions={} replay_projection_alias={} replay_projection_phase={}",
+                "witness floor={} replay_equivalent={} replay_explain_query_id={} replay_explain_summary={} blocked dimensions={} replay_projection_alias={} replay_projection_phase={}",
                 witness.explain_floor,
+                witness.replay_diff_equivalent,
+                witness.replay_explain_query_id,
+                witness.replay_explain_summary,
                 witness.blocked_dimensions.join(","),
                 replay_projection_alias.as_deref().unwrap_or("none"),
                 replay_projection_phase.as_deref().unwrap_or("none")
             ),
-            supporting_artifact_refs: vec![source_run.run.envelope.stable_ref(), witness.envelope.stable_ref()],
+            supporting_artifact_refs: [
+                Some(source_run.run.envelope.stable_ref()),
+                Some(comparison_run.run.envelope.stable_ref()),
+                source_run.run.replay_capture_ref.clone(),
+                comparison_run.run.replay_capture_ref.clone(),
+                Some(witness.envelope.stable_ref()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             reliability_state: "retained_evidence_direct".to_string(),
+            blocked_dimensions: witness.blocked_dimensions.clone(),
+            replay_explain_query_id: witness.replay_explain_query_id.clone(),
+            replay_explain_summary: witness.replay_explain_summary.clone(),
+            semantic_log_boundary_ids: witness.semantic_log_boundary_ids.clone(),
+            seam_gaps: witness.seam_gaps.clone(),
             status,
             readiness,
             emitted_at_unix_ms,
@@ -2781,6 +2951,11 @@ impl RuntimeAdapter {
                 .nth(1)
                 .filter(|value| *value != "none")
                 .map(str::to_string),
+            blocked_dimensions: handoff.blocked_dimensions,
+            replay_explain_query_id: handoff.replay_explain_query_id,
+            replay_explain_summary: handoff.replay_explain_summary,
+            semantic_log_boundary_ids: handoff.semantic_log_boundary_ids,
+            seam_gaps: handoff.seam_gaps,
         })
     }
 
@@ -3319,6 +3494,11 @@ impl RuntimeAdapter {
                 comparison.envelope.stable_ref(),
             ],
             reliability_state: format!("compare_{}", comparison.reliability_badge),
+            blocked_dimensions: comparison.projection_limitations.clone(),
+            replay_explain_query_id: String::new(),
+            replay_explain_summary: String::new(),
+            semantic_log_boundary_ids: Vec::new(),
+            seam_gaps: Vec::new(),
             status,
             readiness,
             emitted_at_unix_ms,
@@ -3685,6 +3865,59 @@ fn semantic_logging_boundary_summary(
             ],
             status: "not_designed".to_string(),
         },
+    }
+}
+
+fn replay_operation_kind_from_packet_kind(packet_kind: &str) -> Option<ReplayAwareOperationKind> {
+    match packet_kind {
+        "edit_accept_recalc" => Some(ReplayAwareOperationKind::EditAcceptRecalc),
+        "manual_recalc" => Some(ReplayAwareOperationKind::ManualRecalc),
+        "forced_recalc" => Some(ReplayAwareOperationKind::ForcedRecalc),
+        _ => None,
+    }
+}
+
+fn semantic_logging_boundary_for_run(
+    run: &ScenarioRunRecord,
+) -> Option<SemanticLoggingBoundarySummary> {
+    replay_operation_kind_from_packet_kind(&run.envelope.packet_kind)
+        .map(semantic_logging_boundary_summary)
+}
+
+fn blocked_dimensions_for_replay_witness(
+    host_diff: &RetainedRunDiffSummary,
+    replay_diff: &ReplayDiffReport,
+    semantic_boundaries: &[SemanticLoggingBoundarySummary],
+) -> Vec<String> {
+    let mut blocked = std::collections::BTreeSet::from([
+        "distill_not_integrated".to_string(),
+        "replay_explain_surface_is_summary_only".to_string(),
+    ]);
+
+    if replay_diff.equivalent
+        && (host_diff.formula_text_changed
+            || !host_diff.worksheet_value_match
+            || !host_diff.payload_match
+            || host_diff.capability_snapshot_changed)
+    {
+        blocked.insert("host_retained_diff_exceeds_current_oxreplay_diff_surface".to_string());
+    }
+
+    for gap in semantic_boundaries
+        .iter()
+        .flat_map(|boundary| boundary.seam_gaps.iter())
+    {
+        blocked.insert(gap.clone());
+    }
+
+    blocked.into_iter().collect()
+}
+
+fn upstream_lane_for_replay_gap(gap: &str) -> &'static str {
+    if gap.contains("oxfunc") {
+        "OxFunc"
+    } else {
+        "OxReplay"
     }
 }
 
