@@ -2579,10 +2579,62 @@ mod tests {
             persisted.observation.capture.surfaces[0].surface.surface_id,
             scenario.expected_value_surface_id
         );
+        assert_eq!(
+            persisted.observation.source_schema_id,
+            "oxxlplay.replay_bundle_seed.v1"
+        );
+        assert_eq!(
+            persisted.observation.capture_mode,
+            "excel_black_box_observation"
+        );
+        assert_eq!(persisted.observation.projection_status, "lossy");
+        assert_eq!(
+            persisted.observation.replay_bundle_id.as_deref(),
+            Some("oxxlplay-xlplay_capture_values_formulae_001")
+        );
+        assert_eq!(
+            persisted
+                .observation
+                .replay_manifest_validation_status
+                .as_deref(),
+            Some("valid")
+        );
+        assert_eq!(
+            persisted.observation.replay_capture_loss_status.as_deref(),
+            Some("none")
+        );
         assert!(persisted
             .observation
             .lossiness
             .contains(&"normalized_replay_projection_is_lossy".to_string()));
+        assert!(persisted.observation.source_artifact_ref.content_hash.is_some());
+        assert!(persisted.observation.provenance_ref.content_hash.is_some());
+        assert!(persisted.observation.capture_loss_ref.content_hash.is_some());
+        assert!(persisted
+            .observation
+            .replay_manifest_ref
+            .as_ref()
+            .and_then(|artifact| artifact.content_hash.as_ref())
+            .is_some());
+        assert!(persisted
+            .observation
+            .normalized_replay_ref
+            .as_ref()
+            .and_then(|artifact| artifact.content_hash.as_ref())
+            .is_some());
+        assert_eq!(persisted.observation.envelope.lineage_refs.len(), 5);
+        assert!(persisted
+            .observation
+            .envelope
+            .lineage_refs
+            .iter()
+            .any(|entry| entry.relation == "replay_manifest"));
+        assert!(persisted
+            .observation
+            .envelope
+            .lineage_refs
+            .iter()
+            .any(|entry| entry.relation == "normalized_replay"));
         assert_eq!(
             persisted.observation.provenance.bridge.bridge_kind,
             "external_process"
@@ -2592,6 +2644,11 @@ mod tests {
             .read_observation(&persisted.observation.observation_id)
             .expect("observation artifact should reopen");
         assert_eq!(reopened.scenario_id, scenario.expected_scenario_id);
+        assert_eq!(reopened.projection_status, "lossy");
+        assert_eq!(
+            reopened.replay_manifest_validation_status.as_deref(),
+            Some("valid")
+        );
     }
 
     #[test]

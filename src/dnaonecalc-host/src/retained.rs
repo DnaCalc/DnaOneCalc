@@ -144,6 +144,12 @@ pub struct ObservationRecord {
     pub platform_scope: String,
     pub replay_manifest_ref: Option<StableArtifactRef>,
     pub normalized_replay_ref: Option<StableArtifactRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_bundle_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_manifest_validation_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_capture_loss_status: Option<String>,
     pub capture: ObservationCapturePayload,
     pub provenance: ObservationProvenancePayload,
     pub lossiness: Vec<String>,

@@ -13,6 +13,8 @@ try {
         "tests::replay_witnesses_generate_structured_upstream_pressure_packets_for_seam_gaps"
         "tests::retained_witness_generation_uses_real_diff_state_and_keeps_blocked_dimensions_explicit"
         "tests::handoff_packets_are_generated_from_retained_evidence_and_gated_by_capability_truth"
+        "tests::observation_artifact_persists_from_upstream_source_bundle"
+        "tests::twin_compare_artifact_persists_and_opens_on_real_run_and_observation"
         "tests::spreadsheetml_document_round_trip_reopens_into_the_h1_host"
         "tests::scenario_capsule_export_and_intake_preserve_lineage_and_capability_refs"
         "tests::workspace_manifest_groups_multiple_isolated_documents_without_merging_them"

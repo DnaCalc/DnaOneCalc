@@ -3110,6 +3110,78 @@ impl RuntimeAdapter {
         let persisted_capability = store.persist_capability_snapshot(&capability_snapshot)?;
         let observation_id = format!("observation-{}", sanitize_slug(&source.provenance.run_id));
         let emitted_at_unix_ms = unix_time_millis()?;
+        let capture_body =
+            serde_json::to_string(&source.capture).map_err(|error| error.to_string())?;
+        let provenance_body =
+            serde_json::to_string(&source.provenance).map_err(|error| error.to_string())?;
+        let captured_surface_ids = source
+            .capture
+            .surfaces
+            .iter()
+            .map(|surface| surface.surface.surface_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let missing_declared_surface_ids = source
+            .provenance
+            .declared_surface_ids
+            .iter()
+            .filter(|surface_id| !captured_surface_ids.contains(surface_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_declared_surface_ids.is_empty() {
+            return Err(format!(
+                "observation provenance declares surfaces missing from capture: {}",
+                missing_declared_surface_ids.join(", ")
+            ));
+        }
+
+        let replay_manifest_details = source
+            .replay_manifest_path
+            .as_ref()
+            .map(|path| {
+                let validation = validate_bundle_at_path(path).map_err(|error| {
+                    format!(
+                        "failed to validate observation replay manifest {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if validation.status != ValidationStatus::Valid {
+                    let detail = validation
+                        .errors
+                        .iter()
+                        .map(|issue| issue.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(format!(
+                        "observation replay manifest {} is invalid: {}",
+                        path.display(),
+                        detail
+                    ));
+                }
+
+                let manifest = oxreplay_bundle::load_manifest_from_path(path).map_err(|error| {
+                    format!(
+                        "failed to load observation replay manifest {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if manifest.scenario_id != source.provenance.scenario_id {
+                    return Err(format!(
+                        "observation replay manifest scenario {} does not match provenance scenario {}",
+                        manifest.scenario_id, source.provenance.scenario_id
+                    ));
+                }
+
+                Ok((manifest, validation))
+            })
+            .transpose()?;
+        let source_bundle_body = source
+            .bundle_path
+            .as_ref()
+            .map(|path| {
+                fs::read_to_string(path)
+                    .map_err(|error| format!("failed to read {}: {error}", path.display()))
+            })
+            .transpose()?;
         let source_artifact_ref = StableArtifactRef {
             artifact_kind: "oxxlplay_bundle".to_string(),
             logical_id: source
@@ -3118,43 +3190,107 @@ impl RuntimeAdapter {
                 .unwrap_or(&source.capture_path)
                 .display()
                 .to_string(),
-            content_hash: None,
+            content_hash: Some(stable_hash(
+                source_bundle_body.as_ref().unwrap_or(&capture_body),
+            )),
         };
-        let replay_manifest_ref =
-            source
-                .replay_manifest_path
-                .as_ref()
-                .map(|path| StableArtifactRef {
-                    artifact_kind: "oxxlplay_replay_manifest".to_string(),
-                    logical_id: path.display().to_string(),
-                    content_hash: None,
-                });
-        let normalized_replay_ref =
-            source
-                .normalized_replay_path
-                .as_ref()
-                .map(|path| StableArtifactRef {
-                    artifact_kind: "oxxlplay_normalized_replay".to_string(),
-                    logical_id: path.display().to_string(),
-                    content_hash: None,
-                });
-        let projection_status = if normalized_replay_ref.is_some() {
-            "lossy_normalized_replay_available"
-        } else {
-            "source_bundle_only"
+        let provenance_ref = StableArtifactRef {
+            artifact_kind: "oxxlplay_provenance".to_string(),
+            logical_id: source.provenance_path.display().to_string(),
+            content_hash: Some(stable_hash(&provenance_body)),
         };
+        let capture_loss_ref = StableArtifactRef {
+            artifact_kind: "oxxlplay_capture".to_string(),
+            logical_id: source.capture_path.display().to_string(),
+            content_hash: Some(stable_hash(&capture_body)),
+        };
+        let replay_manifest_ref = source
+            .replay_manifest_path
+            .as_ref()
+            .map(|path| {
+                fs::read_to_string(path)
+                    .map(|body| StableArtifactRef {
+                        artifact_kind: "oxxlplay_replay_manifest".to_string(),
+                        logical_id: path.display().to_string(),
+                        content_hash: Some(stable_hash(&body)),
+                    })
+                    .map_err(|error| format!("failed to read {}: {error}", path.display()))
+            })
+            .transpose()?;
+        let normalized_replay_ref = source
+            .normalized_replay_path
+            .as_ref()
+            .map(|path| {
+                fs::read_to_string(path)
+                    .map(|body| StableArtifactRef {
+                        artifact_kind: "oxxlplay_normalized_replay".to_string(),
+                        logical_id: path.display().to_string(),
+                        content_hash: Some(stable_hash(&body)),
+                    })
+                    .map_err(|error| format!("failed to read {}: {error}", path.display()))
+            })
+            .transpose()?;
+        let projection_status = replay_manifest_details
+            .as_ref()
+            .map(|(manifest, _)| projection_status_text(manifest.projection_status).to_string())
+            .unwrap_or_else(|| {
+                if normalized_replay_ref.is_some() {
+                    "lossy_normalized_replay_available".to_string()
+                } else {
+                    "source_bundle_only".to_string()
+                }
+            });
+        let capture_mode = replay_manifest_details
+            .as_ref()
+            .map(|(manifest, _)| manifest.capture_mode.clone())
+            .unwrap_or_else(|| "capture-run".to_string());
+        let source_schema_id = replay_manifest_details
+            .as_ref()
+            .map(|(manifest, _)| manifest.source_schema.clone())
+            .unwrap_or_else(|| "oxxlplay.capture_surface_basic.v1".to_string());
+        let replay_bundle_id = replay_manifest_details
+            .as_ref()
+            .map(|(manifest, _)| manifest.bundle_id.clone());
+        let replay_manifest_validation_status = replay_manifest_details.as_ref().map(
+            |(_, validation)| validation_status_text(validation.status).to_string(),
+        );
+        let replay_capture_loss_status = replay_manifest_details
+            .as_ref()
+            .map(|(manifest, _)| capture_loss_status_text(manifest.capture_loss).to_string());
         let lossiness = observation_lossiness(&source);
-        let capture_body =
-            serde_json::to_string(&source.capture).map_err(|error| error.to_string())?;
-        let provenance_body =
-            serde_json::to_string(&source.provenance).map_err(|error| error.to_string())?;
+        let mut lineage_refs = vec![
+            ArtifactLineageRef {
+                relation: "source_bundle".to_string(),
+                artifact_ref: source_artifact_ref.clone(),
+            },
+            ArtifactLineageRef {
+                relation: "provenance".to_string(),
+                artifact_ref: provenance_ref.clone(),
+            },
+            ArtifactLineageRef {
+                relation: "capture".to_string(),
+                artifact_ref: capture_loss_ref.clone(),
+            },
+        ];
+        if let Some(replay_manifest_ref) = replay_manifest_ref.as_ref() {
+            lineage_refs.push(ArtifactLineageRef {
+                relation: "replay_manifest".to_string(),
+                artifact_ref: replay_manifest_ref.clone(),
+            });
+        }
+        if let Some(normalized_replay_ref) = normalized_replay_ref.as_ref() {
+            lineage_refs.push(ArtifactLineageRef {
+                relation: "normalized_replay".to_string(),
+                artifact_ref: normalized_replay_ref.clone(),
+            });
+        }
         let content_hash = stable_hash(&(
             &observation_id,
             &source.provenance.scenario_id,
             &source.provenance.run_id,
             &capture_body,
             &provenance_body,
-            projection_status,
+            projection_status.as_str(),
             lossiness.as_slice(),
         ));
         let observation = ObservationRecord {
@@ -3171,30 +3307,25 @@ impl RuntimeAdapter {
                 seam_pin_set_id: "onecalc:ws-08:observation".to_string(),
                 capability_floor: self.host_profile.id().to_string(),
                 provisionality_state: "stable".to_string(),
-                lineage_refs: Vec::new(),
+                lineage_refs,
                 attachment_refs: Vec::new(),
                 capability_snapshot_ref: Some(persisted_capability.snapshot.envelope.stable_ref()),
             },
             observation_id,
             scenario_id: source.provenance.scenario_id.clone(),
             source_lane_id: "OxXlPlay/Excel-observed".to_string(),
-            source_schema_id: "oxxlplay.capture_surface_basic.v1".to_string(),
+            source_schema_id,
             source_artifact_ref,
-            capture_mode: "capture-run".to_string(),
-            projection_status: projection_status.to_string(),
-            provenance_ref: StableArtifactRef {
-                artifact_kind: "oxxlplay_provenance".to_string(),
-                logical_id: source.provenance_path.display().to_string(),
-                content_hash: None,
-            },
-            capture_loss_ref: StableArtifactRef {
-                artifact_kind: "oxxlplay_capture".to_string(),
-                logical_id: source.capture_path.display().to_string(),
-                content_hash: None,
-            },
+            capture_mode,
+            projection_status,
+            provenance_ref,
+            capture_loss_ref,
             platform_scope: "windows_live_capture;cross_platform_retained_consumption".to_string(),
             replay_manifest_ref,
             normalized_replay_ref,
+            replay_bundle_id,
+            replay_manifest_validation_status,
+            replay_capture_loss_status,
             capture: source.capture,
             provenance: source.provenance,
             lossiness,
