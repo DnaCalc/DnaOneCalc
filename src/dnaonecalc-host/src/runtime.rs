@@ -19,8 +19,14 @@ use oxfml_core::{
     StructureContextVersion, TypedContextQueryBundle,
 };
 use oxfunc_core::value::{ArrayCellValue, EvalArray, EvalValue};
-use oxreplay_abstractions::CapabilityLevel;
+use oxreplay_abstractions::{AdapterId, CapabilityLevel, LaneId};
+use oxreplay_bundle::{
+    validate_bundle_at_path, BundleArtifactRef, BundleValidationReport, CaptureLossStatus,
+    ProjectionStatus, ReplayBundleManifest, ValidationStatus,
+};
 use oxreplay_core::{is_replay_ready, load_oxfml_v1_replay_projection, ReplayView};
+use oxreplay_diff::{diff_summary, ReplayDiffReport};
+use oxreplay_explain::{explain_diff, ExplainRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
@@ -302,6 +308,18 @@ pub struct ReplayAwareOperationSummary {
     pub non_assumptions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLoggingBoundarySummary {
+    pub boundary_id: String,
+    pub operation_id: String,
+    pub semantic_fact_owners: Vec<String>,
+    pub upstream_semantic_facts: Vec<String>,
+    pub host_owned_facts: Vec<String>,
+    pub shared_replay_inputs: Vec<String>,
+    pub seam_gaps: Vec<String>,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RecalcContext {
     pub trigger_kind: RecalcTriggerKind,
@@ -571,6 +589,10 @@ pub struct OpenedReplayCaptureSummary {
     pub scenario_id: String,
     pub replay_floor: String,
     pub replay_ready: bool,
+    pub bundle_manifest_path: String,
+    pub bundle_validation_status: String,
+    pub bundle_projection_status: String,
+    pub bundle_capture_loss: String,
     pub event_count: usize,
     pub registry_ref_count: usize,
     pub view_family: String,
@@ -1324,6 +1346,13 @@ impl RuntimeAdapter {
         ReplayAwareOperationKind::ALL
             .into_iter()
             .map(replay_aware_operation_summary)
+            .collect()
+    }
+
+    pub fn semantic_logging_boundaries(&self) -> Vec<SemanticLoggingBoundarySummary> {
+        ReplayAwareOperationKind::ALL
+            .into_iter()
+            .map(semantic_logging_boundary_summary)
             .collect()
     }
 
@@ -2191,6 +2220,10 @@ impl RuntimeAdapter {
             CapabilityLevel::C1ReplayValid.registry_id(),
             "normalized_replay_open"
         );
+        let bundle_manifest_path = store
+            .root()
+            .join("replay-captures")
+            .join(format!("{replay_capture_id}.bundle.json"));
         let replay_artifact_path = store
             .root()
             .join("replay-captures")
@@ -2231,12 +2264,16 @@ impl RuntimeAdapter {
             scenario_run_ref: reopened.run.envelope.stable_ref(),
             capability_snapshot_ref,
             replay_floor,
+            bundle_manifest: oxreplay_abstractions::ReplayArtifactRef {
+                path: bundle_manifest_path.display().to_string(),
+            },
             replay_artifact: oxreplay_abstractions::ReplayArtifactRef {
                 path: replay_artifact_path.display().to_string(),
             },
             emitted_at_unix_ms,
         };
-        let persisted = store.persist_replay_capture(&capture, &replay_projection)?;
+        let bundle_manifest = replay_bundle_manifest_for_capture(&capture, &replay_projection);
+        let persisted = store.persist_replay_capture(&capture, &bundle_manifest, &replay_projection)?;
 
         let mut updated_run = reopened.run;
         updated_run.replay_capture_ref = Some(capture.envelope.stable_ref());
@@ -2251,6 +2288,8 @@ impl RuntimeAdapter {
         replay_capture_id: &str,
     ) -> Result<OpenedReplayCaptureSummary, String> {
         let capture = store.read_replay_capture(replay_capture_id)?;
+        let bundle_report = self.validate_replay_capture_bundle(store, replay_capture_id)?;
+        let bundle_manifest = load_bundle_manifest_for_capture(&capture)?;
         let projection = read_replay_projection_record(&capture.replay_artifact.path)?;
         let replay_scenario = load_oxfml_v1_replay_projection(&capture.replay_artifact.path)
             .map_err(|error| {
@@ -2274,6 +2313,12 @@ impl RuntimeAdapter {
             scenario_id: replay_scenario.scenario_id,
             replay_floor: capture.replay_floor,
             replay_ready,
+            bundle_manifest_path: capture.bundle_manifest.path,
+            bundle_validation_status: validation_status_text(bundle_report.status).to_string(),
+            bundle_projection_status: projection_status_text(bundle_manifest.projection_status)
+                .to_string(),
+            bundle_capture_loss: capture_loss_status_text(bundle_manifest.capture_loss)
+                .to_string(),
             event_count,
             registry_ref_count,
             view_family: view.view_family,
@@ -2282,6 +2327,41 @@ impl RuntimeAdapter {
             projection_phase,
             projection_alias,
         })
+    }
+
+    pub fn validate_replay_capture_bundle(
+        &self,
+        store: &RetainedScenarioStore,
+        replay_capture_id: &str,
+    ) -> Result<BundleValidationReport, String> {
+        let capture = store.read_replay_capture(replay_capture_id)?;
+        validate_bundle_at_path(&capture.bundle_manifest.path).map_err(|error| {
+            format!(
+                "failed to validate replay bundle for {}: {}",
+                replay_capture_id, error
+            )
+        })
+    }
+
+    pub fn diff_retained_run_replay_inputs(
+        &self,
+        store: &RetainedScenarioStore,
+        left_run_id: &str,
+        right_run_id: &str,
+    ) -> Result<ReplayDiffReport, String> {
+        let left_scenario = replay_scenario_for_retained_run(self, store, left_run_id)?;
+        let right_scenario = replay_scenario_for_retained_run(self, store, right_run_id)?;
+        Ok(diff_summary(&left_scenario, &right_scenario))
+    }
+
+    pub fn explain_retained_run_replay_diff(
+        &self,
+        store: &RetainedScenarioStore,
+        left_run_id: &str,
+        right_run_id: &str,
+    ) -> Result<ExplainRecord, String> {
+        let diff = self.diff_retained_run_replay_inputs(store, left_run_id, right_run_id)?;
+        Ok(explain_diff(&diff))
     }
 
     pub fn open_retained_run_xray(
@@ -2396,17 +2476,9 @@ impl RuntimeAdapter {
         let right = store.reopen_run(right_run_id)?;
         let capability_snapshot_changed =
             left.run.envelope.capability_snapshot_ref != right.run.envelope.capability_snapshot_ref;
-        let replay_pair_openable = match (
-            left.run.replay_capture_ref.as_ref(),
-            right.run.replay_capture_ref.as_ref(),
-        ) {
-            (Some(left_replay), Some(right_replay)) => {
-                self.open_replay_capture(store, &left_replay.logical_id)?;
-                self.open_replay_capture(store, &right_replay.logical_id)?;
-                true
-            }
-            _ => false,
-        };
+        let replay_pair_openable = self
+            .diff_retained_run_replay_inputs(store, left_run_id, right_run_id)
+            .is_ok();
 
         Ok(RetainedRunDiffSummary {
             left_run_id: comparison.left_run_id,
@@ -3425,6 +3497,8 @@ fn build_driven_runtime_environment(
 fn replay_aware_operation_summary(
     operation: ReplayAwareOperationKind,
 ) -> ReplayAwareOperationSummary {
+    let boundary = semantic_logging_boundary_summary(operation);
+
     match operation {
         ReplayAwareOperationKind::EditAcceptRecalc => ReplayAwareOperationSummary {
             operation_id: operation.id().to_string(),
@@ -3434,7 +3508,7 @@ fn replay_aware_operation_summary(
             replay_readiness: "recalc_projection_ready".to_string(),
             retained_consequence: "persists_formula_version_and_retained_run_when_requested"
                 .to_string(),
-            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            semantic_log_boundary: boundary.boundary_id.clone(),
             reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
             non_assumptions: vec![
                 "does_not_define_undo_inverse".to_string(),
@@ -3448,7 +3522,7 @@ fn replay_aware_operation_summary(
             operation_class: "driven_recalc".to_string(),
             replay_readiness: "recalc_projection_ready".to_string(),
             retained_consequence: "reuses_current_formula_state_with_explicit_context".to_string(),
-            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            semantic_log_boundary: boundary.boundary_id.clone(),
             reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
             non_assumptions: vec![
                 "does_not_mutate_formula_text".to_string(),
@@ -3463,7 +3537,7 @@ fn replay_aware_operation_summary(
             replay_readiness: "recalc_projection_ready".to_string(),
             retained_consequence: "reuses_current_formula_state_with_forced_provisionality"
                 .to_string(),
-            semantic_log_boundary: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            semantic_log_boundary: boundary.boundary_id.clone(),
             reproducibility_contract: "requires_explicit_now_serial_and_random_value".to_string(),
             non_assumptions: vec![
                 "does_not_define_undo_inverse".to_string(),
@@ -3477,7 +3551,7 @@ fn replay_aware_operation_summary(
             operation_class: "future_host_operation".to_string(),
             replay_readiness: "not_admitted_yet".to_string(),
             retained_consequence: "no_current_retained_artifact".to_string(),
-            semantic_log_boundary: "not_designed".to_string(),
+            semantic_log_boundary: boundary.boundary_id.clone(),
             reproducibility_contract: "inverse_operation_not_proven".to_string(),
             non_assumptions: vec![
                 "no_inverse_replay_contract_exists".to_string(),
@@ -3491,7 +3565,7 @@ fn replay_aware_operation_summary(
             operation_class: "future_host_operation".to_string(),
             replay_readiness: "not_admitted_yet".to_string(),
             retained_consequence: "no_current_retained_artifact".to_string(),
-            semantic_log_boundary: "not_designed".to_string(),
+            semantic_log_boundary: boundary.boundary_id.clone(),
             reproducibility_contract: "inverse_operation_not_proven".to_string(),
             non_assumptions: vec![
                 "no_inverse_replay_contract_exists".to_string(),
@@ -3505,12 +3579,111 @@ fn replay_aware_operation_summary(
             operation_class: "future_host_operation".to_string(),
             replay_readiness: "not_admitted_yet".to_string(),
             retained_consequence: "no_current_retained_artifact".to_string(),
-            semantic_log_boundary: "semantic_logging_boundary_not_designed".to_string(),
+            semantic_log_boundary: boundary.boundary_id,
             reproducibility_contract: "macro_capture_pipeline_not_proven".to_string(),
             non_assumptions: vec![
                 "no_host_macro_dsl_exists".to_string(),
                 "no_cross_library_semantic_log_contract_exists".to_string(),
             ],
+        },
+    }
+}
+
+fn semantic_logging_boundary_summary(
+    operation: ReplayAwareOperationKind,
+) -> SemanticLoggingBoundarySummary {
+    match operation {
+        ReplayAwareOperationKind::EditAcceptRecalc
+        | ReplayAwareOperationKind::ManualRecalc
+        | ReplayAwareOperationKind::ForcedRecalc => SemanticLoggingBoundarySummary {
+            boundary_id: "oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+            operation_id: operation.id().to_string(),
+            semantic_fact_owners: vec![
+                "OxFml".to_string(),
+                "OxFunc".to_string(),
+                "OxReplay".to_string(),
+                "DnaOneCalcHost".to_string(),
+            ],
+            upstream_semantic_facts: vec![
+                "oxfml_formula_runtime_result".to_string(),
+                "oxfunc_function_semantics_transitively_consumed_via_oxfml".to_string(),
+                "oxreplay_bundle_replay_diff_explain_runtime".to_string(),
+            ],
+            host_owned_facts: vec![
+                "recalc_context_inputs".to_string(),
+                "retained_artifact_envelopes".to_string(),
+                "capability_snapshot_linkage".to_string(),
+                "workspace_document_capsule_persistence".to_string(),
+            ],
+            shared_replay_inputs: vec![
+                "oxfml_v1_replay_projection".to_string(),
+                "replay.bundle.v1".to_string(),
+                "replay_diff_report".to_string(),
+                "explain_record".to_string(),
+            ],
+            seam_gaps: vec![
+                "no_cross_library_semantic_log_contract_exists".to_string(),
+                "oxfunc_direct_replay_intake_not_admitted".to_string(),
+                "replay_owned_retained_artifact_contract_not_defined".to_string(),
+            ],
+            status: "provisional_current_floor".to_string(),
+        },
+        ReplayAwareOperationKind::Undo | ReplayAwareOperationKind::Redo => {
+            SemanticLoggingBoundarySummary {
+                boundary_id: "future_inverse_action_boundary_not_designed".to_string(),
+                operation_id: operation.id().to_string(),
+                semantic_fact_owners: vec![
+                    "OxReplay".to_string(),
+                    "DnaOneCalcHost".to_string(),
+                ],
+                upstream_semantic_facts: vec![
+                    "replay_safe_action_history".to_string(),
+                    "inverse_operation_contract".to_string(),
+                ],
+                host_owned_facts: vec![
+                    "ui_history_commands".to_string(),
+                    "retained_history_artifact_shape".to_string(),
+                ],
+                shared_replay_inputs: vec![
+                    "future_action_bundle".to_string(),
+                    "future_inverse_diff_query".to_string(),
+                ],
+                seam_gaps: vec![
+                    "inverse_operation_contract_not_designed".to_string(),
+                    "history_compaction_policy_not_designed".to_string(),
+                    "host_to_oxreplay_action_binding_missing".to_string(),
+                ],
+                status: "not_designed".to_string(),
+            }
+        }
+        ReplayAwareOperationKind::MacroCapture => SemanticLoggingBoundarySummary {
+            boundary_id: "future_macro_capture_boundary_not_designed".to_string(),
+            operation_id: operation.id().to_string(),
+            semantic_fact_owners: vec![
+                "OxReplay".to_string(),
+                "DnaOneCalcHost".to_string(),
+                "OxFml".to_string(),
+                "OxFunc".to_string(),
+            ],
+            upstream_semantic_facts: vec![
+                "replay_action_stream_capture".to_string(),
+                "formula_semantic_effect_classification".to_string(),
+                "function_side_effect_and_observation_classification".to_string(),
+            ],
+            host_owned_facts: vec![
+                "macro_recording_session_controls".to_string(),
+                "macro_capture_retention_policy".to_string(),
+            ],
+            shared_replay_inputs: vec![
+                "future_macro_capture_bundle".to_string(),
+                "future_macro_explain_query".to_string(),
+            ],
+            seam_gaps: vec![
+                "macro_capture_pipeline_not_proven".to_string(),
+                "no_host_macro_dsl_exists".to_string(),
+                "no_cross_library_semantic_log_contract_exists".to_string(),
+            ],
+            status: "not_designed".to_string(),
         },
     }
 }
@@ -3579,6 +3752,110 @@ fn replay_projection_alias(projection: &OxfmlReplayProjectionRecord) -> Option<&
         .as_deref()
         .or(projection.source_case_id.as_deref())
         .or_else(|| projection.source_case_ids.first().map(String::as_str))
+}
+
+fn replay_projection_scenario_id(
+    projection: &OxfmlReplayProjectionRecord,
+    fallback_scenario_id: &str,
+) -> String {
+    projection
+        .shared_scenario_alias
+        .clone()
+        .or_else(|| projection.source_case_id.clone())
+        .or_else(|| projection.source_case_ids.first().cloned())
+        .or_else(|| {
+            projection
+                .session_id
+                .as_ref()
+                .map(|session_id| format!("oxfml.session.{session_id}"))
+        })
+        .unwrap_or_else(|| fallback_scenario_id.to_string())
+}
+
+fn replay_bundle_manifest_for_capture(
+    capture: &ReplayCaptureRecord,
+    projection: &OxfmlReplayProjectionRecord,
+) -> ReplayBundleManifest {
+    let replay_artifact_name = Path::new(&capture.replay_artifact.path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    ReplayBundleManifest {
+        bundle_id: capture.replay_capture_id.clone(),
+        scenario_id: replay_projection_scenario_id(projection, &capture.scenario_id),
+        bundle_schema: "replay.bundle.v1".to_string(),
+        source_schema: "oxfml-v1-replay-projection".to_string(),
+        lane_id: LaneId("oxfml".to_string()),
+        adapter_id: AdapterId("oxfml.v1.replay_projection".to_string()),
+        capture_mode: "onecalc_retained_recalc_projection".to_string(),
+        registry_refs: Vec::new(),
+        projection_status: ProjectionStatus::Lossless,
+        capture_loss: CaptureLossStatus::None,
+        sidecars: Vec::new(),
+        views: vec![BundleArtifactRef {
+            artifact_family: projection.source_artifact_family.clone(),
+            path: replay_artifact_name,
+        }],
+    }
+}
+
+fn load_bundle_manifest_for_capture(
+    capture: &ReplayCaptureRecord,
+) -> Result<ReplayBundleManifest, String> {
+    oxreplay_bundle::load_manifest_from_path(&capture.bundle_manifest.path)
+        .map_err(|error| error.to_string())
+}
+
+fn replay_scenario_for_retained_run(
+    adapter: &RuntimeAdapter,
+    store: &RetainedScenarioStore,
+    scenario_run_id: &str,
+) -> Result<oxreplay_core::ReplayScenario, String> {
+    let run = store.read_run(scenario_run_id)?;
+    let replay_capture_id = run
+        .replay_capture_ref
+        .as_ref()
+        .ok_or_else(|| format!("run {scenario_run_id} is missing a replay capture ref"))?
+        .logical_id
+        .clone();
+    let opened = adapter.open_replay_capture(store, &replay_capture_id)?;
+    if opened.bundle_validation_status != "valid" {
+        return Err(format!(
+            "replay bundle for {} is not valid: {}",
+            replay_capture_id, opened.bundle_validation_status
+        ));
+    }
+
+    load_oxfml_v1_replay_projection(&opened.artifact_path).map_err(|error| {
+        format!(
+            "failed to load retained replay input {}: {}",
+            replay_capture_id, error
+        )
+    })
+}
+
+fn validation_status_text(status: ValidationStatus) -> &'static str {
+    match status {
+        ValidationStatus::Valid => "valid",
+        ValidationStatus::Invalid => "invalid",
+    }
+}
+
+fn projection_status_text(status: ProjectionStatus) -> &'static str {
+    match status {
+        ProjectionStatus::Lossless => "lossless",
+        ProjectionStatus::Lossy => "lossy",
+    }
+}
+
+fn capture_loss_status_text(status: CaptureLossStatus) -> &'static str {
+    match status {
+        CaptureLossStatus::None => "none",
+        CaptureLossStatus::DowngradedInstrumentation => "downgraded_instrumentation",
+        CaptureLossStatus::ProjectionLoss => "projection_loss",
+    }
 }
 
 fn summarize_runtime_result(result: RuntimeFormulaResult) -> FormulaEvaluationSummary {

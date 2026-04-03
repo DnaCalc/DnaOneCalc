@@ -820,7 +820,10 @@ dependencies = [
  "oxfml_core",
  "oxfunc_core",
  "oxreplay-abstractions",
+ "oxreplay-bundle",
  "oxreplay-core",
+ "oxreplay-diff",
+ "oxreplay-explain",
  "quick-xml 0.38.4",
  "serde",
  "serde_json",
@@ -2306,6 +2309,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxreplay-bundle"
+version = "0.1.0"
+dependencies = [
+ "oxreplay-abstractions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "oxreplay-core"
 version = "0.1.0"
 dependencies = [
@@ -2313,6 +2326,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "oxreplay-diff"
+version = "0.1.0"
+dependencies = [
+ "oxreplay-abstractions",
+ "oxreplay-core",
+ "serde",
+]
+
+[[package]]
+name = "oxreplay-explain"
+version = "0.1.0"
+dependencies = [
+ "oxreplay-diff",
+ "serde",
 ]
 
 [[package]]

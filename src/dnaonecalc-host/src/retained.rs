@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oxreplay_abstractions::ReplayArtifactRef;
+use oxreplay_bundle::ReplayBundleManifest;
 use serde::{Deserialize, Serialize};
 
 use crate::observation::{ObservationCapturePayload, ObservationProvenancePayload};
@@ -181,6 +182,7 @@ pub struct ReplayCaptureRecord {
     pub scenario_run_ref: StableArtifactRef,
     pub capability_snapshot_ref: StableArtifactRef,
     pub replay_floor: String,
+    pub bundle_manifest: ReplayArtifactRef,
     pub replay_artifact: ReplayArtifactRef,
     pub emitted_at_unix_ms: u64,
 }
@@ -254,6 +256,7 @@ pub struct PersistedScenarioRun {
 pub struct PersistedReplayCapture {
     pub capture: ReplayCaptureRecord,
     pub capture_path: PathBuf,
+    pub bundle_manifest_path: PathBuf,
     pub replay_path: PathBuf,
 }
 
@@ -436,7 +439,7 @@ impl RetainedScenarioStore {
             if path
                 .file_name()
                 .and_then(|value| value.to_str())
-                .map(|value| value.ends_with(".replay.json"))
+                .map(|value| value.ends_with(".replay.json") || value.ends_with(".bundle.json"))
                 .unwrap_or(false)
             {
                 continue;
@@ -466,16 +469,20 @@ impl RetainedScenarioStore {
     pub fn persist_replay_capture(
         &self,
         capture: &ReplayCaptureRecord,
+        bundle_manifest: &ReplayBundleManifest,
         replay_projection: &OxfmlReplayProjectionRecord,
     ) -> Result<PersistedReplayCapture, String> {
         fs::create_dir_all(self.replay_captures_dir()).map_err(|error| error.to_string())?;
         let capture_path = self.replay_capture_path(&capture.replay_capture_id);
+        let bundle_manifest_path = self.replay_bundle_manifest_path(&capture.replay_capture_id);
         let replay_path = self.replay_scenario_path(&capture.replay_capture_id);
         write_json(&capture_path, capture)?;
+        write_json(&bundle_manifest_path, bundle_manifest)?;
         write_json(&replay_path, replay_projection)?;
         Ok(PersistedReplayCapture {
             capture: capture.clone(),
             capture_path,
+            bundle_manifest_path,
             replay_path,
         })
     }
@@ -560,6 +567,11 @@ impl RetainedScenarioStore {
     fn replay_scenario_path(&self, replay_capture_id: &str) -> PathBuf {
         self.replay_captures_dir()
             .join(format!("{replay_capture_id}.replay.json"))
+    }
+
+    fn replay_bundle_manifest_path(&self, replay_capture_id: &str) -> PathBuf {
+        self.replay_captures_dir()
+            .join(format!("{replay_capture_id}.bundle.json"))
     }
 
     fn observation_path(&self, observation_id: &str) -> PathBuf {

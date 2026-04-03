@@ -73,6 +73,7 @@ pub use runtime::{
     PromotedScenarioRegressionSummary, RecalcContext, RecalcTriggerKind,
     ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, ReplayAwareOperationKind,
     ReplayAwareOperationSummary, RetainedRunDiffSummary, RetainedRunReopenInvariantReport,
+    SemanticLoggingBoundarySummary,
     RetainedRunXRaySummary, RuntimeAdapter, ScenarioLibraryFilter, ScenarioLibrarySavedView,
     ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
     XRayBindSummary, XRayEvalSummary, XRayParseSummary, XRayProvenanceSummary, XRayTraceSummary,
@@ -350,6 +351,30 @@ mod tests {
                 operation.reproducibility_contract
             ),
             format!("non_assumptions={}", operation.non_assumptions.join("|")),
+        ]
+    }
+
+    fn semantic_logging_boundary_golden_lines(
+        boundary: &SemanticLoggingBoundarySummary,
+    ) -> Vec<String> {
+        vec![
+            format!("boundary_id={}", boundary.boundary_id),
+            format!("operation_id={}", boundary.operation_id),
+            format!(
+                "semantic_fact_owners={}",
+                boundary.semantic_fact_owners.join("|")
+            ),
+            format!(
+                "upstream_semantic_facts={}",
+                boundary.upstream_semantic_facts.join("|")
+            ),
+            format!("host_owned_facts={}", boundary.host_owned_facts.join("|")),
+            format!(
+                "shared_replay_inputs={}",
+                boundary.shared_replay_inputs.join("|")
+            ),
+            format!("seam_gaps={}", boundary.seam_gaps.join("|")),
+            format!("status={}", boundary.status),
         ]
     }
 
@@ -1406,10 +1431,46 @@ mod tests {
                 "operation_class=future_host_operation".to_string(),
                 "replay_readiness=not_admitted_yet".to_string(),
                 "retained_consequence=no_current_retained_artifact".to_string(),
-                "semantic_log_boundary=semantic_logging_boundary_not_designed".to_string(),
+                "semantic_log_boundary=future_macro_capture_boundary_not_designed".to_string(),
                 "reproducibility_contract=macro_capture_pipeline_not_proven".to_string(),
                 "non_assumptions=no_host_macro_dsl_exists|no_cross_library_semantic_log_contract_exists"
                     .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_logging_boundary_model_makes_owner_split_and_seam_gaps_explicit() {
+        let adapter = RuntimeAdapter::new(OneCalcHostProfile::OcH1);
+        let boundaries = adapter.semantic_logging_boundaries();
+
+        assert_eq!(boundaries.len(), ReplayAwareOperationKind::ALL.len());
+        assert_eq!(
+            semantic_logging_boundary_golden_lines(&boundaries[0]),
+            vec![
+                "boundary_id=oxfml_runtime_result_plus_host_retained_artifacts".to_string(),
+                "operation_id=edit_accept_recalc".to_string(),
+                "semantic_fact_owners=OxFml|OxFunc|OxReplay|DnaOneCalcHost".to_string(),
+                "upstream_semantic_facts=oxfml_formula_runtime_result|oxfunc_function_semantics_transitively_consumed_via_oxfml|oxreplay_bundle_replay_diff_explain_runtime".to_string(),
+                "host_owned_facts=recalc_context_inputs|retained_artifact_envelopes|capability_snapshot_linkage|workspace_document_capsule_persistence".to_string(),
+                "shared_replay_inputs=oxfml_v1_replay_projection|replay.bundle.v1|replay_diff_report|explain_record".to_string(),
+                "seam_gaps=no_cross_library_semantic_log_contract_exists|oxfunc_direct_replay_intake_not_admitted|replay_owned_retained_artifact_contract_not_defined".to_string(),
+                "status=provisional_current_floor".to_string(),
+            ]
+        );
+        assert_eq!(
+            semantic_logging_boundary_golden_lines(
+                boundaries.last().expect("macro capture boundary should exist")
+            ),
+            vec![
+                "boundary_id=future_macro_capture_boundary_not_designed".to_string(),
+                "operation_id=macro_capture".to_string(),
+                "semantic_fact_owners=OxReplay|DnaOneCalcHost|OxFml|OxFunc".to_string(),
+                "upstream_semantic_facts=replay_action_stream_capture|formula_semantic_effect_classification|function_side_effect_and_observation_classification".to_string(),
+                "host_owned_facts=macro_recording_session_controls|macro_capture_retention_policy".to_string(),
+                "shared_replay_inputs=future_macro_capture_bundle|future_macro_explain_query".to_string(),
+                "seam_gaps=macro_capture_pipeline_not_proven|no_host_macro_dsl_exists|no_cross_library_semantic_log_contract_exists".to_string(),
+                "status=not_designed".to_string(),
             ]
         );
     }
@@ -1627,6 +1688,7 @@ mod tests {
         let replay_capture = fixture.emit_replay_capture(&store, &persisted);
 
         assert!(replay_capture.capture_path.exists());
+        assert!(replay_capture.bundle_manifest_path.exists());
         assert!(replay_capture.replay_path.exists());
         assert_eq!(
             replay_capture.capture.envelope.artifact_kind,
@@ -1654,6 +1716,10 @@ mod tests {
             .open_replay_capture(&store, &replay_capture.capture.replay_capture_id)
             .expect("replay capture should open");
         assert!(opened.replay_ready);
+        assert_eq!(opened.bundle_validation_status, "valid");
+        assert_eq!(opened.bundle_projection_status, "lossless");
+        assert_eq!(opened.bundle_capture_loss, "none");
+        assert!(opened.bundle_manifest_path.ends_with(".bundle.json"));
         assert_eq!(
             opened.replay_floor,
             "cap.C1.replay_valid (normalized_replay_open)"
@@ -1669,6 +1735,20 @@ mod tests {
             Some("CommittedOrRejected")
         );
         assert!(opened.projection_alias.is_none());
+
+        let bundle_report = fixture
+            .adapter
+            .validate_replay_capture_bundle(&store, &replay_capture.capture.replay_capture_id)
+            .expect("replay bundle should validate");
+        assert_eq!(bundle_report.status, oxreplay_bundle::ValidationStatus::Valid);
+        assert_eq!(
+            bundle_report.bundle_id.as_deref(),
+            Some(replay_capture.capture.replay_capture_id.as_str())
+        );
+        assert_eq!(
+            bundle_report.scenario_id.as_deref(),
+            Some(opened.scenario_id.as_str())
+        );
     }
 
     #[test]
@@ -1795,6 +1875,73 @@ mod tests {
         assert_eq!(diff.diff_floor, "retained_artifact_direct_diff");
         assert!(!first_replay.capture.replay_capture_id.is_empty());
         assert!(!second_replay.capture.replay_capture_id.is_empty());
+    }
+
+    #[test]
+    fn retained_runs_map_onto_current_oxreplay_diff_and_explain_inputs_without_local_reinterpretation(
+    ) {
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let fixture_root = FixtureRoot::new("replay-contracts");
+        let store = fixture_root.retained_store();
+
+        let (left_context, left_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        let left = fixture.persist_run(
+            &store,
+            &left_context,
+            &left_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        fixture.emit_replay_capture(&store, &left);
+
+        let (right_context, right_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumShifted, 46_001.0, 0.25);
+        let right = fixture.persist_run(
+            &store,
+            &right_context,
+            &right_summary,
+            FormulaScenarioFamily::RetainedSumShifted,
+        );
+        fixture.emit_replay_capture(&store, &right);
+
+        let replay_diff = fixture
+            .adapter
+            .diff_retained_run_replay_inputs(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("retained runs should map onto the current oxreplay diff surface");
+        assert!(replay_diff.equivalent);
+        assert!(replay_diff.mismatches.is_empty());
+
+        let explain = fixture
+            .adapter
+            .explain_retained_run_replay_diff(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("retained runs should map onto the current oxreplay explain surface");
+        assert_eq!(explain.query_id, "explain-equivalent");
+        assert_eq!(
+            explain.summary,
+            "scenarios are equivalent on the current normalized replay surface"
+        );
+
+        let retained_diff = fixture
+            .adapter
+            .diff_retained_run_xray(
+                &store,
+                &left.run.scenario_run_id,
+                &right.run.scenario_run_id,
+            )
+            .expect("host-local retained diff should remain available");
+        assert!(retained_diff.formula_text_changed);
+        assert!(!retained_diff.worksheet_value_match);
     }
 
     #[test]
