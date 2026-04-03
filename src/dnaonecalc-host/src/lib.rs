@@ -68,13 +68,14 @@ pub use runtime::{
     DrivenRunComparison, DrivenSingleFormulaHost, FormulaEditPacketSummary, FormulaEditorSession,
     FormulaEvaluationSummary, FunctionHelpSummary, HostPacketKind, OneCalcHostProfile,
     OpenedCapabilitySnapshotSummary, OpenedHandoffPacketSummary, OpenedOneCalcWorkspace,
-    OpenedReplayCaptureSummary, OpenedTwinCompareSummary, OpenedWitnessSummary, PlatformGate,
-    PromotedScenarioIndex, PromotedScenarioIndexRow, PromotedScenarioRegressionSummary,
-    RecalcContext, RecalcTriggerKind, ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument,
-    ReplayAwareOperationKind, ReplayAwareOperationSummary, RetainedRunDiffSummary,
-    RetainedRunReopenInvariantReport, RetainedRunXRaySummary, RuntimeAdapter,
-    ScenarioLibraryFilter, ScenarioLibrarySavedView, ScenarioLineageRef, ScenarioSelectionAction,
-    ScenarioSelectionDetail, UpstreamPressurePacket,
+    OpenedReplayCaptureSummary, OpenedTwinCompareSummary, OpenedWitnessSummary, OpenedXRaySummary,
+    PlatformGate, PromotedScenarioIndex, PromotedScenarioIndexRow,
+    PromotedScenarioRegressionSummary, RecalcContext, RecalcTriggerKind,
+    ReopenedDrivenSingleFormulaRun, ReopenedOneCalcDocument, ReplayAwareOperationKind,
+    ReplayAwareOperationSummary, RetainedRunDiffSummary, RetainedRunReopenInvariantReport,
+    RetainedRunXRaySummary, RuntimeAdapter, ScenarioLibraryFilter, ScenarioLibrarySavedView,
+    ScenarioLineageRef, ScenarioSelectionAction, ScenarioSelectionDetail, UpstreamPressurePacket,
+    XRayBindSummary, XRayEvalSummary, XRayParseSummary, XRayProvenanceSummary, XRayTraceSummary,
 };
 pub use shell::{launch_shell, launch_shell_with_formula, OneCalcShellApp};
 pub use workspace::{
@@ -173,29 +174,63 @@ mod tests {
 
     fn retained_xray_golden_lines(xray: &RetainedRunXRaySummary) -> Vec<String> {
         vec![
-            format!("packet_kind={}", xray.packet_kind),
-            format!("worksheet_value={}", xray.worksheet_value_summary),
-            format!("payload={}", xray.payload_summary),
-            format!("effective_display={}", xray.effective_display_status),
-            format!("formatting_truth_plane={}", xray.formatting_truth_plane),
+            format!(
+                "packet_kind={}",
+                xray.provenance.latest_host_driving_packet_kind
+            ),
+            format!(
+                "worksheet_value={}",
+                xray.evaluation
+                    .as_ref()
+                    .map(|value| value.worksheet_value_summary.as_str())
+                    .unwrap_or("none")
+            ),
+            format!(
+                "payload={}",
+                xray.evaluation
+                    .as_ref()
+                    .map(|value| value.payload_summary.as_str())
+                    .unwrap_or("none")
+            ),
+            format!(
+                "effective_display={}",
+                xray.evaluation
+                    .as_ref()
+                    .map(|value| value.effective_display_status.as_str())
+                    .unwrap_or("none")
+            ),
+            format!(
+                "formatting_truth_plane={}",
+                xray.provenance.formatting_truth_plane
+            ),
             format!(
                 "conditional_formatting_scope={}",
-                xray.conditional_formatting_scope
+                xray.provenance.conditional_formatting_scope
             ),
-            format!("blocked_dimensions={}", xray.blocked_dimensions.join("|")),
+            format!(
+                "blocked_dimensions={}",
+                xray.provenance.blocked_dimensions.join("|")
+            ),
             format!(
                 "replay_floor={}",
-                xray.replay_floor.as_deref().unwrap_or("none")
+                xray.trace
+                    .as_ref()
+                    .and_then(|value| value.replay_floor.as_deref())
+                    .unwrap_or("none")
             ),
             format!(
                 "replay_projection_family={}",
-                xray.replay_projection_source_artifact_family
-                    .as_deref()
+                xray.trace
+                    .as_ref()
+                    .and_then(|value| value.replay_projection_source_artifact_family.as_deref())
                     .unwrap_or("none")
             ),
             format!(
                 "replay_projection_phase={}",
-                xray.replay_projection_phase.as_deref().unwrap_or("none")
+                xray.trace
+                    .as_ref()
+                    .and_then(|value| value.replay_projection_phase.as_deref())
+                    .unwrap_or("none")
             ),
         ]
     }
@@ -1669,33 +1704,53 @@ mod tests {
             .adapter
             .open_retained_run_xray(&store, &first.run.scenario_run_id)
             .expect("retained X-Ray should open");
-        assert_eq!(xray.scenario_id, first.scenario.scenario_id);
-        assert_eq!(xray.scenario_run_id, first.run.scenario_run_id);
         assert_eq!(
-            xray.replay_capture_id.as_deref(),
+            xray.provenance.scenario_id.as_deref(),
+            Some(first.scenario.scenario_id.as_str())
+        );
+        assert_eq!(
+            xray.provenance.scenario_run_id.as_deref(),
+            Some(first.run.scenario_run_id.as_str())
+        );
+        assert_eq!(
+            xray.trace
+                .as_ref()
+                .and_then(|value| value.replay_capture_id.as_deref()),
             Some(first_replay.capture.replay_capture_id.as_str())
         );
         assert_eq!(
-            xray.replay_floor.as_deref(),
+            xray.trace
+                .as_ref()
+                .and_then(|value| value.replay_floor.as_deref()),
             Some("cap.C1.replay_valid (normalized_replay_open)")
         );
         assert_eq!(
-            xray.replay_projection_source_artifact_family.as_deref(),
+            xray.trace
+                .as_ref()
+                .and_then(|value| { value.replay_projection_source_artifact_family.as_deref() }),
             Some("runtime_formula_result")
         );
         assert_eq!(
-            xray.replay_projection_phase.as_deref(),
+            xray.trace
+                .as_ref()
+                .and_then(|value| value.replay_projection_phase.as_deref()),
             Some("CommittedOrRejected")
         );
-        assert!(xray.replay_projection_alias.is_none());
+        assert!(xray
+            .trace
+            .as_ref()
+            .and_then(|value| value.replay_projection_alias.as_ref())
+            .is_none());
         assert_eq!(
-            xray.formatting_truth_plane,
+            xray.provenance.formatting_truth_plane,
             "returned_presentation_hint+host_style_state=>effective_display"
         );
         assert!(xray
+            .provenance
             .conditional_formatting_scope
             .contains("Conditional Formatting: admitted="));
         assert!(xray
+            .provenance
             .blocked_dimensions
             .contains(&"conditional_formatting_rules_not_attached_to_retained_run".to_string()));
         assert_eq!(

@@ -1143,17 +1143,17 @@ fn run_xray_diff_smoke() {
     println!("dnaonecalc-host xray diff smoke");
     println!(
         "xray=run:{};worksheet_value:{};capability_snapshot:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};replay_capture:{};replay_floor:{};replay_projection_family:{};replay_projection_phase:{};replay_projection_alias:{}",
-        xray.scenario_run_id,
-        xray.worksheet_value_summary,
-        xray.capability_snapshot_id,
-        xray.formatting_truth_plane,
-        xray.conditional_formatting_scope.replace(": ", "=").replace(" ", "_"),
-        xray.blocked_dimensions.join(","),
-        xray.replay_capture_id.as_deref().unwrap_or("none"),
-        xray.replay_floor.as_deref().unwrap_or("none"),
-        xray.replay_projection_source_artifact_family.as_deref().unwrap_or("none"),
-        xray.replay_projection_phase.as_deref().unwrap_or("none"),
-        xray.replay_projection_alias.as_deref().unwrap_or("none")
+        xray.provenance.scenario_run_id.as_deref().unwrap_or("none"),
+        xray.evaluation.as_ref().map(|value| value.worksheet_value_summary.as_str()).unwrap_or("none"),
+        xray.provenance.latest_capability_snapshot_id,
+        xray.provenance.formatting_truth_plane,
+        xray.provenance.conditional_formatting_scope.replace(": ", "=").replace(" ", "_"),
+        xray.provenance.blocked_dimensions.join(","),
+        xray.trace.as_ref().and_then(|value| value.replay_capture_id.as_deref()).unwrap_or("none"),
+        xray.trace.as_ref().and_then(|value| value.replay_floor.as_deref()).unwrap_or("none"),
+        xray.trace.as_ref().and_then(|value| value.replay_projection_source_artifact_family.as_deref()).unwrap_or("none"),
+        xray.trace.as_ref().and_then(|value| value.replay_projection_phase.as_deref()).unwrap_or("none"),
+        xray.trace.as_ref().and_then(|value| value.replay_projection_alias.as_deref()).unwrap_or("none")
     );
     println!(
         "diff=left:{};right:{};formula_text_changed:{};worksheet_value_match:{};capability_snapshot_changed:{};replay_pair_openable:{};formatting_truth:{};conditional_formatting_scope:{};blocked:{};floor:{}",

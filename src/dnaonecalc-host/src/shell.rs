@@ -7,7 +7,8 @@ use crate::{
     ArrayPreviewSummary, CapabilitySnapshotDiffSummary, CompletionProposalSummary,
     FormulaEditPacketSummary, FormulaEditorSession, FormulaEvaluationSummary, FunctionHelpSummary,
     IsolatedConditionalFormattingCarrier, OneCalcHostProfile, OpenedCapabilitySnapshotSummary,
-    RetainedScenarioStore, RuntimeAdapter,
+    OpenedXRaySummary, RetainedScenarioStore, RuntimeAdapter, XRayBindSummary, XRayEvalSummary,
+    XRayParseSummary, XRayProvenanceSummary, XRayTraceSummary,
 };
 
 pub const FORMULA_REGION_ID: &str = "formula";
@@ -158,59 +159,7 @@ struct ExplorerRegressionState {
     diagnostics_height_fraction: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ParseXRayView {
-    formula_token: String,
-    diagnostic_count: usize,
-    text_change_range: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BindXRayView {
-    reused_green_tree: bool,
-    reused_red_projection: bool,
-    reused_bound_formula: bool,
-    current_help_name: String,
-    availability_summary: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EvalXRayView {
-    worksheet_value_summary: String,
-    payload_summary: String,
-    effective_display_status: String,
-    returned_surface_kind: String,
-    returned_presentation_hint_status: String,
-    host_style_state_status: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TraceXRayView {
-    trace_event_count: usize,
-    commit_decision_kind: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProvenanceXRayView {
-    host_profile_id: String,
-    platform_gate_text: String,
-    latest_host_driving_packet_kind: String,
-    packet_register_text: String,
-    latest_capability_snapshot_id: String,
-    capability_floor: String,
-    runtime_class: String,
-    function_surface_policy_id: String,
-    mode_availability_summary: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ShellXRayModel {
-    parse: ParseXRayView,
-    bind: BindXRayView,
-    evaluation: Option<EvalXRayView>,
-    trace: Option<TraceXRayView>,
-    provenance: ProvenanceXRayView,
-}
+type ShellXRayModel = OpenedXRaySummary;
 
 pub struct OneCalcShellApp {
     runtime_adapter: RuntimeAdapter,
@@ -367,15 +316,15 @@ impl OneCalcShellApp {
     }
 
     fn xray_model(&self) -> ShellXRayModel {
-        let parse = ParseXRayView {
+        let parse = XRayParseSummary {
             formula_token: self.latest_edit_packet.formula_token.clone(),
             diagnostic_count: self.latest_edit_packet.diagnostic_count,
             text_change_range: format!("{:?}", self.latest_edit_packet.text_change_range),
         };
-        let bind = BindXRayView {
-            reused_green_tree: self.latest_edit_packet.reused_green_tree,
-            reused_red_projection: self.latest_edit_packet.reused_red_projection,
-            reused_bound_formula: self.latest_edit_packet.reused_bound_formula,
+        let bind = XRayBindSummary {
+            reused_green_tree: Some(self.latest_edit_packet.reused_green_tree),
+            reused_red_projection: Some(self.latest_edit_packet.reused_red_projection),
+            reused_bound_formula: Some(self.latest_edit_packet.reused_bound_formula),
             current_help_name: self
                 .function_help
                 .as_ref()
@@ -387,22 +336,32 @@ impl OneCalcShellApp {
                 .map(|help| help.availability_summary.clone())
                 .unwrap_or_else(|| "unavailable".to_string()),
         };
-        let evaluation = self.latest_evaluation.as_ref().map(|summary| EvalXRayView {
-            worksheet_value_summary: summary.worksheet_value_summary.clone(),
-            payload_summary: summary.payload_summary.clone(),
-            effective_display_status: summary.effective_display_status.clone(),
-            returned_surface_kind: summary.returned_value_surface_kind.clone(),
-            returned_presentation_hint_status: summary.returned_presentation_hint_status.clone(),
-            host_style_state_status: summary.host_style_state_status.clone(),
-        });
+        let evaluation = self
+            .latest_evaluation
+            .as_ref()
+            .map(|summary| XRayEvalSummary {
+                worksheet_value_summary: summary.worksheet_value_summary.clone(),
+                payload_summary: summary.payload_summary.clone(),
+                effective_display_status: summary.effective_display_status.clone(),
+                returned_surface_kind: summary.returned_value_surface_kind.clone(),
+                returned_presentation_hint_status: summary
+                    .returned_presentation_hint_status
+                    .clone(),
+                host_style_state_status: summary.host_style_state_status.clone(),
+            });
         let trace = self
             .latest_evaluation
             .as_ref()
-            .map(|summary| TraceXRayView {
+            .map(|summary| XRayTraceSummary {
                 trace_event_count: summary.trace_event_count,
                 commit_decision_kind: summary.commit_decision_kind.clone(),
+                replay_capture_id: None,
+                replay_floor: None,
+                replay_projection_source_artifact_family: None,
+                replay_projection_phase: None,
+                replay_projection_alias: None,
             });
-        let provenance = ProvenanceXRayView {
+        let provenance = XRayProvenanceSummary {
             host_profile_id: self.host_profile_id.clone(),
             platform_gate_text: self.platform_gate_text.clone(),
             latest_host_driving_packet_kind: self.latest_host_driving_packet_kind.clone(),
@@ -442,9 +401,16 @@ impl OneCalcShellApp {
                         .join("|")
                 })
                 .unwrap_or_else(|| "unavailable".to_string()),
+            scenario_id: None,
+            scenario_run_id: None,
+            formula_text: None,
+            formula_text_version: None,
+            formatting_truth_plane: "formatting_truth_not_opened".to_string(),
+            conditional_formatting_scope: "conditional_formatting_truth_not_opened".to_string(),
+            blocked_dimensions: Vec::new(),
         };
 
-        ShellXRayModel {
+        OpenedXRaySummary {
             parse,
             bind,
             evaluation,
@@ -867,9 +833,9 @@ impl OneCalcShellApp {
                             ui.separator();
                             ui.monospace(format!(
                                 "reused_green_tree={}\nreused_red_projection={}\nreused_bound_formula={}\ncurrent_help={}\navailability={}",
-                                xray.bind.reused_green_tree,
-                                xray.bind.reused_red_projection,
-                                xray.bind.reused_bound_formula,
+                                option_bool_text(xray.bind.reused_green_tree),
+                                option_bool_text(xray.bind.reused_red_projection),
+                                option_bool_text(xray.bind.reused_bound_formula),
                                 xray.bind.current_help_name,
                                 xray.bind.availability_summary
                             ));
@@ -898,8 +864,14 @@ impl OneCalcShellApp {
                             ui.separator();
                             if let Some(summary) = &xray.trace {
                                 ui.monospace(format!(
-                                    "trace_event_count={}\ncommit_decision={}",
-                                    summary.trace_event_count, summary.commit_decision_kind
+                                    "trace_event_count={}\ncommit_decision={}\nreplay_capture={}\nreplay_floor={}\nreplay_projection_family={}\nreplay_projection_phase={}\nreplay_projection_alias={}",
+                                    summary.trace_event_count,
+                                    summary.commit_decision_kind,
+                                    summary.replay_capture_id.as_deref().unwrap_or("none"),
+                                    summary.replay_floor.as_deref().unwrap_or("none"),
+                                    summary.replay_projection_source_artifact_family.as_deref().unwrap_or("none"),
+                                    summary.replay_projection_phase.as_deref().unwrap_or("none"),
+                                    summary.replay_projection_alias.as_deref().unwrap_or("none")
                                 ));
                             } else {
                                 ui.small("Trace truth appears after evaluation.");
@@ -910,7 +882,7 @@ impl OneCalcShellApp {
                             ui.label("Provenance");
                             ui.separator();
                             ui.monospace(format!(
-                                "host_profile={}\nplatform_gate={}\nhost_driving_packet_kind={}\npacket_register={}\nlatest_capability_snapshot={}\ncapability_floor={}\nruntime_class={}\nfunction_surface_policy={}\nmode_availability={}",
+                                "host_profile={}\nplatform_gate={}\nhost_driving_packet_kind={}\npacket_register={}\nlatest_capability_snapshot={}\ncapability_floor={}\nruntime_class={}\nfunction_surface_policy={}\nmode_availability={}\nscenario_id={}\nscenario_run_id={}\nformula_text_version={}\nformatting_truth_plane={}\nconditional_formatting_scope={}\nblocked_dimensions={}",
                                 xray.provenance.host_profile_id,
                                 xray.provenance.platform_gate_text,
                                 xray.provenance.latest_host_driving_packet_kind,
@@ -919,7 +891,20 @@ impl OneCalcShellApp {
                                 xray.provenance.capability_floor,
                                 xray.provenance.runtime_class,
                                 xray.provenance.function_surface_policy_id,
-                                xray.provenance.mode_availability_summary
+                                xray.provenance.mode_availability_summary,
+                                xray.provenance.scenario_id.as_deref().unwrap_or("none"),
+                                xray.provenance.scenario_run_id.as_deref().unwrap_or("none"),
+                                xray.provenance
+                                    .formula_text_version
+                                    .map(|value| value.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                xray.provenance.formatting_truth_plane,
+                                xray.provenance.conditional_formatting_scope,
+                                if xray.provenance.blocked_dimensions.is_empty() {
+                                    "none".to_string()
+                                } else {
+                                    xray.provenance.blocked_dimensions.join("|")
+                                }
                             ));
                         });
                     });
@@ -1194,6 +1179,14 @@ fn extract_presentation_hint_field(summary: &str, field: &str) -> Option<String>
         .split(';')
         .find_map(|segment| segment.strip_prefix(&prefix))
         .map(|value| value.to_string())
+}
+
+fn option_bool_text(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unavailable",
+    }
 }
 
 fn decode_display_text(summary: &str) -> String {

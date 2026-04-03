@@ -581,26 +581,72 @@ pub struct OpenedReplayCaptureSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RetainedRunXRaySummary {
-    pub scenario_id: String,
-    pub scenario_run_id: String,
-    pub formula_text: String,
-    pub formula_text_version: u64,
-    pub host_profile_id: String,
-    pub packet_kind: String,
+pub struct XRayParseSummary {
+    pub formula_token: String,
+    pub diagnostic_count: usize,
+    pub text_change_range: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XRayBindSummary {
+    pub reused_green_tree: Option<bool>,
+    pub reused_red_projection: Option<bool>,
+    pub reused_bound_formula: Option<bool>,
+    pub current_help_name: String,
+    pub availability_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XRayEvalSummary {
     pub worksheet_value_summary: String,
     pub payload_summary: String,
     pub effective_display_status: String,
-    pub formatting_truth_plane: String,
-    pub conditional_formatting_scope: String,
-    pub blocked_dimensions: Vec<String>,
-    pub capability_snapshot_id: String,
+    pub returned_surface_kind: String,
+    pub returned_presentation_hint_status: String,
+    pub host_style_state_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XRayTraceSummary {
+    pub trace_event_count: usize,
+    pub commit_decision_kind: String,
     pub replay_capture_id: Option<String>,
     pub replay_floor: Option<String>,
     pub replay_projection_source_artifact_family: Option<String>,
     pub replay_projection_phase: Option<String>,
     pub replay_projection_alias: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XRayProvenanceSummary {
+    pub host_profile_id: String,
+    pub platform_gate_text: String,
+    pub latest_host_driving_packet_kind: String,
+    pub packet_register_text: String,
+    pub latest_capability_snapshot_id: String,
+    pub capability_floor: String,
+    pub runtime_class: String,
+    pub function_surface_policy_id: String,
+    pub mode_availability_summary: String,
+    pub scenario_id: Option<String>,
+    pub scenario_run_id: Option<String>,
+    pub formula_text: Option<String>,
+    pub formula_text_version: Option<u64>,
+    pub formatting_truth_plane: String,
+    pub conditional_formatting_scope: String,
+    pub blocked_dimensions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedXRaySummary {
+    pub parse: XRayParseSummary,
+    pub bind: XRayBindSummary,
+    pub evaluation: Option<XRayEvalSummary>,
+    pub trace: Option<XRayTraceSummary>,
+    pub provenance: XRayProvenanceSummary,
+}
+
+pub type RetainedRunXRaySummary = OpenedXRaySummary;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetainedRunDiffSummary {
@@ -2252,6 +2298,7 @@ impl RuntimeAdapter {
             .ok_or_else(|| format!("run {scenario_run_id} is missing a capability snapshot ref"))?
             .logical_id
             .clone();
+        let capability_snapshot = store.read_capability_snapshot(&capability_snapshot_id)?;
         let (
             replay_capture_id,
             replay_floor,
@@ -2275,27 +2322,66 @@ impl RuntimeAdapter {
             .transpose()?
             .unwrap_or((None, None, None, None, None));
 
-        Ok(RetainedRunXRaySummary {
-            scenario_id: reopened.scenario.scenario_id,
-            scenario_run_id: reopened.run.scenario_run_id,
-            formula_text: reopened.scenario.formula_text,
-            formula_text_version: reopened.run.formula_text_version,
-            host_profile_id: reopened.scenario.host_profile_id,
-            packet_kind: reopened.scenario.host_driving_packet_kind,
-            worksheet_value_summary: reopened.run.worksheet_value_summary,
-            payload_summary: reopened.run.payload_summary,
-            effective_display_status: reopened.run.effective_display_status,
-            formatting_truth_plane: formatting_truth_plane().to_string(),
-            conditional_formatting_scope: conditional_formatting_truth_plane(),
-            blocked_dimensions: vec![
-                "conditional_formatting_rules_not_attached_to_retained_run".to_string()
-            ],
-            capability_snapshot_id,
-            replay_capture_id,
-            replay_floor,
-            replay_projection_source_artifact_family,
-            replay_projection_phase,
-            replay_projection_alias,
+        Ok(OpenedXRaySummary {
+            parse: XRayParseSummary {
+                formula_token: reopened.run.formula_token,
+                diagnostic_count: 0,
+                text_change_range: "unavailable_on_reopen".to_string(),
+            },
+            bind: XRayBindSummary {
+                reused_green_tree: None,
+                reused_red_projection: None,
+                reused_bound_formula: None,
+                current_help_name: "unavailable_on_reopen".to_string(),
+                availability_summary: "unavailable_on_reopen".to_string(),
+            },
+            evaluation: Some(XRayEvalSummary {
+                worksheet_value_summary: reopened.run.worksheet_value_summary,
+                payload_summary: reopened.run.payload_summary,
+                effective_display_status: reopened.run.effective_display_status,
+                returned_surface_kind: reopened.run.returned_value_surface_kind,
+                returned_presentation_hint_status: "unavailable_on_reopen".to_string(),
+                host_style_state_status: "unavailable_on_reopen".to_string(),
+            }),
+            trace: Some(XRayTraceSummary {
+                trace_event_count: reopened
+                    .run
+                    .replay_projection
+                    .as_ref()
+                    .map(|projection| projection.trace_event_kinds.len())
+                    .unwrap_or_default(),
+                commit_decision_kind: reopened.run.commit_decision_kind,
+                replay_capture_id,
+                replay_floor,
+                replay_projection_source_artifact_family,
+                replay_projection_phase,
+                replay_projection_alias,
+            }),
+            provenance: XRayProvenanceSummary {
+                host_profile_id: reopened.scenario.host_profile_id,
+                platform_gate_text: self.platform_gate().message().to_string(),
+                latest_host_driving_packet_kind: reopened.scenario.host_driving_packet_kind,
+                packet_register_text: capability_snapshot.packet_kind_register.join(", "),
+                latest_capability_snapshot_id: capability_snapshot_id,
+                capability_floor: capability_snapshot.capability_floor,
+                runtime_class: capability_snapshot.runtime_class,
+                function_surface_policy_id: capability_snapshot.function_surface_policy_id,
+                mode_availability_summary: capability_snapshot
+                    .mode_availability
+                    .iter()
+                    .map(|mode| format!("{}:{}", mode.mode_id, mode.state))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+                scenario_id: Some(reopened.scenario.scenario_id),
+                scenario_run_id: Some(reopened.run.scenario_run_id),
+                formula_text: Some(reopened.scenario.formula_text),
+                formula_text_version: Some(reopened.run.formula_text_version),
+                formatting_truth_plane: formatting_truth_plane().to_string(),
+                conditional_formatting_scope: conditional_formatting_truth_plane(),
+                blocked_dimensions: vec![
+                    "conditional_formatting_rules_not_attached_to_retained_run".to_string(),
+                ],
+            },
         })
     }
 
