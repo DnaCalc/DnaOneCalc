@@ -2424,6 +2424,9 @@ mod tests {
                 "SUM capsule",
             )
             .expect("retained run should persist");
+        let replay_capture = adapter
+            .emit_replay_capture_for_run(&export_store, &persisted_run.run.scenario_run_id)
+            .expect("capsule replay capture should emit");
         let exported = adapter
             .export_scenario_capsule(
                 &export_store,
@@ -2438,6 +2441,8 @@ mod tests {
         );
         assert_eq!(exported.manifest.lineage_roots.len(), 1);
         assert_eq!(exported.manifest.capability_snapshot_refs.len(), 1);
+        assert_eq!(exported.manifest.included_artifacts.len(), 4);
+        assert_eq!(exported.manifest.included_attachments.len(), 1);
         assert_eq!(
             exported.manifest.capability_snapshot_refs[0].logical_id,
             persisted_run
@@ -2445,12 +2450,16 @@ mod tests {
                 .snapshot
                 .capability_snapshot_id
         );
+        assert_eq!(
+            exported.manifest.included_attachments[0].attachment_ref,
+            replay_capture.capture.replay_capture_id
+        );
 
         let imported = adapter
             .import_scenario_capsule(&import_store, &exported.capsule_root)
             .expect("ScenarioCapsule intake should succeed");
 
-        assert_eq!(imported.imported_paths.len(), 3);
+        assert_eq!(imported.imported_paths.len(), 5);
         assert!(imported.deduped_paths.is_empty());
         assert!(imported.conflict_paths.is_empty());
         assert!(imported.manifest_copy_path.exists());
@@ -2484,6 +2493,21 @@ mod tests {
                 .logical_id,
             persisted_run.scenario.scenario_id
         );
+        assert!(import_store
+            .root()
+            .join("imports")
+            .join("replay-captures")
+            .join(format!("{}.json", replay_capture.capture.replay_capture_id))
+            .exists());
+        assert!(import_store
+            .root()
+            .join("imports")
+            .join("replay-captures")
+            .join(format!(
+                "{}.replay.json",
+                replay_capture.capture.replay_capture_id
+            ))
+            .exists());
 
         let _ = fs::remove_dir_all(&root);
     }

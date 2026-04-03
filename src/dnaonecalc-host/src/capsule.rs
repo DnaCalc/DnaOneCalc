@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::{stable_hash, StableArtifactRef};
 use crate::retained::{
-    CapabilityLedgerSnapshotRecord, RetainedScenarioStore, ScenarioRecord, ScenarioRunRecord,
+    CapabilityLedgerSnapshotRecord, ReplayCaptureRecord, RetainedScenarioStore, ScenarioRecord,
+    ScenarioRunRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,8 +20,11 @@ pub struct ScenarioCapsuleArtifactEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenarioCapsuleAttachmentEntry {
+    pub attachment_kind: String,
     pub attachment_ref: String,
+    pub relative_path: String,
     pub content_hash: String,
+    pub integrity_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +80,7 @@ pub fn export_scenario_capsule(
     }
 
     let mut capabilities = Vec::new();
+    let mut replay_captures = Vec::new();
     for run in &runs {
         let snapshot_ref = run
             .envelope
@@ -96,6 +101,18 @@ pub fn export_scenario_capsule(
         {
             capabilities.push(capability);
         }
+
+        if let Some(replay_ref) = run.replay_capture_ref.as_ref() {
+            let replay_capture = store.read_replay_capture(&replay_ref.logical_id)?;
+            if !replay_captures
+                .iter()
+                .any(|existing: &ReplayCaptureRecord| {
+                    existing.replay_capture_id == replay_capture.replay_capture_id
+                })
+            {
+                replay_captures.push(replay_capture);
+            }
+        }
     }
 
     fs::create_dir_all(capsule_root).map_err(|error| error.to_string())?;
@@ -107,12 +124,14 @@ pub fn export_scenario_capsule(
         "witnesses",
         "handoffs",
         "capabilities",
+        "replay-captures",
         "attachments",
     ] {
         fs::create_dir_all(capsule_root.join(dir)).map_err(|error| error.to_string())?;
     }
 
     let mut inventory = Vec::new();
+    let mut included_attachments = Vec::new();
 
     let scenario_relative_path = format!("scenario/{}.json", scenario.scenario_id);
     write_pretty_json(capsule_root.join(&scenario_relative_path), &scenario)?;
@@ -148,6 +167,40 @@ pub fn export_scenario_capsule(
         ));
     }
 
+    for replay_capture in &replay_captures {
+        let relative_path = format!("replay-captures/{}.json", replay_capture.replay_capture_id);
+        write_pretty_json(capsule_root.join(&relative_path), replay_capture)?;
+        inventory.push(build_inventory_entry(
+            &relative_path,
+            &replay_capture.envelope.artifact_kind,
+            &replay_capture.replay_capture_id,
+            &replay_capture.envelope.content_hash,
+            &serde_json::to_string_pretty(replay_capture).map_err(|error| error.to_string())?,
+        ));
+
+        let replay_projection_body = fs::read_to_string(replay_projection_path(
+            store,
+            &replay_capture.replay_capture_id,
+        ))
+        .map_err(|error| error.to_string())?;
+        let replay_relative_path = format!(
+            "attachments/{}.replay.json",
+            replay_capture.replay_capture_id
+        );
+        fs::write(
+            capsule_root.join(&replay_relative_path),
+            &replay_projection_body,
+        )
+        .map_err(|error| error.to_string())?;
+        included_attachments.push(build_attachment_entry(
+            "oxfml_replay_projection",
+            &replay_capture.replay_capture_id,
+            &replay_relative_path,
+            &stable_hash(&replay_projection_body),
+            &replay_projection_body,
+        ));
+    }
+
     let manifest = ScenarioCapsuleManifest {
         capsule_id: format!(
             "capsule-{}-{}",
@@ -159,15 +212,15 @@ pub fn export_scenario_capsule(
         exporter_build_id: format!("dnaonecalc-host@{}", env!("CARGO_PKG_VERSION")),
         root_scenario_id: scenario.scenario_id.clone(),
         included_artifacts: inventory,
-        included_attachments: Vec::new(),
+        included_attachments,
         capability_snapshot_refs: capabilities
             .iter()
             .map(|capability| capability.envelope.stable_ref())
             .collect(),
         lineage_roots: vec![scenario.envelope.stable_ref()],
         omission_notes: vec![
-            "observations, comparisons, witnesses, handoffs, and attachments not yet exported in the current implementation".to_string(),
-            "export includes the authored scenario, selected retained runs, and governing capability snapshots only".to_string(),
+            "observations, comparisons, witnesses, and handoffs not yet exported in the current implementation".to_string(),
+            "export includes the authored scenario, selected retained runs, governing capability snapshots, replay captures, and replay projection attachments".to_string(),
         ],
     };
 
@@ -233,6 +286,44 @@ pub fn import_scenario_capsule(
         imported_paths.push(destination_path);
     }
 
+    for attachment in &manifest.included_attachments {
+        let source_path = capsule_root.join(&attachment.relative_path);
+        let body = fs::read_to_string(&source_path).map_err(|error| error.to_string())?;
+        let actual_integrity_hash = stable_hash(&body);
+        if actual_integrity_hash != attachment.integrity_hash {
+            return Err(format!(
+                "capsule attachment integrity mismatch for {}",
+                attachment.relative_path
+            ));
+        }
+
+        let destination_path = imported_attachment_path(store, attachment);
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        if destination_path.exists() {
+            let existing =
+                fs::read_to_string(&destination_path).map_err(|error| error.to_string())?;
+            let existing_hash = stable_hash(&existing);
+            if existing_hash == attachment.integrity_hash {
+                deduped_paths.push(destination_path);
+                continue;
+            }
+
+            let conflict_path = conflict_attachment_path(store, attachment);
+            if let Some(parent) = conflict_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(&conflict_path, body).map_err(|error| error.to_string())?;
+            conflict_paths.push(conflict_path);
+            continue;
+        }
+
+        fs::write(&destination_path, body).map_err(|error| error.to_string())?;
+        imported_paths.push(destination_path);
+    }
+
     let manifest_copy_path = store
         .root()
         .join("imports")
@@ -268,6 +359,22 @@ fn build_inventory_entry(
     }
 }
 
+fn build_attachment_entry(
+    attachment_kind: &str,
+    attachment_ref: &str,
+    relative_path: &str,
+    content_hash: &str,
+    body: &str,
+) -> ScenarioCapsuleAttachmentEntry {
+    ScenarioCapsuleAttachmentEntry {
+        attachment_kind: attachment_kind.to_string(),
+        attachment_ref: attachment_ref.to_string(),
+        relative_path: relative_path.to_string(),
+        content_hash: content_hash.to_string(),
+        integrity_hash: stable_hash(&body),
+    }
+}
+
 fn imported_artifact_path(
     store: &RetainedScenarioStore,
     artifact: &ScenarioCapsuleArtifactEntry,
@@ -294,13 +401,54 @@ fn conflict_artifact_path(
         ))
 }
 
+fn imported_attachment_path(
+    store: &RetainedScenarioStore,
+    attachment: &ScenarioCapsuleAttachmentEntry,
+) -> PathBuf {
+    store
+        .root()
+        .join("imports")
+        .join(import_attachment_dir_name(&attachment.attachment_kind))
+        .join(format!("{}.replay.json", attachment.attachment_ref))
+}
+
+fn conflict_attachment_path(
+    store: &RetainedScenarioStore,
+    attachment: &ScenarioCapsuleAttachmentEntry,
+) -> PathBuf {
+    store
+        .root()
+        .join("imports")
+        .join("conflicts")
+        .join(import_attachment_dir_name(&attachment.attachment_kind))
+        .join(format!(
+            "{}--{}.replay.json",
+            attachment.attachment_ref, attachment.integrity_hash
+        ))
+}
+
 fn import_dir_name(artifact_kind: &str) -> &'static str {
     match artifact_kind {
         "scenario" => "scenarios",
         "scenario_run" => "scenario-runs",
         "capability_ledger_snapshot" => "capability-snapshots",
+        "replay_capture" => "replay-captures",
         _ => "other-artifacts",
     }
+}
+
+fn import_attachment_dir_name(attachment_kind: &str) -> &'static str {
+    match attachment_kind {
+        "oxfml_replay_projection" => "replay-captures",
+        _ => "attachments",
+    }
+}
+
+fn replay_projection_path(store: &RetainedScenarioStore, replay_capture_id: &str) -> PathBuf {
+    store
+        .root()
+        .join("replay-captures")
+        .join(format!("{replay_capture_id}.replay.json"))
 }
 
 fn validate_artifact_identity(
@@ -340,6 +488,18 @@ fn validate_artifact_identity(
             {
                 return Err(format!(
                     "capability snapshot identity mismatch for {}",
+                    artifact.logical_id
+                ));
+            }
+        }
+        "replay_capture" => {
+            let record = serde_json::from_str::<ReplayCaptureRecord>(body)
+                .map_err(|error| error.to_string())?;
+            if record.replay_capture_id != artifact.logical_id
+                || record.envelope.content_hash != artifact.content_hash
+            {
+                return Err(format!(
+                    "replay capture identity mismatch for {}",
                     artifact.logical_id
                 ));
             }
