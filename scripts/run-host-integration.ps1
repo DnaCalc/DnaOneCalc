@@ -4,6 +4,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
     $checks = @(
+        "tests::retained_host_integration_family_carries_one_scenario_across_recalc_reopen_persistence_and_capsule_transport"
         "tests::h1_runs_persist_scenario_and_scenario_run_and_reopen_through_runtime"
         "tests::retained_run_xray_and_diff_surfaces_open_on_real_retained_data"
         "tests::retained_witness_generation_uses_real_diff_state_and_keeps_blocked_dimensions_explicit"

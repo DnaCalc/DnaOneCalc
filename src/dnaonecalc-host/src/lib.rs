@@ -2616,4 +2616,188 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn retained_host_integration_family_carries_one_scenario_across_recalc_reopen_persistence_and_capsule_transport(
+    ) {
+        let fixture_root = FixtureRoot::new("retained-host-integration");
+        let store = fixture_root.retained_store();
+        let import_store = RetainedScenarioStore::new(fixture_root.join("retained-import"));
+        let mut fixture = DrivenHostFixture::new(
+            OneCalcHostProfile::OcH1,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+
+        let (recalc_context, recalc_summary) =
+            fixture.edit_accept(FormulaScenarioFamily::RetainedSumBaseline, 46_000.0, 0.25);
+        assert_eq!(recalc_summary.evaluation.worksheet_value_summary, "Number(6)");
+        assert_eq!(recalc_summary.host_recalc_sequence, 1);
+
+        let persisted_run = fixture.persist_run(
+            &store,
+            &recalc_context,
+            &recalc_summary,
+            FormulaScenarioFamily::RetainedSumBaseline,
+        );
+        let replay_capture = fixture.emit_replay_capture(&store, &persisted_run);
+
+        let mut reopened_run = fixture
+            .adapter
+            .reopen_driven_scenario_run(&store, &persisted_run.run.scenario_run_id)
+            .expect("retained run should reopen in the promoted integration flow");
+        assert_eq!(
+            reopened_run.driven_host.session_state().session_id,
+            persisted_run.run.host_session_id
+        );
+        assert_eq!(
+            reopened_run.driven_host.session_state().recalc_sequence,
+            persisted_run.run.host_recalc_sequence
+        );
+
+        let reopened_context = RecalcContext::manual(Some(46_000.0), Some(0.25));
+        let reopened_summary = fixture
+            .adapter
+            .manual_recalc(&mut reopened_run.driven_host, reopened_context)
+            .expect("reopened retained run should recalc");
+        assert_eq!(reopened_summary.evaluation.worksheet_value_summary, "Number(6)");
+        assert_eq!(
+            reopened_summary.host_recalc_sequence,
+            persisted_run.run.host_recalc_sequence + 1
+        );
+
+        let document_path = fixture_root.join("retained-integration.onecalc.xml");
+        let persisted_document = fixture
+            .adapter
+            .persist_isolated_document(
+                &document_path,
+                &reopened_run.driven_host,
+                &reopened_context,
+                &reopened_summary,
+                "SUM retained integration",
+                Some(&persisted_run),
+            )
+            .expect("reopened retained run should persist as an isolated document");
+        assert_eq!(
+            persisted_document.document.governing_capability_snapshot_id,
+            Some(
+                persisted_run
+                    .capability_snapshot
+                    .snapshot
+                    .capability_snapshot_id
+                    .clone()
+            )
+        );
+
+        let mut reopened_document = fixture
+            .adapter
+            .reopen_isolated_document(&persisted_document.document_path)
+            .expect("isolated document should reopen");
+        assert_eq!(
+            reopened_document.driven_host.formula_text(),
+            persisted_run.scenario.formula_text
+        );
+        assert_eq!(
+            reopened_document.driven_host.session_state().session_id,
+            persisted_document.document.host_session_id
+        );
+
+        let reopened_document_context = RecalcContext::manual(Some(46_000.0), Some(0.25));
+        let reopened_document_summary = fixture
+            .adapter
+            .manual_recalc(
+                &mut reopened_document.driven_host,
+                reopened_document_context,
+            )
+            .expect("reopened document should recalc");
+        assert_eq!(
+            reopened_document_summary.evaluation.worksheet_value_summary,
+            "Number(6)"
+        );
+        assert_eq!(
+            reopened_document_summary.host_recalc_sequence,
+            persisted_document.document.host_recalc_sequence + 1
+        );
+
+        let persisted_workspace = fixture
+            .adapter
+            .persist_workspace_manifest(
+                fixture_root.join("retained-integration.workspace.json"),
+                "Retained Integration Workspace",
+                &[persisted_document.document_path.clone()],
+            )
+            .expect("workspace manifest should persist");
+        let opened_workspace = fixture
+            .adapter
+            .open_workspace(&persisted_workspace.manifest_path)
+            .expect("workspace manifest should reopen");
+        assert_eq!(opened_workspace.reopened_documents.len(), 1);
+        assert_eq!(
+            opened_workspace.reopened_documents[0].document.document_id,
+            persisted_document.document.document_id
+        );
+        assert_eq!(
+            opened_workspace.reopened_documents[0]
+                .document
+                .governing_capability_snapshot_id,
+            persisted_document.document.governing_capability_snapshot_id
+        );
+
+        let exported_capsule = fixture
+            .adapter
+            .export_scenario_capsule(
+                &store,
+                fixture_root.join("retained-integration-capsule"),
+                &[&persisted_run.run.scenario_run_id],
+            )
+            .expect("scenario capsule export should succeed");
+        let imported_capsule = fixture
+            .adapter
+            .import_scenario_capsule(&import_store, &exported_capsule.capsule_root)
+            .expect("scenario capsule intake should succeed");
+
+        assert_eq!(exported_capsule.manifest.included_artifacts.len(), 4);
+        assert_eq!(exported_capsule.manifest.included_attachments.len(), 1);
+        assert_eq!(imported_capsule.imported_paths.len(), 5);
+        assert!(imported_capsule.deduped_paths.is_empty());
+        assert!(imported_capsule.conflict_paths.is_empty());
+
+        let imported_run_body = fs::read_to_string(
+            import_store
+                .root()
+                .join("imports")
+                .join("scenario-runs")
+                .join(format!("{}.json", persisted_run.run.scenario_run_id)),
+        )
+        .expect("capsule intake should copy the retained run");
+        let imported_run: ScenarioRunRecord =
+            serde_json::from_str(&imported_run_body).expect("imported run should deserialize");
+        assert_eq!(imported_run.scenario_id, persisted_run.run.scenario_id);
+        assert_eq!(
+            imported_run
+                .envelope
+                .capability_snapshot_ref
+                .as_ref()
+                .expect("imported run should preserve governing capability snapshot")
+                .logical_id,
+            persisted_run
+                .capability_snapshot
+                .snapshot
+                .capability_snapshot_id
+        );
+        assert!(import_store
+            .root()
+            .join("imports")
+            .join("replay-captures")
+            .join(format!("{}.json", replay_capture.capture.replay_capture_id))
+            .exists());
+        assert!(import_store
+            .root()
+            .join("imports")
+            .join("replay-captures")
+            .join(format!(
+                "{}.replay.json",
+                replay_capture.capture.replay_capture_id
+            ))
+            .exists());
+    }
 }
