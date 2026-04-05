@@ -95,6 +95,16 @@ pub const ONECALC_THEME_CSS: &str = r#"
   background: var(--oc-color-surface);
 }
 
+.onecalc-shell-frame__space-button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+
 .onecalc-shell-frame__space-item--active {
   border-color: var(--oc-color-accent);
   box-shadow: var(--oc-shadow-panel);
@@ -114,7 +124,8 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-explore-shell__body {
-  grid-template-columns: minmax(0, 2fr) minmax(14rem, 1fr);
+  grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 1fr);
+  align-items: start;
 }
 
 .onecalc-inspect-shell__body,
@@ -140,6 +151,90 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border-radius: var(--oc-radius-panel);
   padding: var(--oc-space-4);
   box-shadow: var(--oc-shadow-panel);
+}
+
+.onecalc-explore-shell__panel-header,
+.onecalc-explore-shell__context-strip,
+.onecalc-explore-shell__result-metric,
+.onecalc-explore-shell__array-preview-header,
+.onecalc-inspect-shell__meta,
+.onecalc-workbench-shell__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--oc-space-2);
+  align-items: center;
+}
+
+.onecalc-explore-shell__scenario-label,
+.onecalc-explore-shell__truth-chip,
+.onecalc-explore-shell__context-strip > span,
+.onecalc-inspect-shell__meta > span,
+.onecalc-workbench-shell__meta > span,
+.onecalc-explore-shell__array-preview-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--oc-radius-pill);
+  background: #fbf6ed;
+  border: 1px solid var(--oc-color-border);
+  font-size: 0.85rem;
+}
+
+.onecalc-explore-shell__truth-chip,
+.onecalc-explore-shell__array-preview-badge {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+}
+
+.onecalc-explore-shell__trace-summary,
+.onecalc-explore-shell__blocked-reason,
+.onecalc-inspect-shell__context-card,
+.onecalc-workbench-shell__import-surface,
+.onecalc-workbench-shell__catalog-card,
+.onecalc-workbench-shell__evidence-card {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-explore-shell__blocked-reason {
+  color: #8a5f19;
+  background: #f4e4c6;
+  border: 1px solid #e1c48c;
+  border-radius: 12px;
+  padding: var(--oc-space-2) var(--oc-space-3);
+}
+
+.onecalc-explore-shell__result-metric {
+  justify-content: space-between;
+  padding: var(--oc-space-2) var(--oc-space-3);
+  border: 1px solid var(--oc-color-border);
+  border-radius: 10px;
+  background: #fbf6ed;
+}
+
+.onecalc-explore-shell__array-preview {
+  display: grid;
+  gap: var(--oc-space-2);
+  padding-top: var(--oc-space-3);
+  border-top: 1px solid var(--oc-color-border);
+}
+
+.onecalc-explore-shell__array-grid {
+  display: grid;
+  gap: var(--oc-space-1);
+}
+
+.onecalc-explore-shell__array-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(3rem, 1fr));
+  gap: var(--oc-space-1);
+}
+
+.onecalc-explore-shell__array-cell {
+  padding: var(--oc-space-2);
+  border-radius: 8px;
+  background: #fbf6ed;
+  border: 1px solid var(--oc-color-border);
+  font-family: var(--oc-font-mono);
+  text-align: center;
 }
 
 .onecalc-explore-shell__editor-text,
@@ -361,6 +456,14 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-workbench-shell__import-outcome-guide {
   display: grid;
   gap: var(--oc-space-2);
+}
+
+.onecalc-inspect-shell__context-card {
+  margin-bottom: var(--oc-space-3);
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  background: #fbf6ed;
+  border: 1px solid var(--oc-color-border);
 }
 
 .onecalc-inspect-shell__retained-context {

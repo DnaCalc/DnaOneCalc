@@ -89,7 +89,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
             state.formula_spaces.get(formula_space_id).map(|formula_space| {
                 ShellFormulaSpaceListItemViewModel {
                     formula_space_id: formula_space.formula_space_id.as_str().to_string(),
-                    label: formula_space.formula_space_id.as_str().to_string(),
+                    label: formula_space.context.scenario_label.clone(),
                     is_active: &formula_space.formula_space_id == active_formula_space_id,
                     is_pinned: state
                         .workspace_shell
@@ -101,7 +101,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         .collect();
 
     Some(ShellFrameViewModel {
-        active_formula_space_label: active_formula_space_id.as_str().to_string(),
+        active_formula_space_label: active_formula_space.context.scenario_label.clone(),
         mode_tabs,
         formula_spaces,
     })
@@ -109,6 +109,21 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
 
 pub fn switch_active_mode(state: &mut OneCalcHostState, next_mode: AppMode) {
     state.active_formula_space_view.active_mode = next_mode;
+}
+
+pub fn select_active_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) {
+    let Some(formula_space_id) = state
+        .workspace_shell
+        .open_formula_space_order
+        .iter()
+        .find(|id| id.as_str() == formula_space_id)
+        .cloned()
+    else {
+        return;
+    };
+
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id);
 }
 
 #[cfg(test)]
@@ -214,6 +229,32 @@ mod tests {
         switch_active_mode(&mut state, AppMode::Inspect);
 
         assert_eq!(state.active_formula_space_view.active_mode, AppMode::Inspect);
+    }
+
+    #[test]
+    fn select_active_formula_space_updates_shell_selection() {
+        let first_id = FormulaSpaceId::new("space-1");
+        let second_id = FormulaSpaceId::new("space-2");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(first_id.clone());
+        state.workspace_shell.open_formula_space_order = vec![first_id.clone(), second_id.clone()];
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(first_id, "=SUM(1,2)"));
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(second_id.clone(), "=SEQUENCE(2,2)"));
+
+        select_active_formula_space(&mut state, "space-2");
+
+        assert_eq!(
+            state.workspace_shell.active_formula_space_id.as_ref(),
+            Some(&second_id)
+        );
+        assert_eq!(
+            state.active_formula_space_view.selected_formula_space_id.as_ref(),
+            Some(&second_id)
+        );
     }
 
     #[test]

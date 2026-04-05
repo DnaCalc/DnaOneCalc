@@ -1,6 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
+use dnaonecalc_host::app::preview_state::preview_host_state;
 use dnaonecalc_host::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, ProgrammaticComparisonStatus,
 };
@@ -139,6 +140,47 @@ async fn mounts_shell_into_browser_dom_container() {
     assert!(html.contains("data-screen=\"explore\""), "mounted html: {html}");
     assert!(html.contains("data-role=\"editor-input\""), "mounted html: {html}");
     assert!(html.contains("Formula Explorer"), "mounted html: {html}");
+
+    drop(mount_handle);
+    host.remove();
+}
+
+#[wasm_bindgen_test(async)]
+async fn preview_host_allows_switching_between_seeded_demo_scenarios() {
+    let window = web_sys::window().expect("window");
+    let document = window.document().expect("document");
+    let host = prepare_host_root(&document);
+    let state = preview_host_state();
+
+    let host_element: web_sys::HtmlElement = host.clone().unchecked_into();
+    let mount_handle = mount_to(host_element, move || {
+        view! { <OneCalcShellApp initial_state=state.clone() /> }
+    });
+
+    let initial_html = wait_for_host_html(&document, |html| {
+        html.contains("Success · SUM result")
+            && html.contains("data-screen=\"explore\"")
+            && html.contains("Effective display")
+    })
+    .await;
+    assert!(initial_html.contains("Success · SUM result"), "initial mounted html: {initial_html}");
+
+    let array_space_button = document
+        .query_selector("[data-formula-space-id='preview-array']")
+        .expect("query ok")
+        .expect("array space button");
+    array_space_button
+        .dispatch_event(&web_sys::Event::new("click").expect("click event"))
+        .expect("dispatch click");
+
+    let html = wait_for_host_html(&document, |html| {
+        html.contains("Array · Dynamic spill")
+            && html.contains("data-role=\"explore-array-preview\"")
+            && html.contains("2x2 spill preview")
+    })
+    .await;
+    assert!(html.contains("Array · Dynamic spill"), "mounted html after switch: {html}");
+    assert!(html.contains("2x2 spill preview"), "mounted html after switch: {html}");
 
     drop(mount_handle);
     host.remove();

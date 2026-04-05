@@ -2,6 +2,11 @@ use crate::state::{FormulaSpaceState, RetainedArtifactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchViewModel {
+    pub scenario_label: String,
+    pub truth_source_label: String,
+    pub host_profile_summary: String,
+    pub capability_floor_summary: String,
+    pub trace_summary: Option<String>,
     pub raw_entered_cell_text: String,
     pub outcome_summary: Option<String>,
     pub evidence_summary: Option<String>,
@@ -16,6 +21,7 @@ pub struct WorkbenchViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchRetainedCatalogItemView {
     pub artifact_id: String,
+    pub case_id: String,
     pub comparison_status: String,
     pub discrepancy_summary: Option<String>,
     pub is_open: bool,
@@ -36,6 +42,11 @@ pub fn build_workbench_view_model(
     let retained_discrepancy_summary = retained_artifact.and_then(|artifact| artifact.discrepancy_summary.clone());
 
     WorkbenchViewModel {
+        scenario_label: formula_space.context.scenario_label.clone(),
+        truth_source_label: formula_space.context.truth_source.label().to_string(),
+        host_profile_summary: formula_space.context.host_profile.clone(),
+        capability_floor_summary: formula_space.context.capability_floor.clone(),
+        trace_summary: formula_space.context.trace_summary.clone(),
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         outcome_summary: retained_artifact
             .map(|artifact| match artifact.comparison_status {
@@ -95,6 +106,7 @@ pub fn build_workbench_view_model(
             .iter()
             .map(|artifact| WorkbenchRetainedCatalogItemView {
                 artifact_id: artifact.artifact_id.clone(),
+                case_id: artifact.case_id.clone(),
                 comparison_status: match artifact.comparison_status {
                     crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => {
                         "matched".to_string()
@@ -129,6 +141,7 @@ mod tests {
         formula_space.latest_evaluation_summary = Some("Number".to_string());
 
         let view_model = build_workbench_view_model(&formula_space, None, &[]);
+        assert_eq!(view_model.truth_source_label, "local-fallback");
         assert_eq!(view_model.outcome_summary.as_deref(), Some("Number"));
         assert!(view_model
             .evidence_summary
@@ -161,5 +174,6 @@ mod tests {
         assert_eq!(view_model.recommended_action, "Review discrepancy in workbench");
         assert_eq!(view_model.retained_catalog_items.len(), 1);
         assert!(view_model.retained_catalog_items[0].is_open);
+        assert_eq!(view_model.retained_catalog_items[0].case_id, "case-1");
     }
 }

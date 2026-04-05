@@ -85,11 +85,14 @@ pub struct FormulaSpaceState {
     pub completion_help: CompletionHelpState,
     pub latest_evaluation_summary: Option<String>,
     pub effective_display_summary: Option<String>,
+    pub context: FormulaSpaceContextState,
+    pub array_preview: Option<FormulaArrayPreviewState>,
 }
 
 impl FormulaSpaceState {
     pub fn new(formula_space_id: FormulaSpaceId, raw_entered_cell_text: impl Into<String>) -> Self {
         let raw_entered_cell_text = raw_entered_cell_text.into();
+        let scenario_label = formula_space_id.as_str().to_string();
         Self {
             formula_space_id,
             raw_entered_cell_text: raw_entered_cell_text.clone(),
@@ -99,8 +102,64 @@ impl FormulaSpaceState {
             completion_help: CompletionHelpState::default(),
             latest_evaluation_summary: None,
             effective_display_summary: None,
+            context: FormulaSpaceContextState {
+                scenario_label,
+                ..Default::default()
+            },
+            array_preview: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectionTruthSource {
+    PreviewBacked,
+    LiveBacked,
+    LocalFallback,
+}
+
+impl ProjectionTruthSource {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ProjectionTruthSource::PreviewBacked => "preview-backed",
+            ProjectionTruthSource::LiveBacked => "live-backed",
+            ProjectionTruthSource::LocalFallback => "local-fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaSpaceContextState {
+    pub scenario_label: String,
+    pub host_profile: String,
+    pub packet_kind: String,
+    pub capability_floor: String,
+    pub mode_availability: String,
+    pub truth_source: ProjectionTruthSource,
+    pub trace_summary: Option<String>,
+    pub blocked_reason: Option<String>,
+}
+
+impl Default for FormulaSpaceContextState {
+    fn default() -> Self {
+        Self {
+            scenario_label: "untitled".to_string(),
+            host_profile: "host pending".to_string(),
+            packet_kind: "packet pending".to_string(),
+            capability_floor: "pending".to_string(),
+            mode_availability: "explore / inspect / workbench".to_string(),
+            truth_source: ProjectionTruthSource::LocalFallback,
+            trace_summary: None,
+            blocked_reason: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaArrayPreviewState {
+    pub label: String,
+    pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -180,6 +239,8 @@ mod tests {
     fn formula_space_tracks_raw_entered_cell_text() {
         let state = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "'123.4");
         assert_eq!(state.raw_entered_cell_text, "'123.4");
+        assert_eq!(state.context.scenario_label, "space-1");
+        assert!(state.array_preview.is_none());
     }
 
     #[test]

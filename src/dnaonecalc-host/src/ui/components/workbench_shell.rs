@@ -48,6 +48,9 @@ pub fn WorkbenchShell(
             <header class="onecalc-workbench-shell__header">
                 <h1>"Twin Oracle Workbench"</h1>
                 <div class="onecalc-workbench-shell__meta">
+                    <span data-role="workbench-scenario-label">{outcome.scenario_label.clone()}</span>
+                    <span data-role="workbench-truth-source">{outcome.truth_source_label.clone()}</span>
+                    <span data-role="workbench-host-profile">{outcome.host_profile_summary.clone()}</span>
                     <span>"Outcome: " {outcome_summary}</span>
                 </div>
             </header>
@@ -57,6 +60,7 @@ pub fn WorkbenchShell(
                     <h2>"Outcome"</h2>
                     <div>{outcome.outcome_summary.unwrap_or_else(|| "Unavailable".to_string())}</div>
                     <div>{outcome.recommended_action}</div>
+                    <div data-role="workbench-capability-floor">{outcome.capability_floor_summary.clone()}</div>
                     {outcome
                         .retained_artifact_id
                         .clone()
@@ -79,6 +83,9 @@ pub fn WorkbenchShell(
                     <h2>"Evidence"</h2>
                     <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
                     <div>{evidence_summary}</div>
+                    {evidence.trace_summary.as_ref().map(|trace_summary| view! {
+                        <div data-role="workbench-trace-summary">{trace_summary.clone()}</div>
+                    })}
                     {evidence
                         .retained_discrepancy_summary
                         .clone()
@@ -117,6 +124,7 @@ pub fn WorkbenchShell(
                                         data-open=if item.is_open { "true" } else { "false" }
                                     >
                                         <span data-role="retained-catalog-label">{item.artifact_id.clone()}</span>
+                                        <span data-role="retained-catalog-case-id">{item.case_id.clone()}</span>
                                         <span data-role="retained-catalog-status">{item.comparison_status.clone()}</span>
                                         {item
                                             .discrepancy_summary
@@ -290,6 +298,10 @@ mod tests {
         let html = view! {
             <WorkbenchShell
                 outcome=WorkbenchOutcomeClusterViewModel {
+                    scenario_label: "Mismatch · Retained discrepancy".to_string(),
+                    truth_source_label: "preview-backed".to_string(),
+                    host_profile_summary: "Windows desktop preview".to_string(),
+                    capability_floor_summary: "Workbench with retained artifacts".to_string(),
                     outcome_summary: Some("Number".to_string()),
                     recommended_action: "Retain and compare".to_string(),
                     retained_artifact_id: Some("artifact-1".to_string()),
@@ -298,6 +310,7 @@ mod tests {
                     raw_entered_cell_text: "=SUM(1,2)".to_string(),
                     evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
                     retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                    trace_summary: Some("Preview trace captured for retained mismatch".to_string()),
                 }
                 lineage=WorkbenchLineageClusterViewModel {
                     lineage_items: vec!["Scenario opened".to_string(), "Evaluation captured".to_string()],
@@ -309,6 +322,7 @@ mod tests {
                 catalog=WorkbenchCatalogClusterViewModel {
                     retained_catalog_items: vec![crate::services::workbench_mode::WorkbenchRetainedCatalogItemView {
                         artifact_id: "artifact-1".to_string(),
+                        case_id: "case-1".to_string(),
                         comparison_status: "mismatched".to_string(),
                         discrepancy_summary: Some("dna=1 excel=2".to_string()),
                         is_open: true,
@@ -322,10 +336,14 @@ mod tests {
         .to_html();
 
         assert!(html.contains("Twin Oracle Workbench"));
+        assert!(html.contains("data-role=\"workbench-truth-source\""));
         assert!(html.contains("Retain and compare"));
         assert!(html.contains("green=green-1"));
+        assert!(html.contains("data-role=\"workbench-capability-floor\""));
+        assert!(html.contains("data-role=\"workbench-trace-summary\""));
         assert!(html.contains("data-role=\"retained-artifact-id\""));
         assert!(html.contains("artifact-1"));
+        assert!(html.contains("data-role=\"retained-catalog-case-id\""));
         assert!(html.contains("data-role=\"retained-discrepancy-summary\""));
         assert!(html.contains("dna=1 excel=2"));
         assert!(html.contains("data-panel=\"workbench-catalog\""));

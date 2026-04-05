@@ -605,6 +605,14 @@ mod tests {
             <FormulaEditorSurface
                 editor=ExploreEditorClusterViewModel {
                     raw_entered_cell_text: "=SUM(1,2)".to_string(),
+                    scenario_label: "Success · SUM result".to_string(),
+                    truth_source_label: "preview-backed".to_string(),
+                    host_profile_summary: "Windows desktop preview".to_string(),
+                    packet_kind_summary: "preview edit packet".to_string(),
+                    capability_floor_summary: "Explore + Inspect".to_string(),
+                    mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
+                    trace_summary: Some("Preview packet reused green=false, bind complete".to_string()),
+                    blocked_reason: None,
                     syntax_runs: vec![
                         SyntaxRun {
                             text: "=".to_string(),

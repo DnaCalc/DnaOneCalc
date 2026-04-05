@@ -7,6 +7,7 @@ use crate::state::AppMode;
 pub fn ShellFrame(
     frame: ShellFrameViewModel,
     on_mode_select: Option<Callback<AppMode>>,
+    #[prop(default = None)] on_formula_space_select: Option<Callback<String>>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -28,9 +29,23 @@ pub fn ShellFrame(
                                 "onecalc-shell-frame__space-item"
                             };
                             let data_state = if formula_space.is_active { "active" } else { "idle" };
+                            let on_formula_space_select = on_formula_space_select.clone();
+                            let formula_space_id = formula_space.formula_space_id.clone();
                             view! {
                                 <li class=item_class data-state=data_state data-pinned=if formula_space.is_pinned { "true" } else { "false" }>
-                                    {formula_space.label.clone()}
+                                    <button
+                                        type="button"
+                                        class="onecalc-shell-frame__space-button"
+                                        data-role="formula-space-select"
+                                        data-formula-space-id=formula_space.formula_space_id.clone()
+                                        on:click=move |_| {
+                                            if let Some(callback) = on_formula_space_select.as_ref() {
+                                                callback.run(formula_space_id.clone());
+                                            }
+                                        }
+                                    >
+                                        {formula_space.label.clone()}
+                                    </button>
                                     {if formula_space.is_pinned {
                                         view! { <span class="onecalc-shell-frame__space-pin">"Pinned"</span> }.into_any()
                                     } else {
@@ -118,6 +133,7 @@ mod tests {
                     }],
                 }
                 on_mode_select=None
+                on_formula_space_select=None
             >
                 <div>"Body"</div>
             </ShellFrame>
@@ -128,6 +144,7 @@ mod tests {
         assert!(html.contains("Active space: "));
         assert!(html.contains("space-1"));
         assert!(html.contains("data-mode=\"Explore\""));
+        assert!(html.contains("data-role=\"formula-space-select\""));
         assert!(html.contains("data-state=\"active\""));
         assert!(html.contains("Pinned"));
         assert!(html.contains("Body"));

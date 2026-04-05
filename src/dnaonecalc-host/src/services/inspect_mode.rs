@@ -6,6 +6,14 @@ use crate::state::{FormulaSpaceState, RetainedArtifactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectViewModel {
+    pub scenario_label: String,
+    pub truth_source_label: String,
+    pub host_profile_summary: String,
+    pub packet_kind_summary: String,
+    pub capability_floor_summary: String,
+    pub mode_availability_summary: String,
+    pub trace_summary: Option<String>,
+    pub blocked_reason: Option<String>,
     pub raw_entered_cell_text: String,
     pub inspect_result_summary: Option<String>,
     pub green_tree_key: Option<String>,
@@ -79,6 +87,18 @@ pub fn build_inspect_view_model(
     });
 
     InspectViewModel {
+        scenario_label: formula_space.context.scenario_label.clone(),
+        truth_source_label: formula_space.context.truth_source.label().to_string(),
+        host_profile_summary: formula_space.context.host_profile.clone(),
+        packet_kind_summary: formula_space.context.packet_kind.clone(),
+        capability_floor_summary: formula_space.context.capability_floor.clone(),
+        mode_availability_summary: formula_space.context.mode_availability.clone(),
+        trace_summary: formula_space.context.trace_summary.clone(),
+        blocked_reason: formula_space
+            .context
+            .blocked_reason
+            .clone()
+            .or_else(|| provenance_summary.as_ref().and_then(|summary| summary.blocked_reason.clone())),
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         inspect_result_summary: formula_space.latest_evaluation_summary.clone(),
         green_tree_key,
@@ -160,6 +180,7 @@ mod tests {
         });
 
         let view_model = build_inspect_view_model(&formula_space, None);
+        assert_eq!(view_model.truth_source_label, "local-fallback");
         assert_eq!(view_model.raw_entered_cell_text, "=LET(x,1,x)");
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
         assert_eq!(view_model.formula_walk_nodes.len(), 1);

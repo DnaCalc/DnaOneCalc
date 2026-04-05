@@ -2,6 +2,10 @@ use crate::services::workbench_mode::{WorkbenchRetainedCatalogItemView, Workbenc
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchOutcomeClusterViewModel {
+    pub scenario_label: String,
+    pub truth_source_label: String,
+    pub host_profile_summary: String,
+    pub capability_floor_summary: String,
     pub outcome_summary: Option<String>,
     pub recommended_action: String,
     pub retained_artifact_id: Option<String>,
@@ -12,6 +16,7 @@ pub struct WorkbenchEvidenceClusterViewModel {
     pub raw_entered_cell_text: String,
     pub evidence_summary: Option<String>,
     pub retained_discrepancy_summary: Option<String>,
+    pub trace_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +39,10 @@ pub fn build_workbench_outcome_cluster(
     view_model: &WorkbenchViewModel,
 ) -> WorkbenchOutcomeClusterViewModel {
     WorkbenchOutcomeClusterViewModel {
+        scenario_label: view_model.scenario_label.clone(),
+        truth_source_label: view_model.truth_source_label.clone(),
+        host_profile_summary: view_model.host_profile_summary.clone(),
+        capability_floor_summary: view_model.capability_floor_summary.clone(),
         outcome_summary: view_model.outcome_summary.clone(),
         recommended_action: view_model.recommended_action.clone(),
         retained_artifact_id: view_model.retained_artifact_id.clone(),
@@ -47,6 +56,7 @@ pub fn build_workbench_evidence_cluster(
         raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
         evidence_summary: view_model.evidence_summary.clone(),
         retained_discrepancy_summary: view_model.retained_discrepancy_summary.clone(),
+        trace_summary: view_model.trace_summary.clone(),
     }
 }
 
@@ -84,6 +94,10 @@ mod tests {
     fn workbench_clusters_split_outcome_and_evidence_fields() {
         let view_model = WorkbenchViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            scenario_label: "mismatch case".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "Windows desktop preview".to_string(),
+            capability_floor_summary: "Workbench with retained artifacts".to_string(),
             outcome_summary: Some("Number".to_string()),
             evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
             lineage_items: vec!["Scenario opened".to_string()],
@@ -91,8 +105,10 @@ mod tests {
             recommended_action: "Retain and compare".to_string(),
             retained_artifact_id: Some("artifact-1".to_string()),
             retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
+            trace_summary: Some("Preview trace".to_string()),
             retained_catalog_items: vec![WorkbenchRetainedCatalogItemView {
                 artifact_id: "artifact-1".to_string(),
+                case_id: "case-1".to_string(),
                 comparison_status: "mismatched".to_string(),
                 discrepancy_summary: Some("dna=1 excel=2".to_string()),
                 is_open: true,
@@ -105,15 +121,18 @@ mod tests {
         let actions = build_workbench_actions_cluster(&view_model);
         let catalog = build_workbench_catalog_cluster(&view_model);
 
+        assert_eq!(outcome.truth_source_label, "preview-backed");
         assert_eq!(outcome.outcome_summary.as_deref(), Some("Number"));
         assert_eq!(outcome.recommended_action, "Retain and compare");
         assert_eq!(outcome.retained_artifact_id.as_deref(), Some("artifact-1"));
         assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
         assert_eq!(evidence.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
+        assert_eq!(evidence.trace_summary.as_deref(), Some("Preview trace"));
         assert_eq!(lineage.lineage_items.len(), 1);
         assert_eq!(actions.action_items.len(), 1);
         assert_eq!(catalog.retained_catalog_items.len(), 1);
         assert!(catalog.retained_catalog_items[0].is_open);
+        assert_eq!(catalog.retained_catalog_items[0].case_id, "case-1");
         assert!(evidence
             .evidence_summary
             .as_deref()

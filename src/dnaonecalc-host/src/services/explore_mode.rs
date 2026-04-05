@@ -2,7 +2,7 @@ use crate::adapters::oxfml::{
     CompletionProposal, CompletionProposalKind, FormulaTextSpan, FunctionHelpPacket,
     SignatureHelpContext,
 };
-use crate::state::FormulaSpaceState;
+use crate::state::{FormulaArrayPreviewState, FormulaSpaceState};
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::render_projection::{
     syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
@@ -11,6 +11,14 @@ use crate::ui::editor::state::EditorSurfaceState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreViewModel {
+    pub scenario_label: String,
+    pub truth_source_label: String,
+    pub host_profile_summary: String,
+    pub packet_kind_summary: String,
+    pub capability_floor_summary: String,
+    pub mode_availability_summary: String,
+    pub trace_summary: Option<String>,
+    pub blocked_reason: Option<String>,
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
     pub overlay_geometry: Option<EditorOverlayGeometrySnapshot>,
@@ -22,10 +30,19 @@ pub struct ExploreViewModel {
     pub signature_help: Option<ExploreSignatureHelpView>,
     pub function_help: Option<ExploreFunctionHelpView>,
     pub function_help_lookup_key: Option<String>,
+    pub result_value_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub latest_evaluation_summary: Option<String>,
+    pub array_preview: Option<ExploreArrayPreviewView>,
     pub green_tree_key: Option<String>,
     pub reused_green_tree: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreArrayPreviewView {
+    pub label: String,
+    pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +153,24 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
     }
 
     ExploreViewModel {
+        scenario_label: formula_space.context.scenario_label.clone(),
+        truth_source_label: formula_space.context.truth_source.label().to_string(),
+        host_profile_summary: formula_space.context.host_profile.clone(),
+        packet_kind_summary: formula_space.context.packet_kind.clone(),
+        capability_floor_summary: formula_space.context.capability_floor.clone(),
+        mode_availability_summary: formula_space.context.mode_availability.clone(),
+        trace_summary: formula_space.context.trace_summary.clone(),
+        blocked_reason: formula_space
+            .context
+            .blocked_reason
+            .clone()
+            .or_else(|| {
+                formula_space
+                    .editor_document
+                    .as_ref()
+                    .and_then(|document| document.provenance_summary.as_ref())
+                    .and_then(|summary| summary.blocked_reason.clone())
+            }),
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state,
         overlay_geometry: formula_space.editor_overlay_geometry.clone(),
@@ -151,8 +186,13 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
             .function_help_lookup_key
             .clone()
             .or(document_function_help_lookup_key),
+        result_value_summary: formula_space.latest_evaluation_summary.clone(),
         effective_display_summary: formula_space.effective_display_summary.clone(),
         latest_evaluation_summary: formula_space.latest_evaluation_summary.clone(),
+        array_preview: formula_space
+            .array_preview
+            .as_ref()
+            .map(array_preview_view),
         green_tree_key,
         reused_green_tree,
     }
@@ -233,6 +273,14 @@ fn completion_kind_view(kind: &CompletionProposalKind) -> ExploreCompletionKindV
     }
 }
 
+fn array_preview_view(state: &FormulaArrayPreviewState) -> ExploreArrayPreviewView {
+    ExploreArrayPreviewView {
+        label: state.label.clone(),
+        rows: state.rows.clone(),
+        truncated: state.truncated,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +302,12 @@ mod tests {
         };
         formula_space.effective_display_summary = Some("3".to_string());
         formula_space.latest_evaluation_summary = Some("Number".to_string());
+        formula_space.context.scenario_label = "happy-path sum".to_string();
+        formula_space.context.host_profile = "Windows desktop preview".to_string();
+        formula_space.context.packet_kind = "preview edit packet".to_string();
+        formula_space.context.capability_floor = "Explore + Inspect".to_string();
+        formula_space.context.mode_availability = "Explore / Inspect / Workbench".to_string();
+        formula_space.context.trace_summary = Some("Preview trace reused bound=false".to_string());
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=SUM(1,2)".to_string(),
             text_change_range: None,
@@ -325,6 +379,9 @@ mod tests {
         });
 
         let view_model = build_explore_view_model(&formula_space);
+        assert_eq!(view_model.scenario_label, "happy-path sum");
+        assert_eq!(view_model.truth_source_label, "local-fallback");
+        assert_eq!(view_model.host_profile_summary, "Windows desktop preview");
         assert_eq!(view_model.raw_entered_cell_text, "=SUM(1,2)");
         assert_eq!(view_model.editor_surface_state.caret.offset, 9);
         assert_eq!(view_model.syntax_runs.len(), 2);
@@ -350,6 +407,7 @@ mod tests {
             Some("SUM")
         );
         assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
+        assert_eq!(view_model.result_value_summary.as_deref(), Some("Number"));
         assert_eq!(view_model.effective_display_summary.as_deref(), Some("3"));
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
         assert!(view_model.reused_green_tree);

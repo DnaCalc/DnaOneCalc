@@ -25,12 +25,22 @@ pub struct ExploreEditorClusterViewModel {
     pub function_help_lookup_key: Option<String>,
     pub green_tree_key: Option<String>,
     pub reused_green_tree: bool,
+    pub scenario_label: String,
+    pub truth_source_label: String,
+    pub host_profile_summary: String,
+    pub packet_kind_summary: String,
+    pub capability_floor_summary: String,
+    pub mode_availability_summary: String,
+    pub trace_summary: Option<String>,
+    pub blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreResultClusterViewModel {
+    pub result_value_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub latest_evaluation_summary: Option<String>,
+    pub array_preview: Option<crate::services::explore_mode::ExploreArrayPreviewView>,
 }
 
 pub fn build_explore_editor_cluster(
@@ -73,6 +83,14 @@ pub fn build_explore_editor_cluster(
         function_help_lookup_key: view_model.function_help_lookup_key.clone(),
         green_tree_key: view_model.green_tree_key.clone(),
         reused_green_tree: view_model.reused_green_tree,
+        scenario_label: view_model.scenario_label.clone(),
+        truth_source_label: view_model.truth_source_label.clone(),
+        host_profile_summary: view_model.host_profile_summary.clone(),
+        packet_kind_summary: view_model.packet_kind_summary.clone(),
+        capability_floor_summary: view_model.capability_floor_summary.clone(),
+        mode_availability_summary: view_model.mode_availability_summary.clone(),
+        trace_summary: view_model.trace_summary.clone(),
+        blocked_reason: view_model.blocked_reason.clone(),
     }
 }
 
@@ -80,8 +98,10 @@ pub fn build_explore_result_cluster(
     view_model: &ExploreViewModel,
 ) -> ExploreResultClusterViewModel {
     ExploreResultClusterViewModel {
+        result_value_summary: view_model.result_value_summary.clone(),
         effective_display_summary: view_model.effective_display_summary.clone(),
         latest_evaluation_summary: view_model.latest_evaluation_summary.clone(),
+        array_preview: view_model.array_preview.clone(),
     }
 }
 
@@ -148,8 +168,22 @@ mod tests {
                 deferred_or_profile_limited: false,
             }),
             function_help_lookup_key: Some("SUM".to_string()),
+            scenario_label: "happy-path sum".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "Windows desktop preview".to_string(),
+            packet_kind_summary: "preview edit packet".to_string(),
+            capability_floor_summary: "Explore + Inspect".to_string(),
+            mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
+            trace_summary: Some("Preview trace reused green".to_string()),
+            blocked_reason: None,
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),
+            result_value_summary: Some("Number".to_string()),
+            array_preview: Some(crate::services::explore_mode::ExploreArrayPreviewView {
+                label: "2x2 preview".to_string(),
+                rows: vec![vec!["1".to_string(), "2".to_string()]],
+                truncated: true,
+            }),
             green_tree_key: Some("green-1".to_string()),
             reused_green_tree: true,
         };
@@ -173,6 +207,7 @@ mod tests {
         );
         assert_eq!(cluster.function_help.as_ref().map(|help| help.display_name.as_str()), Some("SUM"));
         assert_eq!(cluster.function_help_lookup_key.as_deref(), Some("SUM"));
+        assert_eq!(cluster.truth_source_label, "preview-backed");
         assert!(cluster.reused_green_tree);
     }
 
@@ -190,14 +225,30 @@ mod tests {
             signature_help: None,
             function_help: None,
             function_help_lookup_key: None,
+            scenario_label: "happy-path sum".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "Windows desktop preview".to_string(),
+            packet_kind_summary: "preview edit packet".to_string(),
+            capability_floor_summary: "Explore + Inspect".to_string(),
+            mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
+            trace_summary: Some("Preview trace reused green".to_string()),
+            blocked_reason: None,
+            result_value_summary: Some("Number".to_string()),
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),
+            array_preview: Some(crate::services::explore_mode::ExploreArrayPreviewView {
+                label: "2x2 preview".to_string(),
+                rows: vec![vec!["1".to_string(), "2".to_string()]],
+                truncated: true,
+            }),
             green_tree_key: None,
             reused_green_tree: false,
         };
 
         let cluster = build_explore_result_cluster(&view_model);
+        assert_eq!(cluster.result_value_summary.as_deref(), Some("Number"));
         assert_eq!(cluster.effective_display_summary.as_deref(), Some("3"));
         assert_eq!(cluster.latest_evaluation_summary.as_deref(), Some("Number"));
+        assert!(cluster.array_preview.is_some());
     }
 }

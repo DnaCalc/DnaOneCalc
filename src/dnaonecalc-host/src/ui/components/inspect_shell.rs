@@ -75,6 +75,9 @@ pub fn InspectShell(
             <header class="onecalc-inspect-shell__header">
                 <h1>"Semantic Inspect"</h1>
                 <div class="onecalc-inspect-shell__meta">
+                    <span data-role="inspect-scenario-label">{walk.scenario_label.clone()}</span>
+                    <span data-role="inspect-truth-source">{walk.truth_source_label.clone()}</span>
+                    <span data-role="inspect-host-profile">{walk.host_profile_summary.clone()}</span>
                     <span>"Green tree: " {walk.green_tree_key.unwrap_or_else(|| "none".to_string())}</span>
                     <span>"Result: " {walk.inspect_result_summary.unwrap_or_else(|| "Unavailable".to_string())}</span>
                 </div>
@@ -102,6 +105,17 @@ pub fn InspectShell(
 
                 <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
                     <h2>"Summaries"</h2>
+                    <section class="onecalc-inspect-shell__context-card" data-role="inspect-context-card">
+                        <div data-role="inspect-packet-kind">{summary.packet_kind_summary.clone()}</div>
+                        <div data-role="inspect-capability-floor">{summary.capability_floor_summary.clone()}</div>
+                        <div data-role="inspect-mode-availability">{summary.mode_availability_summary.clone()}</div>
+                        {summary.trace_summary.as_ref().map(|trace| view! {
+                            <div data-role="inspect-trace-summary">{trace.clone()}</div>
+                        })}
+                        {summary.blocked_reason.as_ref().map(|blocked_reason| view! {
+                            <div data-role="inspect-blocked-reason">{blocked_reason.clone()}</div>
+                        })}
+                    </section>
                     {summary
                         .retained_artifact_context
                         .as_ref()
@@ -160,6 +174,14 @@ mod tests {
     #[test]
     fn inspect_shell_renders_walk_and_summary_content() {
         let view_model = InspectViewModel {
+            scenario_label: "Blocked discrepancy".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "Windows desktop preview".to_string(),
+            packet_kind_summary: "preview blocked packet".to_string(),
+            capability_floor_summary: "Inspect with blocked reason".to_string(),
+            mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
+            trace_summary: Some("Preview trace captured for retained discrepancy".to_string()),
+            blocked_reason: Some("Excel comparison lane unavailable on this host".to_string()),
             raw_entered_cell_text: "=LET(x,1,x)".to_string(),
             inspect_result_summary: Some("Number".to_string()),
             green_tree_key: Some("green-1".to_string()),
@@ -203,6 +225,8 @@ mod tests {
         .to_html();
 
         assert!(html.contains("Semantic Inspect"));
+        assert!(html.contains("data-role=\"inspect-context-card\""));
+        assert!(html.contains("data-role=\"inspect-truth-source\""));
         assert!(html.contains("=LET(x,1,x)"));
         assert!(html.contains("data-panel=\"inspect-walk\""));
         assert!(html.contains("data-node-id=\"node-1\""));

@@ -11,8 +11,8 @@ use crate::app::reducer::{
 };
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
-    build_active_mode_projection, build_shell_frame_view_model, switch_active_mode,
-    ActiveModeProjection,
+    build_active_mode_projection, build_shell_frame_view_model, select_active_formula_space,
+    switch_active_mode, ActiveModeProjection,
 };
 use crate::state::OneCalcHostState;
 use crate::ui::components::explore_shell::ExploreShell;
@@ -39,6 +39,9 @@ pub fn OneCalcShellApp(
 
     let on_mode_select = Callback::new(move |next_mode| {
         state.update(|state| switch_active_mode(state, next_mode));
+    });
+    let on_formula_space_select = Callback::new(move |formula_space_id: String| {
+        state.update(|state| select_active_formula_space(state, &formula_space_id));
     });
     let editor_bridge_for_input = editor_bridge.clone();
     let on_editor_input = Callback::new(move |event: EditorInputEvent| {
@@ -94,7 +97,11 @@ pub fn OneCalcShellApp(
                 ) {
                     (Some(frame), Some(ActiveModeProjection::Explore(view_model))) => {
                         view! {
-                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                            <ShellFrame
+                                frame=frame
+                                on_mode_select=Some(on_mode_select)
+                                on_formula_space_select=Some(on_formula_space_select)
+                            >
                                 <ExploreShell
                                     editor=build_explore_editor_cluster(&view_model)
                                     result=build_explore_result_cluster(&view_model)
@@ -108,7 +115,11 @@ pub fn OneCalcShellApp(
                     }
                     (Some(frame), Some(ActiveModeProjection::Inspect(view_model))) => {
                         view! {
-                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                            <ShellFrame
+                                frame=frame
+                                on_mode_select=Some(on_mode_select)
+                                on_formula_space_select=Some(on_formula_space_select)
+                            >
                                 <InspectShell
                                     walk=build_inspect_walk_cluster(&view_model)
                                     summary=build_inspect_summary_cluster(&view_model)
@@ -119,7 +130,11 @@ pub fn OneCalcShellApp(
                     }
                     (Some(frame), Some(ActiveModeProjection::Workbench(view_model))) => {
                         view! {
-                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                            <ShellFrame
+                                frame=frame
+                                on_mode_select=Some(on_mode_select)
+                                on_formula_space_select=Some(on_formula_space_select)
+                            >
                                 <WorkbenchShell
                                     outcome=build_workbench_outcome_cluster(&view_model)
                                     evidence=build_workbench_evidence_cluster(&view_model)

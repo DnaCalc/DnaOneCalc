@@ -19,7 +19,33 @@ fn ExploreEditorPanel(
 
     view! {
         <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
-            <h2>"Editor"</h2>
+            <div class="onecalc-explore-shell__panel-header">
+                <div>
+                    <h2>"Editor"</h2>
+                    <div class="onecalc-explore-shell__scenario-label" data-role="explore-scenario-label">
+                        {editor.scenario_label.clone()}
+                    </div>
+                </div>
+                <div class="onecalc-explore-shell__truth-chip" data-role="explore-truth-source">
+                    {editor.truth_source_label.clone()}
+                </div>
+            </div>
+            <div class="onecalc-explore-shell__context-strip" data-role="explore-context-strip">
+                <span data-role="explore-host-profile">{editor.host_profile_summary.clone()}</span>
+                <span data-role="explore-packet-kind">{editor.packet_kind_summary.clone()}</span>
+                <span data-role="explore-capability-floor">{editor.capability_floor_summary.clone()}</span>
+                <span data-role="explore-mode-availability">{editor.mode_availability_summary.clone()}</span>
+            </div>
+            {editor.trace_summary.as_ref().map(|trace_summary| view! {
+                <div class="onecalc-explore-shell__trace-summary" data-role="explore-trace-summary">
+                    {trace_summary.clone()}
+                </div>
+            })}
+            {editor.blocked_reason.as_ref().map(|blocked_reason| view! {
+                <div class="onecalc-explore-shell__blocked-reason" data-role="explore-blocked-reason">
+                    {blocked_reason.clone()}
+                </div>
+            })}
             <FormulaEditorSurface
                 editor=editor.clone()
                 on_input_event=on_input_event
@@ -36,6 +62,10 @@ fn ExploreEditorPanel(
 
 #[component]
 fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
+    let result_value = result
+        .result_value_summary
+        .clone()
+        .unwrap_or_else(|| "Unavailable".to_string());
     let effective_display = result
         .effective_display_summary
         .clone()
@@ -48,8 +78,34 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
     view! {
         <section class="onecalc-explore-shell__result-panel" data-panel="explore-result">
             <h2>"Result"</h2>
-            <div>"Effective display: " {effective_display}</div>
-            <div>"Evaluation summary: " {evaluation_summary}</div>
+            <div class="onecalc-explore-shell__result-metric" data-role="explore-result-value">
+                "Value: " {result_value}
+            </div>
+            <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
+                "Effective display: " {effective_display}
+            </div>
+            <div class="onecalc-explore-shell__result-metric" data-role="explore-evaluation-summary">
+                "Evaluation summary: " {evaluation_summary}
+            </div>
+            {result.array_preview.as_ref().map(|array_preview| view! {
+                <section class="onecalc-explore-shell__array-preview" data-role="explore-array-preview">
+                    <header class="onecalc-explore-shell__array-preview-header">
+                        <h3>{array_preview.label.clone()}</h3>
+                        <span class="onecalc-explore-shell__array-preview-badge">
+                            {if array_preview.truncated { "truncated" } else { "bounded" }}
+                        </span>
+                    </header>
+                    <div class="onecalc-explore-shell__array-grid">
+                        {array_preview.rows.iter().map(|row| view! {
+                            <div class="onecalc-explore-shell__array-row">
+                                {row.iter().map(|cell| view! {
+                                    <span class="onecalc-explore-shell__array-cell">{cell.clone()}</span>
+                                }).collect_view()}
+                            </div>
+                        }).collect_view()}
+                    </div>
+                </section>
+            })}
         </section>
     }
 }
@@ -298,6 +354,14 @@ mod tests {
     #[test]
     fn explore_shell_renders_editor_and_result_content() {
         let view_model = ExploreViewModel {
+            scenario_label: "Success · SUM result".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "Windows desktop preview".to_string(),
+            packet_kind_summary: "preview edit packet".to_string(),
+            capability_floor_summary: "Explore + Inspect".to_string(),
+            mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
+            trace_summary: Some("Preview packet reused green=false, bind complete".to_string()),
+            blocked_reason: None,
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
             editor_surface_state: crate::ui::editor::state::EditorSurfaceState {
                 completion_selected_index: Some(0),
@@ -348,8 +412,17 @@ mod tests {
                 deferred_or_profile_limited: false,
             }),
             function_help_lookup_key: Some("SUM".to_string()),
+            result_value_summary: Some("Number · 3".to_string()),
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),
+            array_preview: Some(crate::services::explore_mode::ExploreArrayPreviewView {
+                label: "2x2 spill preview".to_string(),
+                rows: vec![
+                    vec!["1".to_string(), "2".to_string()],
+                    vec!["3".to_string(), "4".to_string()],
+                ],
+                truncated: false,
+            }),
             green_tree_key: Some("green-1".to_string()),
             reused_green_tree: true,
         };
@@ -364,6 +437,8 @@ mod tests {
 
         assert!(html.contains("Formula Explorer"));
         assert!(html.contains("data-panel=\"explore-editor\""));
+        assert!(html.contains("data-role=\"explore-context-strip\""));
+        assert!(html.contains("data-role=\"explore-truth-source\""));
         assert!(html.contains("data-component=\"formula-editor-surface\""));
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-token-role=\"function\""));
@@ -378,6 +453,9 @@ mod tests {
         assert!(html.contains("data-requires-revalidation=\"true\""));
         assert!(html.contains("SUM"));
         assert!(html.contains("Completion entries: "));
+        assert!(html.contains("data-role=\"explore-array-preview\""));
+        assert!(html.contains("2x2 spill preview"));
+        assert!(html.contains("data-role=\"explore-result-value\""));
         assert!(html.contains("data-role=\"function-help-card\""));
         assert!(html.contains("data-role=\"function-help-signature\""));
         assert!(html.contains("data-role=\"function-help-signature-argument\""));
