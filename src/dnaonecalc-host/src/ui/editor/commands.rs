@@ -13,6 +13,8 @@ pub enum EditorCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorInputEvent {
     pub text: String,
+    pub selection_start: Option<usize>,
+    pub selection_end: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

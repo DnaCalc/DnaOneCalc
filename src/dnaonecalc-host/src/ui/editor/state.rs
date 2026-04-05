@@ -46,10 +46,17 @@ pub struct EditorSurfaceState {
 impl EditorSurfaceState {
     pub fn for_text(text: &str) -> Self {
         let offset = text.chars().count();
+        Self::for_text_with_selection(text, offset, offset)
+    }
+
+    pub fn for_text_with_selection(text: &str, anchor: usize, focus: usize) -> Self {
+        let text_len = text.chars().count();
+        let anchor = anchor.min(text_len);
+        let focus = focus.min(text_len);
         let line_count = text.lines().count().max(1);
         Self {
-            caret: EditorCaret { offset },
-            selection: EditorSelection::collapsed(offset),
+            caret: EditorCaret { offset: focus },
+            selection: EditorSelection { anchor, focus },
             scroll_window: EditorScrollWindow {
                 first_visible_line: 0,
                 visible_line_count: line_count.min(12),
@@ -68,5 +75,13 @@ mod tests {
         assert_eq!(state.caret.offset, 9);
         assert!(state.selection.is_collapsed());
         assert_eq!(state.scroll_window.first_visible_line, 0);
+    }
+
+    #[test]
+    fn editor_surface_state_can_preserve_explicit_selection() {
+        let state = EditorSurfaceState::for_text_with_selection("=SUM(1,2)", 2, 5);
+        assert_eq!(state.selection.anchor, 2);
+        assert_eq!(state.selection.focus, 5);
+        assert_eq!(state.caret.offset, 5);
     }
 }

@@ -10,7 +10,18 @@ pub fn apply_editor_input_to_active_formula_space(
         return false;
     };
 
-    let next_editor_state = EditorSurfaceState::for_text(&input_event.text);
+    let next_editor_state =
+        if let (Some(selection_start), Some(selection_end)) =
+            (input_event.selection_start, input_event.selection_end)
+        {
+            EditorSurfaceState::for_text_with_selection(
+                &input_event.text,
+                selection_start,
+                selection_end,
+            )
+        } else {
+            EditorSurfaceState::for_text(&input_event.text)
+        };
     apply_local_editor_text_change(formula_space, input_event.text, next_editor_state);
     true
 }
@@ -74,6 +85,8 @@ mod tests {
             &mut state,
             EditorInputEvent {
                 text: "=SUM(1,2,3)".to_string(),
+                selection_start: None,
+                selection_end: None,
             },
         );
 
@@ -84,6 +97,34 @@ mod tests {
             .expect("space exists");
         assert_eq!(active.raw_entered_cell_text, "=SUM(1,2,3)");
         assert_eq!(active.editor_surface_state.caret.offset, 11);
+    }
+
+    #[test]
+    fn input_event_preserves_selection_metadata_when_provided() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        let changed = apply_editor_input_to_active_formula_space(
+            &mut state,
+            EditorInputEvent {
+                text: "=SUM(1,2)".to_string(),
+                selection_start: Some(2),
+                selection_end: Some(5),
+            },
+        );
+
+        assert!(changed);
+        let active = state
+            .formula_spaces
+            .get(&FormulaSpaceId::new("space-1"))
+            .expect("space exists");
+        assert_eq!(active.editor_surface_state.selection.anchor, 2);
+        assert_eq!(active.editor_surface_state.selection.focus, 5);
+        assert_eq!(active.editor_surface_state.caret.offset, 5);
     }
 
     #[test]

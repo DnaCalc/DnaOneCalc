@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use web_sys::HtmlTextAreaElement;
 
 use crate::ui::editor::commands::{keydown_to_command, EditorCommand, EditorInputEvent};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
@@ -45,8 +46,19 @@ pub fn FormulaEditorSurface(
                         prop:value=editor.raw_entered_cell_text.clone()
                         on:input=move |ev| {
                             if let Some(callback) = on_input_event.as_ref() {
+                                let textarea = event_target::<HtmlTextAreaElement>(&ev);
                                 callback.run(EditorInputEvent {
                                     text: event_target_value(&ev),
+                                    selection_start: textarea
+                                        .selection_start()
+                                        .ok()
+                                        .flatten()
+                                        .map(|offset| offset as usize),
+                                    selection_end: textarea
+                                        .selection_end()
+                                        .ok()
+                                        .flatten()
+                                        .map(|offset| offset as usize),
                                 });
                             }
                         }

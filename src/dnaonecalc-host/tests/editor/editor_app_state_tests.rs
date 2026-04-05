@@ -18,6 +18,8 @@ fn ex_15_editor_input_event_updates_active_formula_space_in_host_state() {
         &mut state,
         EditorInputEvent {
             text: "=SUM(1,2,3)".to_string(),
+            selection_start: None,
+            selection_end: None,
         },
     );
 
@@ -26,6 +28,31 @@ fn ex_15_editor_input_event_updates_active_formula_space_in_host_state() {
     assert_eq!(active.raw_entered_cell_text, "=SUM(1,2,3)");
     assert_eq!(active.editor_surface_state.caret.offset, 11);
     assert!(active.editor_document.is_none());
+}
+
+#[test]
+fn ex_20_editor_input_event_preserves_selection_offsets_in_host_state() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .formula_spaces
+        .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+    let changed = apply_editor_input_to_active_formula_space(
+        &mut state,
+        EditorInputEvent {
+            text: "=SUM(1,2)".to_string(),
+            selection_start: Some(2),
+            selection_end: Some(5),
+        },
+    );
+
+    assert!(changed);
+    let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+    assert_eq!(active.editor_surface_state.selection.anchor, 2);
+    assert_eq!(active.editor_surface_state.selection.focus, 5);
+    assert_eq!(active.editor_surface_state.caret.offset, 5);
 }
 
 #[test]
