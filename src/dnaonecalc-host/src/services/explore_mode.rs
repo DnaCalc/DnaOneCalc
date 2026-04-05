@@ -1,4 +1,7 @@
-use crate::adapters::oxfml::{CompletionProposal, SignatureHelpContext};
+use crate::adapters::oxfml::{
+    CompletionProposal, CompletionProposalKind, FormulaTextSpan, FunctionHelpPacket,
+    SignatureHelpContext,
+};
 use crate::state::FormulaSpaceState;
 use crate::ui::editor::render_projection::{
     syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
@@ -15,6 +18,7 @@ pub struct ExploreViewModel {
     pub completion_items: Vec<ExploreCompletionItemView>,
     pub has_signature_help: bool,
     pub signature_help: Option<ExploreSignatureHelpView>,
+    pub function_help: Option<ExploreFunctionHelpView>,
     pub function_help_lookup_key: Option<String>,
     pub effective_display_summary: Option<String>,
     pub latest_evaluation_summary: Option<String>,
@@ -33,14 +37,47 @@ pub struct ExploreDiagnosticView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreCompletionItemView {
     pub proposal_id: String,
+    pub proposal_kind: ExploreCompletionKindView,
     pub display_text: String,
     pub insert_text: String,
+    pub replacement_span: Option<FormulaTextSpan>,
+    pub documentation_ref: Option<String>,
+    pub requires_revalidation: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExploreCompletionKindView {
+    Function,
+    DefinedName,
+    TableName,
+    TableColumn,
+    StructuredSelector,
+    SyntaxAssist,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreSignatureHelpView {
     pub callee_text: String,
+    pub call_span: FormulaTextSpan,
     pub active_argument_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreFunctionHelpView {
+    pub lookup_key: String,
+    pub display_name: String,
+    pub signature_forms: Vec<ExploreFunctionHelpSignatureView>,
+    pub argument_help: Vec<String>,
+    pub short_description: Option<String>,
+    pub availability_summary: Option<String>,
+    pub deferred_or_profile_limited: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreFunctionHelpSignatureView {
+    pub display_signature: String,
+    pub min_arity: usize,
+    pub max_arity: Option<usize>,
 }
 
 pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreViewModel {
@@ -51,6 +88,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         reused_green_tree,
         completion_items,
         signature_help,
+        function_help,
         document_function_help_lookup_key,
     ) = match &formula_space.editor_document {
         Some(document) if document.source_text == formula_space.raw_entered_cell_text => (
@@ -74,6 +112,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
                 .map(completion_item_view)
                 .collect(),
             document.signature_help.as_ref().map(signature_help_view),
+            document.function_help.as_ref().map(function_help_view),
             document
                 .function_help
                 .as_ref()
@@ -86,6 +125,9 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
     let mut editor_surface_state = formula_space.editor_surface_state.clone();
     if !completion_items.is_empty() && editor_surface_state.completion_anchor_offset.is_none() {
         editor_surface_state.completion_anchor_offset = Some(editor_surface_state.caret.offset);
+    }
+    if !completion_items.is_empty() && editor_surface_state.completion_selected_index.is_none() {
+        editor_surface_state.completion_selected_index = Some(0);
     }
     if signature_help.is_some() && editor_surface_state.signature_help_anchor_offset.is_none() {
         editor_surface_state.signature_help_anchor_offset = Some(editor_surface_state.caret.offset);
@@ -100,6 +142,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         completion_items,
         has_signature_help: formula_space.completion_help.has_signature_help,
         signature_help,
+        function_help,
         function_help_lookup_key: formula_space
             .completion_help
             .function_help_lookup_key
@@ -121,6 +164,7 @@ fn fallback_projection(
     bool,
     Vec<ExploreCompletionItemView>,
     Option<ExploreSignatureHelpView>,
+    Option<ExploreFunctionHelpView>,
     Option<String>,
 ) {
     (
@@ -131,21 +175,58 @@ fn fallback_projection(
         Vec::new(),
         None,
         None,
+        None,
     )
 }
 
 fn completion_item_view(proposal: &CompletionProposal) -> ExploreCompletionItemView {
     ExploreCompletionItemView {
         proposal_id: proposal.proposal_id.clone(),
+        proposal_kind: completion_kind_view(&proposal.proposal_kind),
         display_text: proposal.display_text.clone(),
         insert_text: proposal.insert_text.clone(),
+        replacement_span: proposal.replacement_span,
+        documentation_ref: proposal.documentation_ref.clone(),
+        requires_revalidation: proposal.requires_revalidation,
     }
 }
 
 fn signature_help_view(context: &SignatureHelpContext) -> ExploreSignatureHelpView {
     ExploreSignatureHelpView {
         callee_text: context.callee_text.clone(),
+        call_span: context.call_span,
         active_argument_index: context.active_argument_index,
+    }
+}
+
+fn function_help_view(packet: &FunctionHelpPacket) -> ExploreFunctionHelpView {
+    ExploreFunctionHelpView {
+        lookup_key: packet.lookup_key.clone(),
+        display_name: packet.display_name.clone(),
+        signature_forms: packet
+            .signature_forms
+            .iter()
+            .map(|form| ExploreFunctionHelpSignatureView {
+                display_signature: form.display_signature.clone(),
+                min_arity: form.min_arity,
+                max_arity: form.max_arity,
+            })
+            .collect(),
+        argument_help: packet.argument_help.clone(),
+        short_description: packet.short_description.clone(),
+        availability_summary: packet.availability_summary.clone(),
+        deferred_or_profile_limited: packet.deferred_or_profile_limited,
+    }
+}
+
+fn completion_kind_view(kind: &CompletionProposalKind) -> ExploreCompletionKindView {
+    match kind {
+        CompletionProposalKind::Function => ExploreCompletionKindView::Function,
+        CompletionProposalKind::DefinedName => ExploreCompletionKindView::DefinedName,
+        CompletionProposalKind::TableName => ExploreCompletionKindView::TableName,
+        CompletionProposalKind::TableColumn => ExploreCompletionKindView::TableColumn,
+        CompletionProposalKind::StructuredSelector => ExploreCompletionKindView::StructuredSelector,
+        CompletionProposalKind::SyntaxAssist => ExploreCompletionKindView::SyntaxAssist,
     }
 }
 
@@ -153,8 +234,9 @@ fn signature_help_view(context: &SignatureHelpContext) -> ExploreSignatureHelpVi
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{
-        CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-        FormulaEditReuseSummary, LiveDiagnostic, LiveDiagnosticSnapshot, SignatureHelpContext,
+        CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
+        EditorToken, FormulaEditReuseSummary, FormulaTextSpan, FunctionHelpPacket,
+        FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSnapshot, SignatureHelpContext,
     };
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::{CompletionHelpState, FormulaSpaceState};
@@ -203,14 +285,34 @@ mod tests {
             },
             signature_help: Some(SignatureHelpContext {
                 callee_text: "SUM".to_string(),
+                call_span: FormulaTextSpan { start: 0, len: 9 },
                 active_argument_index: 1,
             }),
-            function_help: None,
+            function_help: Some(FunctionHelpPacket {
+                lookup_key: "SUM".to_string(),
+                display_name: "SUM".to_string(),
+                signature_forms: vec![FunctionHelpSignatureForm {
+                    display_signature: "SUM(number1, number2, ...)".to_string(),
+                    min_arity: 1,
+                    max_arity: None,
+                }],
+                argument_help: vec![
+                    "number1".to_string(),
+                    "number2".to_string(),
+                    "additional_numbers".to_string(),
+                ],
+                short_description: Some("Adds numbers together.".to_string()),
+                availability_summary: Some("supported".to_string()),
+                deferred_or_profile_limited: false,
+            }),
             completion_proposals: vec![CompletionProposal {
                 proposal_id: "proposal-1".to_string(),
+                proposal_kind: CompletionProposalKind::Function,
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
-                replacement_span: None,
+                replacement_span: Some(FormulaTextSpan { start: 1, len: 3 }),
+                documentation_ref: Some("preview:function:SUM".to_string()),
+                requires_revalidation: true,
             }],
             formula_walk: vec![],
             parse_summary: None,
@@ -226,8 +328,23 @@ mod tests {
         assert_eq!(view_model.diagnostics.len(), 1);
         assert_eq!(view_model.completion_items.len(), 1);
         assert_eq!(
+            view_model
+                .completion_items
+                .first()
+                .and_then(|item| item.replacement_span),
+            Some(FormulaTextSpan { start: 1, len: 3 })
+        );
+        assert_eq!(
             view_model.signature_help.as_ref().map(|help| help.active_argument_index),
             Some(1)
+        );
+        assert_eq!(
+            view_model.signature_help.as_ref().map(|help| help.call_span),
+            Some(FormulaTextSpan { start: 0, len: 9 })
+        );
+        assert_eq!(
+            view_model.function_help.as_ref().map(|help| help.display_name.as_str()),
+            Some("SUM")
         );
         assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
         assert_eq!(view_model.effective_display_summary.as_deref(), Some("3"));
@@ -267,6 +384,7 @@ mod tests {
         assert!(view_model.diagnostics.is_empty());
         assert!(view_model.completion_items.is_empty());
         assert!(view_model.signature_help.is_none());
+        assert!(view_model.function_help.is_none());
         assert!(view_model.green_tree_key.is_none());
     }
 }

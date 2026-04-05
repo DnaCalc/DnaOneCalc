@@ -1,7 +1,8 @@
 use crate::adapters::oxfml::{
-    BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode,
-    FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnostic, LiveDiagnosticSnapshot,
+    BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument,
+    EditorSyntaxSnapshot, EditorToken, EvalSummary, FormulaEditReuseSummary,
+    FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode, FormulaWalkNodeState,
+    FunctionHelpPacket, FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSnapshot,
     ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
 
@@ -35,16 +36,37 @@ pub fn sample_editor_document(source_text: &str) -> EditorDocument {
         },
         signature_help: Some(SignatureHelpContext {
             callee_text: "SUM".to_string(),
+            call_span: FormulaTextSpan {
+                start: 0,
+                len: source_text.chars().count(),
+            },
             active_argument_index: 0,
         }),
         function_help: Some(FunctionHelpPacket {
             lookup_key: "SUM".to_string(),
+            display_name: "SUM".to_string(),
+            signature_forms: vec![FunctionHelpSignatureForm {
+                display_signature: "SUM(number1, number2, ...)".to_string(),
+                min_arity: 1,
+                max_arity: None,
+            }],
+            argument_help: vec![
+                "number1".to_string(),
+                "number2".to_string(),
+                "additional_numbers".to_string(),
+            ],
+            short_description: Some("Adds numbers together.".to_string()),
+            availability_summary: Some("supported".to_string()),
+            deferred_or_profile_limited: false,
         }),
         completion_proposals: vec![CompletionProposal {
             proposal_id: "proposal-1".to_string(),
+            proposal_kind: CompletionProposalKind::Function,
             display_text: "SUM".to_string(),
             insert_text: "SUM(".to_string(),
             replacement_span: Some(FormulaTextSpan { start: 1, len: 3 }),
+            documentation_ref: Some("preview:function:SUM".to_string()),
+            requires_revalidation: true,
         }],
         formula_walk: vec![FormulaWalkNode {
             node_id: "node-1".to_string(),

@@ -69,6 +69,42 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
             <div>"Function target: " {function_help}</div>
             <div>{help_summary}</div>
             <div>"Completion entries: " {editor.completion_count}</div>
+            {editor
+                .function_help
+                .as_ref()
+                .map(|help| {
+                    view! {
+                        <div class="onecalc-explore-shell__function-help" data-role="function-help">
+                            <div data-role="function-help-display-name">{help.display_name.clone()}</div>
+                            <div data-role="function-help-signatures">
+                                {help
+                                    .signature_forms
+                                    .iter()
+                                    .map(|form| {
+                                        view! {
+                                            <div data-role="function-help-signature">
+                                                {form.display_signature.clone()}
+                                            </div>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
+                            <div data-role="function-help-arguments">
+                                {help
+                                    .argument_help
+                                    .iter()
+                                    .map(|argument| view! { <div data-role="function-help-argument">{argument.clone()}</div> })
+                                    .collect_view()}
+                            </div>
+                            <div data-role="function-help-availability">
+                                {help
+                                    .availability_summary
+                                    .clone()
+                                    .unwrap_or_else(|| "availability unknown".to_string())}
+                            </div>
+                        </div>
+                    }
+                })}
         </section>
     }
 }
@@ -103,9 +139,11 @@ pub fn ExploreShell(
 mod tests {
     use super::*;
     use crate::services::explore_mode::{
-        ExploreCompletionItemView, ExploreDiagnosticView, ExploreSignatureHelpView,
+        ExploreCompletionItemView, ExploreCompletionKindView, ExploreDiagnosticView,
+        ExploreFunctionHelpSignatureView, ExploreFunctionHelpView, ExploreSignatureHelpView,
         ExploreViewModel,
     };
+    use crate::adapters::oxfml::FormulaTextSpan;
     use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
     use crate::ui::panels::explore::{
         build_explore_editor_cluster, build_explore_result_cluster,
@@ -133,13 +171,31 @@ mod tests {
             completion_count: 2,
             completion_items: vec![ExploreCompletionItemView {
                 proposal_id: "proposal-1".to_string(),
+                proposal_kind: ExploreCompletionKindView::Function,
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
+                replacement_span: Some(FormulaTextSpan { start: 1, len: 3 }),
+                documentation_ref: Some("preview:function:SUM".to_string()),
+                requires_revalidation: true,
             }],
             has_signature_help: true,
             signature_help: Some(ExploreSignatureHelpView {
                 callee_text: "SUM".to_string(),
+                call_span: FormulaTextSpan { start: 0, len: 9 },
                 active_argument_index: 1,
+            }),
+            function_help: Some(ExploreFunctionHelpView {
+                lookup_key: "SUM".to_string(),
+                display_name: "SUM".to_string(),
+                signature_forms: vec![ExploreFunctionHelpSignatureView {
+                    display_signature: "SUM(number1, number2, ...)".to_string(),
+                    min_arity: 1,
+                    max_arity: None,
+                }],
+                argument_help: vec!["number1".to_string(), "number2".to_string()],
+                short_description: Some("Adds numbers".to_string()),
+                availability_summary: Some("supported".to_string()),
+                deferred_or_profile_limited: false,
             }),
             function_help_lookup_key: Some("SUM".to_string()),
             effective_display_summary: Some("3".to_string()),
@@ -166,5 +222,7 @@ mod tests {
         assert!(html.contains("Function target: "));
         assert!(html.contains("SUM"));
         assert!(html.contains("Completion entries: "));
+        assert!(html.contains("data-role=\"function-help\""));
+        assert!(html.contains("data-role=\"function-help-signature\""));
     }
 }

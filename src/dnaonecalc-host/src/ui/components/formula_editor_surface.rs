@@ -33,6 +33,7 @@ pub fn FormulaEditorSurface(
         "range"
     };
     let selected_completion_proposal_id = editor.selected_completion_proposal_id.clone();
+    let completion_anchor_span = editor.completion_anchor_span;
 
     view! {
         <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
@@ -169,6 +170,8 @@ pub fn FormulaEditorSurface(
                                     class="onecalc-formula-editor-surface__assist-indicator"
                                     data-role="completion-anchor-indicator"
                                     data-anchor-offset=offset
+                                    data-anchor-span-start=completion_anchor_span.map(|span| span.start)
+                                    data-anchor-span-len=completion_anchor_span.map(|span| span.len)
                                 >
                                     "Completion anchor: "
                                     {offset}
@@ -188,6 +191,16 @@ pub fn FormulaEditorSurface(
                                                         type="button"
                                                         data-completion-id=item.proposal_id.clone()
                                                         data-completion-index=index
+                                                        data-proposal-kind=match item.proposal_kind {
+                                                            crate::services::explore_mode::ExploreCompletionKindView::Function => "function",
+                                                            crate::services::explore_mode::ExploreCompletionKindView::DefinedName => "defined-name",
+                                                            crate::services::explore_mode::ExploreCompletionKindView::TableName => "table-name",
+                                                            crate::services::explore_mode::ExploreCompletionKindView::TableColumn => "table-column",
+                                                            crate::services::explore_mode::ExploreCompletionKindView::StructuredSelector => "structured-selector",
+                                                            crate::services::explore_mode::ExploreCompletionKindView::SyntaxAssist => "syntax-assist",
+                                                        }
+                                                        data-doc-ref=item.documentation_ref.clone().unwrap_or_default()
+                                                        data-requires-revalidation=if item.requires_revalidation { "true" } else { "false" }
                                                         data-selected=if is_selected { "true" } else { "false" }
                                                         on:click=move |_| {
                                                             if let Some(command_callback) = popup_command.as_ref() {
@@ -227,6 +240,8 @@ pub fn FormulaEditorSurface(
                                                     <div
                                                         data-role="signature-help-content"
                                                         data-active-argument-index=help.active_argument_index
+                                                        data-call-span-start=help.call_span.start
+                                                        data-call-span-len=help.call_span.len
                                                     >
                                                         <span data-role="signature-help-callee">
                                                             {help.callee_text.clone()}
@@ -319,16 +334,23 @@ mod tests {
                     completion_count: 2,
                     completion_items: vec![crate::services::explore_mode::ExploreCompletionItemView {
                         proposal_id: "proposal-1".to_string(),
+                        proposal_kind: crate::services::explore_mode::ExploreCompletionKindView::Function,
                         display_text: "SUM".to_string(),
                         insert_text: "SUM(".to_string(),
+                        replacement_span: Some(crate::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
+                        documentation_ref: Some("preview:function:SUM".to_string()),
+                        requires_revalidation: true,
                     }],
                     selected_completion_proposal_id: Some("proposal-1".to_string()),
                     has_signature_help: true,
                     signature_help: Some(crate::services::explore_mode::ExploreSignatureHelpView {
                         callee_text: "SUM".to_string(),
+                        call_span: crate::adapters::oxfml::FormulaTextSpan { start: 0, len: 9 },
                         active_argument_index: 1,
                     }),
+                    function_help: None,
                     function_help_lookup_key: Some("SUM".to_string()),
+                    completion_anchor_span: Some(crate::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
                     green_tree_key: Some("green-1".to_string()),
                     reused_green_tree: false,
                     editor_surface_state: EditorSurfaceState {
@@ -366,7 +388,14 @@ mod tests {
         assert!(html.contains("data-role=\"signature-help-popup\""));
         assert!(html.contains("data-completion-id=\"proposal-1\""));
         assert!(html.contains("data-completion-index=\"0\""));
+        assert!(html.contains("data-proposal-kind=\"function\""));
+        assert!(html.contains("data-doc-ref=\"preview:function:SUM\""));
+        assert!(html.contains("data-requires-revalidation=\"true\""));
         assert!(html.contains("data-selected=\"true\""));
         assert!(html.contains("data-active-argument-index=\"1\""));
+        assert!(html.contains("data-call-span-start=\"0\""));
+        assert!(html.contains("data-call-span-len=\"9\""));
+        assert!(html.contains("data-anchor-span-start=\"1\""));
+        assert!(html.contains("data-anchor-span-len=\"3\""));
     }
 }

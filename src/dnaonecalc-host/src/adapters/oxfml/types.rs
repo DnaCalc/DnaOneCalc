@@ -46,22 +46,49 @@ pub struct FormulaEditReuseSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionProposalKind {
+    Function,
+    DefinedName,
+    TableName,
+    TableColumn,
+    StructuredSelector,
+    SyntaxAssist,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionProposal {
     pub proposal_id: String,
+    pub proposal_kind: CompletionProposalKind,
     pub display_text: String,
     pub insert_text: String,
     pub replacement_span: Option<FormulaTextSpan>,
+    pub documentation_ref: Option<String>,
+    pub requires_revalidation: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureHelpContext {
     pub callee_text: String,
+    pub call_span: FormulaTextSpan,
     pub active_argument_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionHelpSignatureForm {
+    pub display_signature: String,
+    pub min_arity: usize,
+    pub max_arity: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionHelpPacket {
     pub lookup_key: String,
+    pub display_name: String,
+    pub signature_forms: Vec<FunctionHelpSignatureForm>,
+    pub argument_help: Vec<String>,
+    pub short_description: Option<String>,
+    pub availability_summary: Option<String>,
+    pub deferred_or_profile_limited: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

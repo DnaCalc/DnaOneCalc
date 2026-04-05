@@ -12,8 +12,9 @@ pub use bridge::{
 pub use live_bridge::LiveOxfmlBridge;
 pub use preview_bridge::PreviewOxfmlBridge;
 pub use types::{
-    BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode,
-    FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnostic, LiveDiagnosticSnapshot,
-    ParseSummary, ProvenanceSummary, SignatureHelpContext,
+    BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
+    EditorToken, EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan,
+    FormulaWalkNode, FormulaWalkNodeState, FunctionHelpPacket, FunctionHelpSignatureForm,
+    LiveDiagnostic, LiveDiagnosticSnapshot, ParseSummary, ProvenanceSummary,
+    SignatureHelpContext,
 };

@@ -84,8 +84,9 @@ pub enum EditorSessionError {
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{
-        CompletionProposal, EditorAnalysisStage, EditorSyntaxSnapshot, FormulaEditResult,
-        FormulaEditReuseSummary, LiveDiagnosticSnapshot, SignatureHelpContext,
+        CompletionProposal, CompletionProposalKind, EditorAnalysisStage, EditorSyntaxSnapshot,
+        FormulaEditResult, FormulaEditReuseSummary, FormulaTextSpan, LiveDiagnosticSnapshot,
+        SignatureHelpContext,
     };
 
     fn sample_document(source_text: &str) -> EditorDocument {
@@ -105,14 +106,18 @@ mod tests {
             },
             signature_help: Some(SignatureHelpContext {
                 callee_text: "SUM".to_string(),
+                call_span: FormulaTextSpan { start: 0, len: source_text.chars().count() },
                 active_argument_index: 1,
             }),
             function_help: None,
             completion_proposals: vec![CompletionProposal {
                 proposal_id: "proposal-1".to_string(),
+                proposal_kind: CompletionProposalKind::Function,
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
                 replacement_span: None,
+                documentation_ref: None,
+                requires_revalidation: true,
             }],
             formula_walk: vec![],
             parse_summary: None,

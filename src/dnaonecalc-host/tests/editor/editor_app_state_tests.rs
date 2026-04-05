@@ -149,9 +149,12 @@ fn ex_25_completion_navigation_updates_selected_proposal_index() {
     editor_document.completion_proposals.push(
         dnaonecalc_host::adapters::oxfml::CompletionProposal {
             proposal_id: "proposal-2".to_string(),
+            proposal_kind: dnaonecalc_host::adapters::oxfml::CompletionProposalKind::Function,
             display_text: "SUBTOTAL".to_string(),
             insert_text: "SUBTOTAL(".to_string(),
             replacement_span: Some(dnaonecalc_host::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
+            documentation_ref: Some("preview:function:SUBTOTAL".to_string()),
+            requires_revalidation: true,
         },
     );
     formula_space.editor_document = Some(editor_document);
@@ -204,15 +207,21 @@ fn ex_27_accept_completion_by_index_updates_selection_and_replaces_text() {
     editor_document.completion_proposals = vec![
         dnaonecalc_host::adapters::oxfml::CompletionProposal {
             proposal_id: "proposal-1".to_string(),
+            proposal_kind: dnaonecalc_host::adapters::oxfml::CompletionProposalKind::Function,
             display_text: "SUM".to_string(),
             insert_text: "SUM(".to_string(),
             replacement_span: Some(dnaonecalc_host::adapters::oxfml::FormulaTextSpan { start: 1, len: 2 }),
+            documentation_ref: Some("preview:function:SUM".to_string()),
+            requires_revalidation: true,
         },
         dnaonecalc_host::adapters::oxfml::CompletionProposal {
             proposal_id: "proposal-2".to_string(),
+            proposal_kind: dnaonecalc_host::adapters::oxfml::CompletionProposalKind::Function,
             display_text: "SUBTOTAL".to_string(),
             insert_text: "SUBTOTAL(".to_string(),
             replacement_span: Some(dnaonecalc_host::adapters::oxfml::FormulaTextSpan { start: 1, len: 2 }),
+            documentation_ref: Some("preview:function:SUBTOTAL".to_string()),
+            requires_revalidation: true,
         },
     ];
     formula_space.editor_document = Some(editor_document);
