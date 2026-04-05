@@ -290,7 +290,8 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-explore-shell__function-help-signatures,
-.onecalc-explore-shell__function-help-arguments {
+.onecalc-explore-shell__function-help-arguments,
+.onecalc-explore-shell__selected-proposal {
   display: grid;
   gap: var(--oc-space-2);
 }

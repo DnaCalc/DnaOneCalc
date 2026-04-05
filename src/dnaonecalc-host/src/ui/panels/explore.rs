@@ -2,6 +2,7 @@ use crate::services::explore_mode::{
     ExploreCompletionItemView, ExploreDiagnosticView, ExploreFunctionHelpView,
     ExploreSignatureHelpView, ExploreViewModel,
 };
+use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::render_projection::SyntaxRun;
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -14,7 +15,10 @@ pub struct ExploreEditorClusterViewModel {
     pub completion_count: usize,
     pub completion_items: Vec<ExploreCompletionItemView>,
     pub selected_completion_proposal_id: Option<String>,
+    pub selected_completion_item: Option<ExploreCompletionItemView>,
+    pub help_sync_lookup_key: Option<String>,
     pub completion_anchor_span: Option<crate::adapters::oxfml::FormulaTextSpan>,
+    pub overlay_geometry: Option<EditorOverlayGeometrySnapshot>,
     pub has_signature_help: bool,
     pub signature_help: Option<ExploreSignatureHelpView>,
     pub function_help: Option<ExploreFunctionHelpView>,
@@ -32,6 +36,12 @@ pub struct ExploreResultClusterViewModel {
 pub fn build_explore_editor_cluster(
     view_model: &ExploreViewModel,
 ) -> ExploreEditorClusterViewModel {
+    let selected_completion_item = view_model
+        .editor_surface_state
+        .completion_selected_index
+        .and_then(|index| view_model.completion_items.get(index))
+        .cloned();
+
     ExploreEditorClusterViewModel {
         raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
         editor_surface_state: view_model.editor_surface_state.clone(),
@@ -39,16 +49,24 @@ pub fn build_explore_editor_cluster(
         diagnostics: view_model.diagnostics.clone(),
         completion_count: view_model.completion_count,
         completion_items: view_model.completion_items.clone(),
-        selected_completion_proposal_id: view_model
-            .editor_surface_state
-            .completion_selected_index
-            .and_then(|index| view_model.completion_items.get(index))
+        selected_completion_proposal_id: selected_completion_item
+            .as_ref()
             .map(|item| item.proposal_id.clone()),
-        completion_anchor_span: view_model
-            .editor_surface_state
-            .completion_selected_index
-            .and_then(|index| view_model.completion_items.get(index))
+        selected_completion_item: selected_completion_item.clone(),
+        help_sync_lookup_key: selected_completion_item
+            .as_ref()
+            .and_then(|item| match item.proposal_kind {
+                crate::services::explore_mode::ExploreCompletionKindView::Function => {
+                    Some(item.display_text.clone())
+                }
+                _ => None,
+            })
+            .or_else(|| view_model.function_help.as_ref().map(|help| help.lookup_key.clone()))
+            .or_else(|| view_model.function_help_lookup_key.clone()),
+        completion_anchor_span: selected_completion_item
+            .as_ref()
             .and_then(|item| item.replacement_span),
+        overlay_geometry: view_model.overlay_geometry.clone(),
         has_signature_help: view_model.has_signature_help,
         signature_help: view_model.signature_help.clone(),
         function_help: view_model.function_help.clone(),
@@ -87,6 +105,7 @@ mod tests {
                 signature_help_anchor_offset: Some(4),
                 ..EditorSurfaceState::for_text("=SUM(1,2)")
             },
+            overlay_geometry: None,
             syntax_runs: vec![SyntaxRun {
                 text: "SUM".to_string(),
                 span_start: 1,
@@ -142,6 +161,11 @@ mod tests {
         assert_eq!(cluster.diagnostics.len(), 1);
         assert_eq!(cluster.completion_items.len(), 1);
         assert_eq!(cluster.selected_completion_proposal_id.as_deref(), Some("proposal-1"));
+        assert_eq!(
+            cluster.selected_completion_item.as_ref().map(|item| item.display_text.as_str()),
+            Some("SUM")
+        );
+        assert_eq!(cluster.help_sync_lookup_key.as_deref(), Some("SUM"));
         assert_eq!(cluster.completion_anchor_span, Some(FormulaTextSpan { start: 1, len: 3 }));
         assert_eq!(
             cluster.signature_help.as_ref().map(|help| help.active_argument_index),
@@ -157,6 +181,7 @@ mod tests {
         let view_model = ExploreViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
             editor_surface_state: EditorSurfaceState::for_text("=SUM(1,2)"),
+            overlay_geometry: None,
             syntax_runs: vec![],
             diagnostics: vec![],
             completion_count: 0,

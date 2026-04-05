@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
+use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::state::EditorSurfaceState;
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,7 @@ pub struct FormulaSpaceState {
     pub formula_space_id: FormulaSpaceId,
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
+    pub editor_overlay_geometry: Option<EditorOverlayGeometrySnapshot>,
     pub editor_document: Option<EditorDocument>,
     pub completion_help: CompletionHelpState,
     pub latest_evaluation_summary: Option<String>,
@@ -89,6 +91,7 @@ impl FormulaSpaceState {
             formula_space_id,
             raw_entered_cell_text: raw_entered_cell_text.clone(),
             editor_surface_state: EditorSurfaceState::for_text(&raw_entered_cell_text),
+            editor_overlay_geometry: None,
             editor_document: None,
             completion_help: CompletionHelpState::default(),
             latest_evaluation_summary: None,

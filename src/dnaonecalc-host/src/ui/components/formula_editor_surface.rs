@@ -5,7 +5,10 @@ use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
 use crate::ui::editor::commands::{
     classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
 };
-use crate::ui::editor::geometry::{EditorOverlayMeasurement, EditorOverlayMeasurementSource};
+use crate::ui::editor::geometry::{
+    resolve_overlay_box, EditorOverlayGeometrySnapshot, EditorOverlayMeasurement,
+    EditorOverlayMeasurementSource,
+};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
@@ -34,19 +37,29 @@ pub fn FormulaEditorSurface(
         "range"
     };
     let overlay_measurement = EditorOverlayMeasurement::derived_grid();
-    let caret_box = overlay_measurement.offset_box(&editor.raw_entered_cell_text, editor_state.caret.offset);
-    let selection_box = overlay_measurement.span_box(
+    let overlay_geometry = editor.overlay_geometry.clone().unwrap_or_default();
+    let (caret_measurement_source, caret_box) = resolve_overlay_box(
+        overlay_geometry.caret_box,
+        overlay_measurement.offset_box(&editor.raw_entered_cell_text, editor_state.caret.offset),
+    );
+    let (selection_measurement_source, selection_box) = resolve_overlay_box(
+        overlay_geometry.selection_box,
+        overlay_measurement.span_box(
         &editor.raw_entered_cell_text,
         crate::adapters::oxfml::FormulaTextSpan {
             start: selection_start,
             len: selection_end.saturating_sub(selection_start),
         },
-    );
+    ));
     let selected_completion_proposal_id = editor.selected_completion_proposal_id.clone();
     let completion_anchor_span = editor.completion_anchor_span;
-    let measurement_source = match overlay_measurement.source {
-        EditorOverlayMeasurementSource::DerivedGrid => "derived-grid",
-        EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
+    let measurement_source = if overlay_geometry != EditorOverlayGeometrySnapshot::default() {
+        "mixed"
+    } else {
+        match overlay_measurement.source {
+            EditorOverlayMeasurementSource::DerivedGrid => "derived-grid",
+            EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
+        }
     };
 
     view! {
@@ -162,6 +175,7 @@ pub fn FormulaEditorSurface(
                         data-selection-left-px=selection_box.left_px
                         data-selection-width-px=selection_box.width_px
                         data-selection-height-px=selection_box.height_px
+                        data-selection-measurement-source=measurement_source_label(selection_measurement_source)
                     >
                         "Selection: "
                         {selection_start}
@@ -176,6 +190,7 @@ pub fn FormulaEditorSurface(
                         data-caret-column=caret_box.start.column_index
                         data-caret-top-px=caret_box.top_px
                         data-caret-left-px=caret_box.left_px
+                        data-caret-measurement-source=measurement_source_label(caret_measurement_source)
                     >
                         "Caret: "
                         {editor_state.caret.offset}
@@ -195,9 +210,12 @@ pub fn FormulaEditorSurface(
                         .completion_anchor_offset
                         .map(|offset| {
                             let popup_command = on_command.clone();
-                            let anchor_box = completion_anchor_span
-                                .map(|span| overlay_measurement.span_box(&editor.raw_entered_cell_text, span))
-                                .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset));
+                            let (anchor_measurement_source, anchor_box) = resolve_overlay_box(
+                                overlay_geometry.completion_anchor_box,
+                                completion_anchor_span
+                                    .map(|span| overlay_measurement.span_box(&editor.raw_entered_cell_text, span))
+                                    .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset)),
+                            );
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
@@ -209,6 +227,7 @@ pub fn FormulaEditorSurface(
                                     data-anchor-left-px=anchor_box.left_px
                                     data-anchor-width-px=anchor_box.width_px
                                     data-anchor-height-px=anchor_box.height_px
+                                    data-anchor-measurement-source=measurement_source_label(anchor_measurement_source)
                                     data-anchor-span-start=completion_anchor_span.map(|span| span.start)
                                     data-anchor-span-len=completion_anchor_span.map(|span| span.len)
                                 >
@@ -259,11 +278,14 @@ pub fn FormulaEditorSurface(
                     {editor_state
                         .signature_help_anchor_offset
                         .map(|offset| {
-                            let call_box = editor
-                                .signature_help
-                                .as_ref()
-                                .map(|help| overlay_measurement.span_box(&editor.raw_entered_cell_text, help.call_span))
-                                .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset));
+                            let (call_measurement_source, call_box) = resolve_overlay_box(
+                                overlay_geometry.signature_help_anchor_box,
+                                editor
+                                    .signature_help
+                                    .as_ref()
+                                    .map(|help| overlay_measurement.span_box(&editor.raw_entered_cell_text, help.call_span))
+                                    .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset)),
+                            );
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
@@ -275,6 +297,7 @@ pub fn FormulaEditorSurface(
                                     data-anchor-left-px=call_box.left_px
                                     data-anchor-width-px=call_box.width_px
                                     data-anchor-height-px=call_box.height_px
+                                    data-anchor-measurement-source=measurement_source_label(call_measurement_source)
                                 >
                                     "Signature help anchor: "
                                     {offset}
@@ -324,6 +347,13 @@ pub fn FormulaEditorSurface(
                 </div>
             </footer>
         </section>
+    }
+}
+
+fn measurement_source_label(source: EditorOverlayMeasurementSource) -> &'static str {
+    match source {
+        EditorOverlayMeasurementSource::DerivedGrid => "derived-grid",
+        EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
     }
 }
 
@@ -476,6 +506,16 @@ mod tests {
                         requires_revalidation: true,
                     }],
                     selected_completion_proposal_id: Some("proposal-1".to_string()),
+                    selected_completion_item: Some(crate::services::explore_mode::ExploreCompletionItemView {
+                        proposal_id: "proposal-1".to_string(),
+                        proposal_kind: crate::services::explore_mode::ExploreCompletionKindView::Function,
+                        display_text: "SUM".to_string(),
+                        insert_text: "SUM(".to_string(),
+                        replacement_span: Some(crate::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
+                        documentation_ref: Some("preview:function:SUM".to_string()),
+                        requires_revalidation: true,
+                    }),
+                    help_sync_lookup_key: Some("SUM".to_string()),
                     has_signature_help: true,
                     signature_help: Some(crate::services::explore_mode::ExploreSignatureHelpView {
                         callee_text: "SUM".to_string(),
@@ -497,6 +537,40 @@ mod tests {
                     }),
                     function_help_lookup_key: Some("SUM".to_string()),
                     completion_anchor_span: Some(crate::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
+                    overlay_geometry: Some(EditorOverlayGeometrySnapshot {
+                        caret_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 42,
+                            left_px: 64,
+                            width_px: 2,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 4,
+                        }),
+                        selection_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 42,
+                            left_px: 24,
+                            width_px: 40,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 1,
+                        }),
+                        completion_anchor_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 64,
+                            left_px: 24,
+                            width_px: 40,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 1,
+                        }),
+                        signature_help_anchor_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 86,
+                            left_px: 0,
+                            width_px: 72,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 0,
+                        }),
+                    }),
                     green_tree_key: Some("green-1".to_string()),
                     reused_green_tree: false,
                     editor_surface_state: EditorSurfaceState {
@@ -519,7 +593,7 @@ mod tests {
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-role=\"native-input-layer\""));
         assert!(html.contains("data-role=\"overlay-layer\""));
-        assert!(html.contains("data-measurement-source=\"derived-grid\""));
+        assert!(html.contains("data-measurement-source=\"mixed\""));
         assert!(html.contains("data-role=\"syntax-layer\""));
         assert!(html.contains("data-role=\"diagnostic-markers\""));
         assert!(html.contains("data-role=\"inline-diagnostic-spans\""));
@@ -528,11 +602,16 @@ mod tests {
         assert!(html.contains("data-token-role=\"function\""));
         assert!(html.contains("data-role=\"caret-indicator\""));
         assert!(html.contains("data-caret-line=\"0\""));
+        assert!(html.contains("data-caret-top-px=\"42\""));
+        assert!(html.contains("data-caret-measurement-source=\"dom-measured\""));
         assert!(html.contains("data-role=\"selection-indicator\""));
         assert!(html.contains("data-selection-kind=\"range\""));
         assert!(html.contains("data-selection-line=\"0\""));
+        assert!(html.contains("data-selection-left-px=\"24\""));
+        assert!(html.contains("data-selection-measurement-source=\"dom-measured\""));
         assert!(html.contains("data-role=\"completion-anchor-indicator\""));
         assert!(html.contains("data-anchor-line=\"0\""));
+        assert!(html.contains("data-anchor-measurement-source=\"dom-measured\""));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));

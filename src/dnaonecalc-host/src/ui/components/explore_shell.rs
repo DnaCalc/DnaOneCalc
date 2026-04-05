@@ -62,13 +62,38 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
     } else {
         "Signature help unavailable"
     };
+    let help_sync_lookup = editor
+        .help_sync_lookup_key
+        .clone()
+        .unwrap_or_else(|| "None".to_string());
 
     view! {
         <section class="onecalc-explore-shell__help-panel" data-panel="explore-help">
             <h2>"Help"</h2>
             <div>"Function target: " {function_help}</div>
+            <div data-role="help-sync-lookup">"Help sync: " {help_sync_lookup}</div>
             <div>{help_summary}</div>
             <div>"Completion entries: " {editor.completion_count}</div>
+            {editor
+                .selected_completion_item
+                .as_ref()
+                .map(|item| {
+                    view! {
+                        <div class="onecalc-explore-shell__selected-proposal" data-role="selected-completion-summary">
+                            <span data-role="selected-completion-label">{item.display_text.clone()}</span>
+                            <span data-role="selected-completion-kind">
+                                {match item.proposal_kind {
+                                    crate::services::explore_mode::ExploreCompletionKindView::Function => "function",
+                                    crate::services::explore_mode::ExploreCompletionKindView::DefinedName => "defined-name",
+                                    crate::services::explore_mode::ExploreCompletionKindView::TableName => "table-name",
+                                    crate::services::explore_mode::ExploreCompletionKindView::TableColumn => "table-column",
+                                    crate::services::explore_mode::ExploreCompletionKindView::StructuredSelector => "structured-selector",
+                                    crate::services::explore_mode::ExploreCompletionKindView::SyntaxAssist => "syntax-assist",
+                                }}
+                            </span>
+                        </div>
+                    }
+                })}
             {editor
                 .function_help
                 .as_ref()
@@ -253,9 +278,13 @@ mod tests {
     fn explore_shell_renders_editor_and_result_content() {
         let view_model = ExploreViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
-            editor_surface_state: crate::ui::editor::state::EditorSurfaceState::for_text(
-                "=SUM(1,2)",
-            ),
+            editor_surface_state: crate::ui::editor::state::EditorSurfaceState {
+                completion_selected_index: Some(0),
+                completion_anchor_offset: Some(4),
+                signature_help_anchor_offset: Some(4),
+                ..crate::ui::editor::state::EditorSurfaceState::for_text("=SUM(1,2)")
+            },
+            overlay_geometry: None,
             syntax_runs: vec![SyntaxRun {
                 text: "SUM".to_string(),
                 span_start: 1,
@@ -320,6 +349,8 @@ mod tests {
         assert!(html.contains("data-panel=\"explore-help\""));
         assert!(html.contains(">3<"));
         assert!(html.contains("Function target: "));
+        assert!(html.contains("data-role=\"help-sync-lookup\""));
+        assert!(html.contains("data-role=\"selected-completion-summary\""));
         assert!(html.contains("SUM"));
         assert!(html.contains("Completion entries: "));
         assert!(html.contains("data-role=\"function-help-card\""));

@@ -29,6 +29,24 @@ pub struct EditorOverlayMeasurement {
     pub line_height_px: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorMeasuredOverlayBox {
+    pub top_px: usize,
+    pub left_px: usize,
+    pub width_px: usize,
+    pub height_px: usize,
+    pub line_index: usize,
+    pub column_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EditorOverlayGeometrySnapshot {
+    pub caret_box: Option<EditorMeasuredOverlayBox>,
+    pub selection_box: Option<EditorMeasuredOverlayBox>,
+    pub completion_anchor_box: Option<EditorMeasuredOverlayBox>,
+    pub signature_help_anchor_box: Option<EditorMeasuredOverlayBox>,
+}
+
 impl EditorOverlayMeasurement {
     pub fn derived_grid() -> Self {
         Self {
@@ -98,6 +116,32 @@ pub fn offset_to_line_column(text: &str, offset: usize) -> EditorLineColumn {
     }
 }
 
+pub fn resolve_overlay_box(
+    measured_box: Option<EditorMeasuredOverlayBox>,
+    derived_box: EditorOverlayBox,
+) -> (EditorOverlayMeasurementSource, EditorOverlayBox) {
+    match measured_box {
+        Some(measured_box) => (
+            EditorOverlayMeasurementSource::DomMeasured,
+            EditorOverlayBox {
+                start: EditorLineColumn {
+                    line_index: measured_box.line_index,
+                    column_index: measured_box.column_index,
+                },
+                end: EditorLineColumn {
+                    line_index: measured_box.line_index,
+                    column_index: measured_box.column_index,
+                },
+                top_px: measured_box.top_px,
+                left_px: measured_box.left_px,
+                width_px: measured_box.width_px,
+                height_px: measured_box.height_px,
+            },
+        ),
+        None => (EditorOverlayMeasurementSource::DerivedGrid, derived_box),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +184,27 @@ mod tests {
         assert_eq!(span_box.left_px, 0);
         assert_eq!(span_box.height_px, 22);
         assert_eq!(span_box.width_px, 16);
+    }
+
+    #[test]
+    fn measured_box_is_preferred_over_derived_geometry() {
+        let derived_box = EditorOverlayMeasurement::derived_grid().offset_box("=SUM(1,2)", 4);
+        let (source, resolved_box) = resolve_overlay_box(
+            Some(EditorMeasuredOverlayBox {
+                top_px: 120,
+                left_px: 48,
+                width_px: 14,
+                height_px: 20,
+                line_index: 3,
+                column_index: 6,
+            }),
+            derived_box,
+        );
+
+        assert_eq!(source, EditorOverlayMeasurementSource::DomMeasured);
+        assert_eq!(resolved_box.top_px, 120);
+        assert_eq!(resolved_box.left_px, 48);
+        assert_eq!(resolved_box.start.line_index, 3);
+        assert_eq!(resolved_box.start.column_index, 6);
     }
 }

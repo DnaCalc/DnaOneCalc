@@ -3,6 +3,7 @@ use crate::adapters::oxfml::{
     SignatureHelpContext,
 };
 use crate::state::FormulaSpaceState;
+use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::render_projection::{
     syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
 };
@@ -12,6 +13,7 @@ use crate::ui::editor::state::EditorSurfaceState;
 pub struct ExploreViewModel {
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
+    pub overlay_geometry: Option<EditorOverlayGeometrySnapshot>,
     pub syntax_runs: Vec<SyntaxRun>,
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
@@ -136,6 +138,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
     ExploreViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state,
+        overlay_geometry: formula_space.editor_overlay_geometry.clone(),
         syntax_runs,
         diagnostics,
         completion_count: formula_space.completion_help.completion_count,

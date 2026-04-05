@@ -12,7 +12,8 @@ Authority chain:
 5. [APP_UX_MODE_VISIBILITY_MAP.md](APP_UX_MODE_VISIBILITY_MAP.md), [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md), [APP_UX_USE_CASES.md](APP_UX_USE_CASES.md), [APP_UX_USE_CASE_CROSSWALK.md](APP_UX_USE_CASE_CROSSWALK.md), and the mode screen specs own mode-specific UX behavior and traceability.
 6. [APP_UX_FORMULA_EDITOR_SPEC.md](APP_UX_FORMULA_EDITOR_SPEC.md) owns the specialized custom formula-editor scope, compatibility floor, overlay design, and editor TDD obligations.
 7. [APP_UX_HOST_STATE_SLICING.md](APP_UX_HOST_STATE_SLICING.md) owns the implementation-facing host state slices that this layout must respect.
-8. This note owns implementation layout, production UI toolkit policy, and TDD structure only.
+8. [APP_PROGRAMMATIC_FORMULA_TESTING.md](APP_PROGRAMMATIC_FORMULA_TESTING.md) records the intended headless and scripted formula-corpus execution path that should feed the same retained artifact model as the interactive app.
+9. This note owns implementation layout, production UI toolkit policy, and TDD structure only.
 
 ## 1. Purpose
 This note defines how the greenfield `DnaOneCalc` implementation should be organized so that:
