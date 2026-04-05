@@ -41,6 +41,8 @@ pub struct EditorSurfaceState {
     pub caret: EditorCaret,
     pub selection: EditorSelection,
     pub scroll_window: EditorScrollWindow,
+    pub completion_anchor_offset: Option<usize>,
+    pub signature_help_anchor_offset: Option<usize>,
 }
 
 impl EditorSurfaceState {
@@ -61,6 +63,8 @@ impl EditorSurfaceState {
                 first_visible_line: 0,
                 visible_line_count: line_count.min(12),
             },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         }
     }
 }
@@ -75,6 +79,8 @@ mod tests {
         assert_eq!(state.caret.offset, 9);
         assert!(state.selection.is_collapsed());
         assert_eq!(state.scroll_window.first_visible_line, 0);
+        assert!(state.completion_anchor_offset.is_none());
+        assert!(state.signature_help_anchor_offset.is_none());
     }
 
     #[test]
@@ -83,5 +89,7 @@ mod tests {
         assert_eq!(state.selection.anchor, 2);
         assert_eq!(state.selection.focus, 5);
         assert_eq!(state.caret.offset, 5);
+        assert!(state.completion_anchor_offset.is_none());
+        assert!(state.signature_help_anchor_offset.is_none());
     }
 }

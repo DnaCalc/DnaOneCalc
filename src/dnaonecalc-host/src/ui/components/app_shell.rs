@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
+use crate::adapters::oxfml::OxfmlEditorBridge;
 use leptos::prelude::*;
 
 use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
 };
+use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
     build_active_mode_projection, build_shell_frame_view_model, switch_active_mode,
     ActiveModeProjection,
@@ -22,20 +26,33 @@ use crate::ui::panels::workbench::{
 };
 
 #[component]
-pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
+pub fn OneCalcShellApp(
+    initial_state: OneCalcHostState,
+    #[prop(default = None)] editor_bridge: Option<Arc<dyn OxfmlEditorBridge + Send + Sync>>,
+) -> impl IntoView {
     let state = RwSignal::new(initial_state);
 
     let on_mode_select = Callback::new(move |next_mode| {
         state.update(|state| switch_active_mode(state, next_mode));
     });
+    let editor_bridge_for_input = editor_bridge.clone();
     let on_editor_input = Callback::new(move |event: EditorInputEvent| {
         state.update(|state| {
-            let _ = apply_editor_input_to_active_formula_space(state, event);
+            if let Some(bridge) = editor_bridge_for_input.as_ref() {
+                let _ = apply_live_editor_input(bridge.as_ref(), state, event);
+            } else {
+                let _ = apply_editor_input_to_active_formula_space(state, event);
+            }
         });
     });
+    let editor_bridge_for_command = editor_bridge.clone();
     let on_editor_command = Callback::new(move |command: EditorCommand| {
         state.update(|state| {
-            let _ = apply_editor_command_to_active_formula_space(state, command);
+            if let Some(bridge) = editor_bridge_for_command.as_ref() {
+                let _ = apply_live_editor_command(bridge.as_ref(), state, command);
+            } else {
+                let _ = apply_editor_command_to_active_formula_space(state, command);
+            }
         });
     });
 

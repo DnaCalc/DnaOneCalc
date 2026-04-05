@@ -4,6 +4,7 @@ use crate::adapters::oxfml::{
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
 use crate::state::{CompletionHelpState, FormulaSpaceCollectionState, FormulaSpaceState};
+use crate::ui::editor::state::EditorSurfaceState;
 
 #[derive(Debug, Default)]
 pub struct EditorSessionService;
@@ -50,7 +51,19 @@ fn update_formula_space_from_editor_document(
     formula_space: &mut FormulaSpaceState,
     document: EditorDocument,
 ) {
+    let mut editor_surface_state = EditorSurfaceState::for_text_with_selection(
+        &document.source_text,
+        formula_space.editor_surface_state.selection.anchor,
+        formula_space.editor_surface_state.selection.focus,
+    );
+    editor_surface_state.scroll_window = formula_space.editor_surface_state.scroll_window.clone();
+    editor_surface_state.completion_anchor_offset =
+        (!document.completion_proposals.is_empty()).then_some(editor_surface_state.caret.offset);
+    editor_surface_state.signature_help_anchor_offset =
+        document.signature_help.as_ref().map(|_| editor_surface_state.caret.offset);
+
     formula_space.raw_entered_cell_text = document.source_text.clone();
+    formula_space.editor_surface_state = editor_surface_state;
     formula_space.completion_help = CompletionHelpState {
         completion_count: document.completion_proposals.len(),
         has_signature_help: document.signature_help.is_some(),
@@ -126,6 +139,8 @@ mod tests {
         assert_eq!(updated.raw_entered_cell_text, "'123.4");
         assert_eq!(updated.completion_help.completion_count, 1);
         assert!(updated.completion_help.has_signature_help);
+        assert_eq!(updated.editor_surface_state.completion_anchor_offset, Some(4));
+        assert_eq!(updated.editor_surface_state.signature_help_anchor_offset, Some(4));
         assert_eq!(
             updated
                 .editor_document

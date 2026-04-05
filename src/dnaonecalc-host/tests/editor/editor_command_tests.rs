@@ -18,6 +18,8 @@ fn ex_12_indent_command_inserts_spaces_for_multiline_selection() {
             first_visible_line: 0,
             visible_line_count: 6,
         },
+        completion_anchor_offset: None,
+        signature_help_anchor_offset: None,
     };
 
     let result = apply_editor_command(text, &state, EditorCommand::IndentWithSpaces);
@@ -39,6 +41,8 @@ fn ex_13_outdent_command_removes_spaces_for_multiline_selection() {
             first_visible_line: 0,
             visible_line_count: 6,
         },
+        completion_anchor_offset: None,
+        signature_help_anchor_offset: None,
     };
 
     let result = apply_editor_command(text, &state, EditorCommand::OutdentWithSpaces);
@@ -56,6 +60,8 @@ fn ex_14_keydown_mapping_covers_tab_and_arrow_navigation() {
         keydown_to_command("ArrowRight", true),
         Some(EditorCommand::ExtendSelectionRight)
     );
+    assert_eq!(keydown_to_command("Backspace", false), Some(EditorCommand::Backspace));
+    assert_eq!(keydown_to_command("Delete", false), Some(EditorCommand::Delete));
     assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
     assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
 }
@@ -70,6 +76,8 @@ fn ex_17_shift_arrow_commands_expand_and_contract_selection() {
             first_visible_line: 0,
             visible_line_count: 6,
         },
+        completion_anchor_offset: None,
+        signature_help_anchor_offset: None,
     };
 
     let left = apply_editor_command(text, &state, EditorCommand::ExtendSelectionLeft);
@@ -81,4 +89,58 @@ fn ex_17_shift_arrow_commands_expand_and_contract_selection() {
     assert_eq!(right.state.selection.anchor, 4);
     assert_eq!(right.state.selection.focus, 4);
     assert!(right.state.selection.is_collapsed());
+}
+
+#[test]
+fn ex_21_insert_text_replaces_non_collapsed_selection() {
+    let text = "=SUM(1,2)";
+    let state = EditorSurfaceState {
+        caret: EditorCaret { offset: 5 },
+        selection: EditorSelection { anchor: 1, focus: 4 },
+        scroll_window: EditorScrollWindow {
+            first_visible_line: 0,
+            visible_line_count: 6,
+        },
+        completion_anchor_offset: Some(4),
+        signature_help_anchor_offset: Some(4),
+    };
+
+    let result = apply_editor_command(text, &state, EditorCommand::InsertText("AVG".to_string()));
+    assert_eq!(result.text, "=AVG(1,2)");
+    assert_eq!(result.state.caret.offset, 4);
+    assert!(result.state.selection.is_collapsed());
+}
+
+#[test]
+fn ex_22_backspace_and_delete_respect_selection_and_caret() {
+    let text = "=SUM(1,2)";
+    let selected = EditorSurfaceState {
+        caret: EditorCaret { offset: 5 },
+        selection: EditorSelection { anchor: 1, focus: 4 },
+        scroll_window: EditorScrollWindow {
+            first_visible_line: 0,
+            visible_line_count: 6,
+        },
+        completion_anchor_offset: None,
+        signature_help_anchor_offset: None,
+    };
+
+    let backspace = apply_editor_command(text, &selected, EditorCommand::Backspace);
+    assert_eq!(backspace.text, "=(1,2)");
+    assert_eq!(backspace.state.caret.offset, 1);
+
+    let collapsed = EditorSurfaceState {
+        caret: EditorCaret { offset: 1 },
+        selection: EditorSelection::collapsed(1),
+        scroll_window: EditorScrollWindow {
+            first_visible_line: 0,
+            visible_line_count: 6,
+        },
+        completion_anchor_offset: None,
+        signature_help_anchor_offset: None,
+    };
+
+    let delete = apply_editor_command(text, &collapsed, EditorCommand::Delete);
+    assert_eq!(delete.text, "=UM(1,2)");
+    assert_eq!(delete.state.caret.offset, 1);
 }

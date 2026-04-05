@@ -2,10 +2,13 @@ use crate::ui::editor::state::{EditorCaret, EditorSelection, EditorSurfaceState}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
+    InsertText(String),
     MoveCaretLeft,
     MoveCaretRight,
     ExtendSelectionLeft,
     ExtendSelectionRight,
+    Backspace,
+    Delete,
     IndentWithSpaces,
     OutdentWithSpaces,
 }
@@ -29,6 +32,7 @@ pub fn apply_editor_command(
     command: EditorCommand,
 ) -> EditorCommandResult {
     match command {
+        EditorCommand::InsertText(inserted_text) => insert_text(text, state, &inserted_text),
         EditorCommand::MoveCaretLeft => EditorCommandResult {
             text: text.to_string(),
             state: EditorSurfaceState {
@@ -37,6 +41,8 @@ pub fn apply_editor_command(
                 },
                 selection: EditorSelection::collapsed(state.caret.offset.saturating_sub(1)),
                 scroll_window: state.scroll_window.clone(),
+                completion_anchor_offset: None,
+                signature_help_anchor_offset: None,
             },
         },
         EditorCommand::MoveCaretRight => {
@@ -47,6 +53,8 @@ pub fn apply_editor_command(
                     caret: EditorCaret { offset: next },
                     selection: EditorSelection::collapsed(next),
                     scroll_window: state.scroll_window.clone(),
+                    completion_anchor_offset: None,
+                    signature_help_anchor_offset: None,
                 },
             }
         }
@@ -61,6 +69,8 @@ pub fn apply_editor_command(
                         focus: next,
                     },
                     scroll_window: state.scroll_window.clone(),
+                    completion_anchor_offset: None,
+                    signature_help_anchor_offset: None,
                 },
             }
         }
@@ -75,9 +85,13 @@ pub fn apply_editor_command(
                         focus: next,
                     },
                     scroll_window: state.scroll_window.clone(),
+                    completion_anchor_offset: None,
+                    signature_help_anchor_offset: None,
                 },
             }
         }
+        EditorCommand::Backspace => backspace(text, state),
+        EditorCommand::Delete => delete(text, state),
         EditorCommand::IndentWithSpaces => indent_with_spaces(text, state),
         EditorCommand::OutdentWithSpaces => outdent_with_spaces(text, state),
     }
@@ -89,9 +103,92 @@ pub fn keydown_to_command(key: &str, shift_key: bool) -> Option<EditorCommand> {
         ("ArrowRight", false) => Some(EditorCommand::MoveCaretRight),
         ("ArrowLeft", true) => Some(EditorCommand::ExtendSelectionLeft),
         ("ArrowRight", true) => Some(EditorCommand::ExtendSelectionRight),
+        ("Backspace", false) => Some(EditorCommand::Backspace),
+        ("Delete", false) => Some(EditorCommand::Delete),
         ("Tab", false) => Some(EditorCommand::IndentWithSpaces),
         ("Tab", true) => Some(EditorCommand::OutdentWithSpaces),
         _ => None,
+    }
+}
+
+fn insert_text(text: &str, state: &EditorSurfaceState, inserted_text: &str) -> EditorCommandResult {
+    let selection_start = state.selection.start();
+    let selection_end = state.selection.end();
+    let start_idx = char_to_byte_idx(text, selection_start);
+    let end_idx = char_to_byte_idx(text, selection_end);
+
+    let mut result = String::with_capacity(text.len() + inserted_text.len());
+    result.push_str(&text[..start_idx]);
+    result.push_str(inserted_text);
+    result.push_str(&text[end_idx..]);
+
+    let next_offset = selection_start + inserted_text.chars().count();
+    EditorCommandResult {
+        text: result,
+        state: EditorSurfaceState {
+            caret: EditorCaret { offset: next_offset },
+            selection: EditorSelection::collapsed(next_offset),
+            scroll_window: state.scroll_window.clone(),
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
+        },
+    }
+}
+
+fn backspace(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
+    if !state.selection.is_collapsed() {
+        return insert_text(text, state, "");
+    }
+
+    if state.caret.offset == 0 {
+        return EditorCommandResult {
+            text: text.to_string(),
+            state: state.clone(),
+        };
+    }
+
+    let start = state.caret.offset.saturating_sub(1);
+    let start_idx = char_to_byte_idx(text, start);
+    let end_idx = char_to_byte_idx(text, state.caret.offset);
+    let mut result = text.to_string();
+    result.replace_range(start_idx..end_idx, "");
+    EditorCommandResult {
+        text: result,
+        state: EditorSurfaceState {
+            caret: EditorCaret { offset: start },
+            selection: EditorSelection::collapsed(start),
+            scroll_window: state.scroll_window.clone(),
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
+        },
+    }
+}
+
+fn delete(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
+    if !state.selection.is_collapsed() {
+        return insert_text(text, state, "");
+    }
+
+    if state.caret.offset >= text.chars().count() {
+        return EditorCommandResult {
+            text: text.to_string(),
+            state: state.clone(),
+        };
+    }
+
+    let start_idx = char_to_byte_idx(text, state.caret.offset);
+    let end_idx = char_to_byte_idx(text, state.caret.offset + 1);
+    let mut result = text.to_string();
+    result.replace_range(start_idx..end_idx, "");
+    EditorCommandResult {
+        text: result,
+        state: EditorSurfaceState {
+            caret: state.caret.clone(),
+            selection: EditorSelection::collapsed(state.caret.offset),
+            scroll_window: state.scroll_window.clone(),
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
+        },
     }
 }
 
@@ -127,6 +224,8 @@ fn indent_with_spaces(text: &str, state: &EditorSurfaceState) -> EditorCommandRe
                 focus: state.selection.focus + inserted_before_focus,
             },
             scroll_window: state.scroll_window.clone(),
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         },
     }
 }
@@ -169,6 +268,8 @@ fn outdent_with_spaces(text: &str, state: &EditorSurfaceState) -> EditorCommandR
                 focus: state.selection.focus.saturating_sub(removed_before_focus),
             },
             scroll_window: state.scroll_window.clone(),
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         },
     }
 }
@@ -237,6 +338,8 @@ mod tests {
                 first_visible_line: 0,
                 visible_line_count: 4,
             },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         };
 
         let moved_left = apply_editor_command(text, &state, EditorCommand::MoveCaretLeft);
@@ -256,6 +359,8 @@ mod tests {
                 first_visible_line: 0,
                 visible_line_count: 4,
             },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         };
 
         let extended_left =
@@ -286,6 +391,8 @@ mod tests {
                 first_visible_line: 0,
                 visible_line_count: 4,
             },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         };
 
         let result = apply_editor_command(text, &state, EditorCommand::IndentWithSpaces);
@@ -304,6 +411,8 @@ mod tests {
                 first_visible_line: 0,
                 visible_line_count: 4,
             },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
         };
 
         let result = apply_editor_command(text, &state, EditorCommand::OutdentWithSpaces);
@@ -321,7 +430,69 @@ mod tests {
             keydown_to_command("ArrowRight", true),
             Some(EditorCommand::ExtendSelectionRight)
         );
+        assert_eq!(keydown_to_command("Backspace", false), Some(EditorCommand::Backspace));
+        assert_eq!(keydown_to_command("Delete", false), Some(EditorCommand::Delete));
         assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
         assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
+    }
+
+    #[test]
+    fn insert_text_replaces_non_collapsed_selection() {
+        let text = "=SUM(1,2)";
+        let state = EditorSurfaceState {
+            caret: EditorCaret { offset: 5 },
+            selection: EditorSelection { anchor: 1, focus: 4 },
+            scroll_window: EditorScrollWindow {
+                first_visible_line: 0,
+                visible_line_count: 4,
+            },
+            completion_anchor_offset: Some(4),
+            signature_help_anchor_offset: Some(4),
+        };
+
+        let result = apply_editor_command(
+            text,
+            &state,
+            EditorCommand::InsertText("AVG".to_string()),
+        );
+        assert_eq!(result.text, "=AVG(1,2)");
+        assert_eq!(result.state.caret.offset, 4);
+        assert!(result.state.selection.is_collapsed());
+        assert!(result.state.completion_anchor_offset.is_none());
+        assert!(result.state.signature_help_anchor_offset.is_none());
+    }
+
+    #[test]
+    fn backspace_and_delete_are_selection_aware() {
+        let text = "=SUM(1,2)";
+        let selected = EditorSurfaceState {
+            caret: EditorCaret { offset: 5 },
+            selection: EditorSelection { anchor: 1, focus: 4 },
+            scroll_window: EditorScrollWindow {
+                first_visible_line: 0,
+                visible_line_count: 4,
+            },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
+        };
+
+        let backspace = apply_editor_command(text, &selected, EditorCommand::Backspace);
+        assert_eq!(backspace.text, "=(1,2)");
+        assert_eq!(backspace.state.caret.offset, 1);
+        assert!(backspace.state.selection.is_collapsed());
+
+        let collapsed = EditorSurfaceState {
+            caret: EditorCaret { offset: 1 },
+            selection: EditorSelection::collapsed(1),
+            scroll_window: EditorScrollWindow {
+                first_visible_line: 0,
+                visible_line_count: 4,
+            },
+            completion_anchor_offset: None,
+            signature_help_anchor_offset: None,
+        };
+        let delete = apply_editor_command(text, &collapsed, EditorCommand::Delete);
+        assert_eq!(delete.text, "=UM(1,2)");
+        assert_eq!(delete.state.caret.offset, 1);
     }
 }

@@ -128,6 +128,34 @@ pub fn FormulaEditorSurface(
                         "/"
                         {editor_state.scroll_window.visible_line_count}
                     </div>
+                    {editor_state
+                        .completion_anchor_offset
+                        .map(|offset| {
+                            view! {
+                                <div
+                                    class="onecalc-formula-editor-surface__assist-indicator"
+                                    data-role="completion-anchor-indicator"
+                                    data-anchor-offset=offset
+                                >
+                                    "Completion anchor: "
+                                    {offset}
+                                </div>
+                            }
+                        })}
+                    {editor_state
+                        .signature_help_anchor_offset
+                        .map(|offset| {
+                            view! {
+                                <div
+                                    class="onecalc-formula-editor-surface__assist-indicator"
+                                    data-role="signature-help-anchor-indicator"
+                                    data-anchor-offset=offset
+                                >
+                                    "Signature help anchor: "
+                                    {offset}
+                                </div>
+                            }
+                        })}
                 </div>
             </div>
 
@@ -208,6 +236,8 @@ mod tests {
                             first_visible_line: 0,
                             visible_line_count: 6,
                         },
+                        completion_anchor_offset: Some(4),
+                        signature_help_anchor_offset: Some(4),
                     },
                 }
             />
@@ -225,5 +255,7 @@ mod tests {
         assert!(html.contains("data-role=\"caret-indicator\""));
         assert!(html.contains("data-role=\"selection-indicator\""));
         assert!(html.contains("data-selection-kind=\"range\""));
+        assert!(html.contains("data-role=\"completion-anchor-indicator\""));
+        assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
     }
 }

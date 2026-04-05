@@ -4,6 +4,7 @@ use dnaonecalc_host::app::reducer::{
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::state::{FormulaSpaceState, OneCalcHostState};
 use dnaonecalc_host::ui::editor::commands::{EditorCommand, EditorInputEvent};
+use dnaonecalc_host::ui::editor::state::EditorSelection;
 
 #[test]
 fn ex_15_editor_input_event_updates_active_formula_space_in_host_state() {
@@ -90,4 +91,45 @@ fn ex_18_shift_arrow_command_expands_selection_in_host_state() {
     assert_eq!(active.editor_surface_state.selection.anchor, 9);
     assert_eq!(active.editor_surface_state.selection.focus, 8);
     assert!(!active.editor_surface_state.selection.is_collapsed());
+}
+
+#[test]
+fn ex_23_insert_text_command_replaces_selected_range_in_host_state() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+    formula_space.editor_surface_state.selection = EditorSelection { anchor: 1, focus: 4 };
+    formula_space.editor_surface_state.caret.offset = 4;
+    state.formula_spaces.insert(formula_space);
+
+    let changed = apply_editor_command_to_active_formula_space(
+        &mut state,
+        EditorCommand::InsertText("AVG".to_string()),
+    );
+
+    assert!(changed);
+    let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+    assert_eq!(active.raw_entered_cell_text, "=AVG(1,2)");
+    assert_eq!(active.editor_surface_state.caret.offset, 4);
+    assert!(active.editor_surface_state.selection.is_collapsed());
+}
+
+#[test]
+fn ex_24_delete_command_removes_current_selection_in_host_state() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+    formula_space.editor_surface_state.selection = EditorSelection { anchor: 1, focus: 4 };
+    formula_space.editor_surface_state.caret.offset = 4;
+    state.formula_spaces.insert(formula_space);
+
+    let changed = apply_editor_command_to_active_formula_space(&mut state, EditorCommand::Delete);
+
+    assert!(changed);
+    let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+    assert_eq!(active.raw_entered_cell_text, "=(1,2)");
+    assert_eq!(active.editor_surface_state.caret.offset, 1);
+    assert!(active.editor_surface_state.selection.is_collapsed());
 }
