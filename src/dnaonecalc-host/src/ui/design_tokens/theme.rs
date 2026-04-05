@@ -179,6 +179,16 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-family: var(--oc-font-mono);
 }
 
+.onecalc-formula-editor-surface__toolbar,
+.onecalc-formula-editor-surface__footer,
+.onecalc-formula-editor-surface__editor-state,
+.onecalc-formula-editor-surface__diagnostic-markers,
+.onecalc-formula-editor-surface__inline-diagnostic-spans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--oc-space-2);
+}
+
 .onecalc-formula-editor-surface__syntax-layer,
 .onecalc-formula-editor-surface__selection-indicator,
 .onecalc-formula-editor-surface__caret-indicator,
@@ -199,6 +209,103 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: inline-block;
   margin-right: var(--oc-space-2);
   color: var(--oc-color-warm);
+}
+
+.onecalc-formula-editor-surface__assist-indicator,
+.onecalc-formula-editor-surface__inline-diagnostic {
+  border: 1px solid var(--oc-color-border);
+  border-radius: 10px;
+  background: rgba(255, 250, 242, 0.95);
+  padding: var(--oc-space-2);
+}
+
+.onecalc-formula-editor-surface__completion-popup,
+.onecalc-formula-editor-surface__signature-help-popup {
+  display: grid;
+  gap: var(--oc-space-2);
+  margin-top: var(--oc-space-2);
+}
+
+.onecalc-formula-editor-surface__completion-item {
+  text-align: left;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 10px;
+  background: var(--oc-color-surface);
+  padding: var(--oc-space-2) var(--oc-space-3);
+}
+
+.onecalc-formula-editor-surface__completion-item[data-selected="true"] {
+  border-color: var(--oc-color-accent);
+  background: var(--oc-color-accent-soft);
+}
+
+.onecalc-signature-form {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.onecalc-signature-argument {
+  padding: 0 0.1rem;
+  border-radius: 6px;
+}
+
+.onecalc-signature-argument--active {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  font-weight: 700;
+}
+
+.onecalc-explore-shell__function-help {
+  display: grid;
+  gap: var(--oc-space-3);
+  margin-top: var(--oc-space-3);
+  border-top: 1px solid var(--oc-color-border);
+  padding-top: var(--oc-space-3);
+}
+
+.onecalc-explore-shell__function-help-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--oc-space-3);
+}
+
+.onecalc-explore-shell__function-help-status {
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--oc-radius-pill);
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  font-size: 0.85rem;
+}
+
+.onecalc-explore-shell__function-help-status--limited {
+  background: #f4e4c6;
+  color: #8a5f19;
+}
+
+.onecalc-explore-shell__function-help-description {
+  margin: 0;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-explore-shell__function-help-signatures,
+.onecalc-explore-shell__function-help-arguments {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-explore-shell__function-help-signature,
+.onecalc-explore-shell__function-help-argument {
+  padding: var(--oc-space-2) var(--oc-space-3);
+  border-radius: 10px;
+  background: #fbf6ed;
+  border: 1px solid var(--oc-color-border);
+}
+
+.onecalc-explore-shell__function-help-argument--active {
+  border-color: var(--oc-color-accent);
+  background: var(--oc-color-accent-soft);
 }
 
 .onecalc-token[data-token-role=\"operator\"] { color: var(--oc-color-warm); }

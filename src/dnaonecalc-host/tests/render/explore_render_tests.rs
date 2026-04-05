@@ -36,6 +36,11 @@ fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     assert!(html.contains("data-role=\"completion-popup\""));
     assert!(html.contains("data-role=\"signature-help-popup\""));
     assert!(html.contains("data-role=\"inline-diagnostic\""));
+    assert!(html.contains("data-measurement-source=\"derived-grid\""));
+    assert!(html.contains("data-anchor-line=\"0\""));
+    assert!(html.contains("data-call-line=\"0\""));
+    assert!(html.contains("data-role=\"function-help-card\""));
+    assert!(html.contains("data-role=\"function-help-signature-argument\""));
     assert!(html.contains("data-selected=\"true\""));
     assert!(html.contains("Evaluation summary: "));
     assert!(html.contains("Number"));

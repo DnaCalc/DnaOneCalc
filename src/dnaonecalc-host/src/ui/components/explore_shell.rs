@@ -73,40 +73,140 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
                 .function_help
                 .as_ref()
                 .map(|help| {
+                    let active_argument_index = editor
+                        .signature_help
+                        .as_ref()
+                        .map(|signature_help| signature_help.active_argument_index);
                     view! {
-                        <div class="onecalc-explore-shell__function-help" data-role="function-help">
-                            <div data-role="function-help-display-name">{help.display_name.clone()}</div>
-                            <div data-role="function-help-signatures">
+                        <article class="onecalc-explore-shell__function-help" data-role="function-help-card">
+                            <header class="onecalc-explore-shell__function-help-header">
+                                <div data-role="function-help-display-name">{help.display_name.clone()}</div>
+                                <div
+                                    class=("onecalc-explore-shell__function-help-status", true)
+                                    class=("onecalc-explore-shell__function-help-status--limited", help.deferred_or_profile_limited)
+                                    data-role="function-help-availability"
+                                >
+                                    {help
+                                        .availability_summary
+                                        .clone()
+                                        .unwrap_or_else(|| "availability unknown".to_string())}
+                                </div>
+                            </header>
+                            {help
+                                .short_description
+                                .as_ref()
+                                .map(|description| view! {
+                                    <p class="onecalc-explore-shell__function-help-description" data-role="function-help-description">
+                                        {description.clone()}
+                                    </p>
+                                })}
+                            <div class="onecalc-explore-shell__function-help-signatures" data-role="function-help-signatures">
                                 {help
                                     .signature_forms
                                     .iter()
-                                    .map(|form| {
+                                    .enumerate()
+                                    .map(|(index, form)| {
                                         view! {
-                                            <div data-role="function-help-signature">
-                                                {form.display_signature.clone()}
+                                            <div
+                                                class="onecalc-explore-shell__function-help-signature"
+                                                data-role="function-help-signature"
+                                                data-signature-index=index
+                                            >
+                                                {render_function_help_signature(
+                                                    &form.display_signature,
+                                                    active_argument_index,
+                                                )}
                                             </div>
                                         }
                                     })
                                     .collect_view()}
                             </div>
-                            <div data-role="function-help-arguments">
+                            <div class="onecalc-explore-shell__function-help-arguments" data-role="function-help-arguments">
                                 {help
                                     .argument_help
                                     .iter()
-                                    .map(|argument| view! { <div data-role="function-help-argument">{argument.clone()}</div> })
+                                    .enumerate()
+                                    .map(|(index, argument)| {
+                                        let active = active_argument_index == Some(index);
+                                        view! {
+                                            <div
+                                                class=("onecalc-explore-shell__function-help-argument", true)
+                                                class=("onecalc-explore-shell__function-help-argument--active", active)
+                                                data-role="function-help-argument"
+                                                data-active=if active { "true" } else { "false" }
+                                            >
+                                                {argument.clone()}
+                                            </div>
+                                        }
+                                    })
                                     .collect_view()}
                             </div>
-                            <div data-role="function-help-availability">
-                                {help
-                                    .availability_summary
-                                    .clone()
-                                    .unwrap_or_else(|| "availability unknown".to_string())}
-                            </div>
-                        </div>
+                        </article>
                     }
                 })}
         </section>
     }
+}
+
+fn render_function_help_signature(
+    display_signature: &str,
+    active_argument_index: Option<usize>,
+) -> AnyView {
+    let (prefix, arguments, suffix) = split_signature(display_signature);
+
+    view! {
+        <span class="onecalc-signature-form">
+            <span data-role="function-help-signature-prefix">{prefix}</span>
+            {arguments
+                .into_iter()
+                .enumerate()
+                .map(|(index, argument)| {
+                    let active = active_argument_index == Some(index);
+                    view! {
+                        <>
+                            {if index > 0 {
+                                view! { <span data-role="function-help-signature-separator">{", "}</span> }.into_any()
+                            } else {
+                                view! { <></> }.into_any()
+                            }}
+                            <span
+                                class=("onecalc-signature-argument", true)
+                                class=("onecalc-signature-argument--active", active)
+                                data-role="function-help-signature-argument"
+                                data-active=if active { "true" } else { "false" }
+                            >
+                                {argument}
+                            </span>
+                        </>
+                    }
+                })
+                .collect_view()}
+            <span data-role="function-help-signature-suffix">{suffix}</span>
+        </span>
+    }
+    .into_any()
+}
+
+fn split_signature(display_signature: &str) -> (String, Vec<String>, String) {
+    let Some(open_index) = display_signature.find('(') else {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    };
+    let Some(close_index) = display_signature.rfind(')') else {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    };
+    if close_index <= open_index {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    }
+
+    let prefix = display_signature[..=open_index].to_string();
+    let inner = &display_signature[(open_index + 1)..close_index];
+    let suffix = display_signature[close_index..].to_string();
+    let arguments = inner
+        .split(',')
+        .map(|argument| argument.trim().to_string())
+        .filter(|argument| !argument.is_empty())
+        .collect();
+    (prefix, arguments, suffix)
 }
 
 #[component]
@@ -222,7 +322,9 @@ mod tests {
         assert!(html.contains("Function target: "));
         assert!(html.contains("SUM"));
         assert!(html.contains("Completion entries: "));
-        assert!(html.contains("data-role=\"function-help\""));
+        assert!(html.contains("data-role=\"function-help-card\""));
         assert!(html.contains("data-role=\"function-help-signature\""));
+        assert!(html.contains("data-role=\"function-help-signature-argument\""));
+        assert!(html.contains("data-active=\"true\""));
     }
 }

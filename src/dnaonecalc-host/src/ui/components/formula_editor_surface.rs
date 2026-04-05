@@ -5,6 +5,7 @@ use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
 use crate::ui::editor::commands::{
     classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
 };
+use crate::ui::editor::geometry::{EditorOverlayMeasurement, EditorOverlayMeasurementSource};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
@@ -32,8 +33,21 @@ pub fn FormulaEditorSurface(
     } else {
         "range"
     };
+    let overlay_measurement = EditorOverlayMeasurement::derived_grid();
+    let caret_box = overlay_measurement.offset_box(&editor.raw_entered_cell_text, editor_state.caret.offset);
+    let selection_box = overlay_measurement.span_box(
+        &editor.raw_entered_cell_text,
+        crate::adapters::oxfml::FormulaTextSpan {
+            start: selection_start,
+            len: selection_end.saturating_sub(selection_start),
+        },
+    );
     let selected_completion_proposal_id = editor.selected_completion_proposal_id.clone();
     let completion_anchor_span = editor.completion_anchor_span;
+    let measurement_source = match overlay_measurement.source {
+        EditorOverlayMeasurementSource::DerivedGrid => "derived-grid",
+        EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
+    };
 
     view! {
         <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
@@ -81,7 +95,13 @@ pub fn FormulaEditorSurface(
                         }
                     />
                 </div>
-                <div class="onecalc-formula-editor-surface__overlay-layer" data-role="overlay-layer">
+                <div
+                    class="onecalc-formula-editor-surface__overlay-layer"
+                    data-role="overlay-layer"
+                    data-measurement-source=measurement_source
+                    data-char-width-px=overlay_measurement.char_width_px
+                    data-line-height-px=overlay_measurement.line_height_px
+                >
                     <div class="onecalc-formula-editor-surface__syntax-layer" data-role="syntax-layer">
                         {editor
                             .syntax_runs
@@ -136,6 +156,12 @@ pub fn FormulaEditorSurface(
                         data-selection-start=selection_start
                         data-selection-end=selection_end
                         data-selection-kind=selection_label
+                        data-selection-line=selection_box.start.line_index
+                        data-selection-column=selection_box.start.column_index
+                        data-selection-top-px=selection_box.top_px
+                        data-selection-left-px=selection_box.left_px
+                        data-selection-width-px=selection_box.width_px
+                        data-selection-height-px=selection_box.height_px
                     >
                         "Selection: "
                         {selection_start}
@@ -146,6 +172,10 @@ pub fn FormulaEditorSurface(
                         class="onecalc-formula-editor-surface__caret-indicator"
                         data-role="caret-indicator"
                         data-caret-offset=editor_state.caret.offset
+                        data-caret-line=caret_box.start.line_index
+                        data-caret-column=caret_box.start.column_index
+                        data-caret-top-px=caret_box.top_px
+                        data-caret-left-px=caret_box.left_px
                     >
                         "Caret: "
                         {editor_state.caret.offset}
@@ -165,11 +195,20 @@ pub fn FormulaEditorSurface(
                         .completion_anchor_offset
                         .map(|offset| {
                             let popup_command = on_command.clone();
+                            let anchor_box = completion_anchor_span
+                                .map(|span| overlay_measurement.span_box(&editor.raw_entered_cell_text, span))
+                                .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset));
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
                                     data-role="completion-anchor-indicator"
                                     data-anchor-offset=offset
+                                    data-anchor-line=anchor_box.start.line_index
+                                    data-anchor-column=anchor_box.start.column_index
+                                    data-anchor-top-px=anchor_box.top_px
+                                    data-anchor-left-px=anchor_box.left_px
+                                    data-anchor-width-px=anchor_box.width_px
+                                    data-anchor-height-px=anchor_box.height_px
                                     data-anchor-span-start=completion_anchor_span.map(|span| span.start)
                                     data-anchor-span-len=completion_anchor_span.map(|span| span.len)
                                 >
@@ -220,11 +259,22 @@ pub fn FormulaEditorSurface(
                     {editor_state
                         .signature_help_anchor_offset
                         .map(|offset| {
+                            let call_box = editor
+                                .signature_help
+                                .as_ref()
+                                .map(|help| overlay_measurement.span_box(&editor.raw_entered_cell_text, help.call_span))
+                                .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset));
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
                                     data-role="signature-help-anchor-indicator"
                                     data-anchor-offset=offset
+                                    data-anchor-line=call_box.start.line_index
+                                    data-anchor-column=call_box.start.column_index
+                                    data-anchor-top-px=call_box.top_px
+                                    data-anchor-left-px=call_box.left_px
+                                    data-anchor-width-px=call_box.width_px
+                                    data-anchor-height-px=call_box.height_px
                                 >
                                     "Signature help anchor: "
                                     {offset}
@@ -242,14 +292,16 @@ pub fn FormulaEditorSurface(
                                                         data-active-argument-index=help.active_argument_index
                                                         data-call-span-start=help.call_span.start
                                                         data-call-span-len=help.call_span.len
+                                                        data-call-line=call_box.start.line_index
+                                                        data-call-column=call_box.start.column_index
                                                     >
                                                         <span data-role="signature-help-callee">
                                                             {help.callee_text.clone()}
                                                         </span>
-                                                        <span data-role="signature-help-argument">
-                                                            {"arg "}
-                                                            {help.active_argument_index}
-                                                        </span>
+                                                        {render_signature_help_signature(
+                                                            editor.function_help.as_ref(),
+                                                            help.active_argument_index,
+                                                        )}
                                                     </div>
                                                 }
                                                 .into_any()
@@ -273,6 +325,88 @@ pub fn FormulaEditorSurface(
             </footer>
         </section>
     }
+}
+
+fn render_signature_help_signature(
+    function_help: Option<&crate::services::explore_mode::ExploreFunctionHelpView>,
+    active_argument_index: usize,
+) -> AnyView {
+    match function_help.and_then(|help| help.signature_forms.first()) {
+        Some(signature) => render_signature_form(
+            &signature.display_signature,
+            active_argument_index,
+            "signature-help",
+        ),
+        None => view! {
+            <span data-role="signature-help-argument">
+                {"arg "}
+                {active_argument_index}
+            </span>
+        }
+        .into_any(),
+    }
+}
+
+fn render_signature_form(
+    display_signature: &str,
+    active_argument_index: usize,
+    role_prefix: &'static str,
+) -> AnyView {
+    let (prefix, arguments, suffix) = split_signature(display_signature);
+
+    view! {
+        <span class="onecalc-signature-form" data-role=format!("{role_prefix}-signature")>
+            <span data-role=format!("{role_prefix}-signature-prefix")>{prefix}</span>
+            {arguments
+                .into_iter()
+                .enumerate()
+                .map(|(index, argument)| {
+                    let active = index == active_argument_index;
+                    view! {
+                        <>
+                            {if index > 0 {
+                                view! { <span data-role=format!("{role_prefix}-signature-separator")>{", "}</span> }.into_any()
+                            } else {
+                                view! { <></> }.into_any()
+                            }}
+                            <span
+                                class=("onecalc-signature-argument", true)
+                                class=("onecalc-signature-argument--active", active)
+                                data-role=format!("{role_prefix}-signature-argument")
+                                data-active=if active { "true" } else { "false" }
+                            >
+                                {argument}
+                            </span>
+                        </>
+                    }
+                })
+                .collect_view()}
+            <span data-role=format!("{role_prefix}-signature-suffix")>{suffix}</span>
+        </span>
+    }
+    .into_any()
+}
+
+fn split_signature(display_signature: &str) -> (String, Vec<String>, String) {
+    let Some(open_index) = display_signature.find('(') else {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    };
+    let Some(close_index) = display_signature.rfind(')') else {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    };
+    if close_index <= open_index {
+        return (display_signature.to_string(), Vec::new(), String::new());
+    }
+
+    let prefix = display_signature[..=open_index].to_string();
+    let inner = &display_signature[(open_index + 1)..close_index];
+    let suffix = display_signature[close_index..].to_string();
+    let arguments = inner
+        .split(',')
+        .map(|argument| argument.trim().to_string())
+        .filter(|argument| !argument.is_empty())
+        .collect();
+    (prefix, arguments, suffix)
 }
 
 fn render_syntax_run(run: &SyntaxRun) -> AnyView {
@@ -348,7 +482,19 @@ mod tests {
                         call_span: crate::adapters::oxfml::FormulaTextSpan { start: 0, len: 9 },
                         active_argument_index: 1,
                     }),
-                    function_help: None,
+                    function_help: Some(crate::services::explore_mode::ExploreFunctionHelpView {
+                        lookup_key: "SUM".to_string(),
+                        display_name: "SUM".to_string(),
+                        signature_forms: vec![crate::services::explore_mode::ExploreFunctionHelpSignatureView {
+                            display_signature: "SUM(number1, number2, ...)".to_string(),
+                            min_arity: 1,
+                            max_arity: None,
+                        }],
+                        argument_help: vec!["number1".to_string(), "number2".to_string()],
+                        short_description: Some("Adds numbers".to_string()),
+                        availability_summary: Some("supported".to_string()),
+                        deferred_or_profile_limited: false,
+                    }),
                     function_help_lookup_key: Some("SUM".to_string()),
                     completion_anchor_span: Some(crate::adapters::oxfml::FormulaTextSpan { start: 1, len: 3 }),
                     green_tree_key: Some("green-1".to_string()),
@@ -373,6 +519,7 @@ mod tests {
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-role=\"native-input-layer\""));
         assert!(html.contains("data-role=\"overlay-layer\""));
+        assert!(html.contains("data-measurement-source=\"derived-grid\""));
         assert!(html.contains("data-role=\"syntax-layer\""));
         assert!(html.contains("data-role=\"diagnostic-markers\""));
         assert!(html.contains("data-role=\"inline-diagnostic-spans\""));
@@ -380,9 +527,12 @@ mod tests {
         assert!(html.contains("data-diagnostic-id=\"diag-1\""));
         assert!(html.contains("data-token-role=\"function\""));
         assert!(html.contains("data-role=\"caret-indicator\""));
+        assert!(html.contains("data-caret-line=\"0\""));
         assert!(html.contains("data-role=\"selection-indicator\""));
         assert!(html.contains("data-selection-kind=\"range\""));
+        assert!(html.contains("data-selection-line=\"0\""));
         assert!(html.contains("data-role=\"completion-anchor-indicator\""));
+        assert!(html.contains("data-anchor-line=\"0\""));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));
@@ -395,6 +545,8 @@ mod tests {
         assert!(html.contains("data-active-argument-index=\"1\""));
         assert!(html.contains("data-call-span-start=\"0\""));
         assert!(html.contains("data-call-span-len=\"9\""));
+        assert!(html.contains("data-role=\"signature-help-signature-argument\""));
+        assert!(html.contains("data-active=\"true\""));
         assert!(html.contains("data-anchor-span-start=\"1\""));
         assert!(html.contains("data-anchor-span-len=\"3\""));
     }
