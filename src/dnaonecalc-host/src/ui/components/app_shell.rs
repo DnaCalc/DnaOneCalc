@@ -5,6 +5,7 @@ use leptos::prelude::*;
 
 use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
+    apply_editor_overlay_measurement_to_active_formula_space,
 };
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
@@ -18,6 +19,7 @@ use crate::ui::components::shell_frame::ShellFrame;
 use crate::ui::components::workbench_shell::WorkbenchShell;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
 use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
+use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 use crate::ui::panels::workbench::{
@@ -55,6 +57,11 @@ pub fn OneCalcShellApp(
             }
         });
     });
+    let on_editor_overlay_measurement = Callback::new(move |measurement_event: EditorOverlayMeasurementEvent| {
+        state.update(|state| {
+            let _ = apply_editor_overlay_measurement_to_active_formula_space(state, measurement_event);
+        });
+    });
 
     view! {
         <div class="onecalc-app" data-host-app="onecalc">
@@ -73,6 +80,7 @@ pub fn OneCalcShellApp(
                                     result=build_explore_result_cluster(&view_model)
                                     on_input_event=Some(on_editor_input)
                                     on_command=Some(on_editor_command)
+                                    on_overlay_measurement=Some(on_editor_overlay_measurement)
                                 />
                             </ShellFrame>
                         }

@@ -2,6 +2,7 @@ use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
+use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::editor::state::EditorSurfaceState;
 
 pub fn apply_editor_input_to_active_formula_space(
@@ -49,6 +50,18 @@ pub fn apply_editor_command_to_active_formula_space(
     true
 }
 
+pub fn apply_editor_overlay_measurement_to_active_formula_space(
+    state: &mut OneCalcHostState,
+    measurement_event: EditorOverlayMeasurementEvent,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+
+    formula_space.editor_overlay_geometry = Some(measurement_event.snapshot);
+    true
+}
+
 fn active_formula_space_mut(state: &mut OneCalcHostState) -> Option<&mut FormulaSpaceState> {
     let formula_space_id = state
         .workspace_shell
@@ -65,6 +78,7 @@ fn apply_local_editor_text_change(
 ) {
     formula_space.raw_entered_cell_text = text;
     formula_space.editor_surface_state = editor_surface_state;
+    formula_space.editor_overlay_geometry = None;
     formula_space.editor_document = None;
     formula_space.completion_help = CompletionHelpState::default();
     formula_space.latest_evaluation_summary = None;
@@ -181,6 +195,9 @@ mod tests {
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::FormulaSpaceState;
     use crate::ui::editor::commands::EditorInputKind;
+    use crate::ui::editor::geometry::{
+        EditorMeasuredOverlayBox, EditorOverlayGeometrySnapshot, EditorOverlayMeasurementEvent,
+    };
     use crate::ui::editor::state::EditorSelection;
 
     #[test]
@@ -267,5 +284,48 @@ mod tests {
         assert!(active.raw_entered_cell_text.starts_with("    SUM("));
         assert!(active.latest_evaluation_summary.is_none());
         assert!(active.effective_display_summary.is_none());
+    }
+
+    #[test]
+    fn overlay_measurement_event_updates_geometry_on_active_formula_space() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        let changed = apply_editor_overlay_measurement_to_active_formula_space(
+            &mut state,
+            EditorOverlayMeasurementEvent {
+                snapshot: EditorOverlayGeometrySnapshot {
+                    caret_box: Some(EditorMeasuredOverlayBox {
+                        top_px: 40,
+                        left_px: 64,
+                        width_px: 2,
+                        height_px: 22,
+                        line_index: 0,
+                        column_index: 4,
+                    }),
+                    selection_box: None,
+                    completion_anchor_box: None,
+                    signature_help_anchor_box: None,
+                },
+            },
+        );
+
+        assert!(changed);
+        let active = state
+            .formula_spaces
+            .get(&FormulaSpaceId::new("space-1"))
+            .expect("space exists");
+        assert_eq!(
+            active
+                .editor_overlay_geometry
+                .as_ref()
+                .and_then(|geometry| geometry.caret_box.as_ref())
+                .map(|box_geometry| box_geometry.left_px),
+            Some(64)
+        );
     }
 }

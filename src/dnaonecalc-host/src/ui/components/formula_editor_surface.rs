@@ -6,8 +6,8 @@ use crate::ui::editor::commands::{
     classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
 };
 use crate::ui::editor::geometry::{
-    resolve_overlay_box, EditorOverlayGeometrySnapshot, EditorOverlayMeasurement,
-    EditorOverlayMeasurementSource,
+    derive_overlay_snapshot, resolve_overlay_box, EditorOverlayGeometrySnapshot,
+    EditorOverlayMeasurement, EditorOverlayMeasurementEvent, EditorOverlayMeasurementSource,
 };
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
@@ -17,6 +17,7 @@ pub fn FormulaEditorSurface(
     editor: ExploreEditorClusterViewModel,
     #[prop(default = None)] on_input_event: Option<Callback<EditorInputEvent>>,
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
+    #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
     let diagnostics_text = if editor.diagnostics.is_empty() {
         "No diagnostics".to_string()
@@ -61,6 +62,9 @@ pub fn FormulaEditorSurface(
             EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
         }
     };
+    let editor_for_click_measurement = editor.clone();
+    let editor_for_input_measurement = editor.clone();
+    let editor_for_keyup_measurement = editor.clone();
 
     view! {
         <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
@@ -76,6 +80,11 @@ pub fn FormulaEditorSurface(
                         class="onecalc-formula-editor-surface__textarea"
                         data-role="editor-input"
                         prop:value=editor.raw_entered_cell_text.clone()
+                        on:click=move |_| {
+                            if let Some(callback) = on_overlay_measurement.as_ref() {
+                                callback.run(build_overlay_measurement_event(&editor_for_click_measurement));
+                            }
+                        }
                         on:input=move |ev| {
                             if let Some(callback) = on_input_event.as_ref() {
                                 let textarea = event_target::<HtmlTextAreaElement>(&ev);
@@ -97,6 +106,14 @@ pub fn FormulaEditorSurface(
                                         .unwrap_or(crate::ui::editor::commands::EditorInputKind::Other),
                                     inserted_text: web_input_event.and_then(|input_event| input_event.data()),
                                 });
+                            }
+                            if let Some(callback) = on_overlay_measurement.as_ref() {
+                                callback.run(build_overlay_measurement_event(&editor_for_input_measurement));
+                            }
+                        }
+                        on:keyup=move |_| {
+                            if let Some(callback) = on_overlay_measurement.as_ref() {
+                                callback.run(build_overlay_measurement_event(&editor_for_keyup_measurement));
                             }
                         }
                         on:keydown=move |ev: KeyboardEvent| {
@@ -230,6 +247,7 @@ pub fn FormulaEditorSurface(
                                     data-anchor-measurement-source=measurement_source_label(anchor_measurement_source)
                                     data-anchor-span-start=completion_anchor_span.map(|span| span.start)
                                     data-anchor-span-len=completion_anchor_span.map(|span| span.len)
+                                    style=overlay_popup_style(anchor_box)
                                 >
                                     "Completion anchor: "
                                     {offset}
@@ -298,6 +316,7 @@ pub fn FormulaEditorSurface(
                                     data-anchor-width-px=call_box.width_px
                                     data-anchor-height-px=call_box.height_px
                                     data-anchor-measurement-source=measurement_source_label(call_measurement_source)
+                                    style=overlay_popup_style(call_box)
                                 >
                                     "Signature help anchor: "
                                     {offset}
@@ -355,6 +374,35 @@ fn measurement_source_label(source: EditorOverlayMeasurementSource) -> &'static 
         EditorOverlayMeasurementSource::DerivedGrid => "derived-grid",
         EditorOverlayMeasurementSource::DomMeasured => "dom-measured",
     }
+}
+
+fn build_overlay_measurement_event(
+    editor: &ExploreEditorClusterViewModel,
+) -> EditorOverlayMeasurementEvent {
+    EditorOverlayMeasurementEvent {
+        snapshot: derive_overlay_snapshot(
+            &editor.raw_entered_cell_text,
+            editor.editor_surface_state.caret.offset,
+            crate::adapters::oxfml::FormulaTextSpan {
+                start: editor.editor_surface_state.selection.start(),
+                len: editor
+                    .editor_surface_state
+                    .selection
+                    .end()
+                    .saturating_sub(editor.editor_surface_state.selection.start()),
+            },
+            editor.completion_anchor_span,
+            editor.signature_help.as_ref().map(|help| help.call_span),
+        ),
+    }
+}
+
+fn overlay_popup_style(box_geometry: crate::ui::editor::geometry::EditorOverlayBox) -> String {
+    format!(
+        "position:absolute;top:{}px;left:{}px;",
+        box_geometry.top_px + box_geometry.height_px,
+        box_geometry.left_px
+    )
 }
 
 fn render_signature_help_signature(
@@ -612,6 +660,9 @@ mod tests {
         assert!(html.contains("data-role=\"completion-anchor-indicator\""));
         assert!(html.contains("data-anchor-line=\"0\""));
         assert!(html.contains("data-anchor-measurement-source=\"dom-measured\""));
+        assert!(html.contains("position:absolute;"));
+        assert!(html.contains("top:86px;"));
+        assert!(html.contains("left:24px;"));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));

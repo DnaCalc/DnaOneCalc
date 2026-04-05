@@ -47,6 +47,11 @@ pub struct EditorOverlayGeometrySnapshot {
     pub signature_help_anchor_box: Option<EditorMeasuredOverlayBox>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorOverlayMeasurementEvent {
+    pub snapshot: EditorOverlayGeometrySnapshot,
+}
+
 impl EditorOverlayMeasurement {
     pub fn derived_grid() -> Self {
         Self {
@@ -142,6 +147,40 @@ pub fn resolve_overlay_box(
     }
 }
 
+pub fn derive_overlay_snapshot(
+    text: &str,
+    caret_offset: usize,
+    selection_span: FormulaTextSpan,
+    completion_anchor_span: Option<FormulaTextSpan>,
+    signature_help_span: Option<FormulaTextSpan>,
+) -> EditorOverlayGeometrySnapshot {
+    let measurement = EditorOverlayMeasurement::derived_grid();
+
+    EditorOverlayGeometrySnapshot {
+        caret_box: Some(measured_box_from_overlay_box(
+            measurement.offset_box(text, caret_offset),
+        )),
+        selection_box: Some(measured_box_from_overlay_box(
+            measurement.span_box(text, selection_span),
+        )),
+        completion_anchor_box: completion_anchor_span
+            .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
+        signature_help_anchor_box: signature_help_span
+            .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
+    }
+}
+
+fn measured_box_from_overlay_box(box_geometry: EditorOverlayBox) -> EditorMeasuredOverlayBox {
+    EditorMeasuredOverlayBox {
+        top_px: box_geometry.top_px,
+        left_px: box_geometry.left_px,
+        width_px: box_geometry.width_px,
+        height_px: box_geometry.height_px,
+        line_index: box_geometry.start.line_index,
+        column_index: box_geometry.start.column_index,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +245,21 @@ mod tests {
         assert_eq!(resolved_box.left_px, 48);
         assert_eq!(resolved_box.start.line_index, 3);
         assert_eq!(resolved_box.start.column_index, 6);
+    }
+
+    #[test]
+    fn derived_overlay_snapshot_captures_caret_selection_and_assist_boxes() {
+        let snapshot = derive_overlay_snapshot(
+            "=SUM(1,2)",
+            4,
+            FormulaTextSpan { start: 1, len: 3 },
+            Some(FormulaTextSpan { start: 1, len: 3 }),
+            Some(FormulaTextSpan { start: 0, len: 9 }),
+        );
+
+        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.left_px), Some(32));
+        assert_eq!(snapshot.selection_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(24));
+        assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
+        assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
     }
 }

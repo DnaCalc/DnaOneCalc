@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::ui::components::formula_editor_surface::FormulaEditorSurface;
 use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
+use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::panels::explore::{ExploreEditorClusterViewModel, ExploreResultClusterViewModel};
 
 #[component]
@@ -9,6 +10,7 @@ fn ExploreEditorPanel(
     editor: ExploreEditorClusterViewModel,
     on_input_event: Option<Callback<EditorInputEvent>>,
     on_command: Option<Callback<EditorCommand>>,
+    on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
     let function_help = editor
         .function_help_lookup_key
@@ -22,6 +24,7 @@ fn ExploreEditorPanel(
                 editor=editor.clone()
                 on_input_event=on_input_event
                 on_command=on_command
+                on_overlay_measurement=on_overlay_measurement
             />
             <div class="onecalc-explore-shell__help-hint">
                 "Function help target: "
@@ -240,6 +243,7 @@ pub fn ExploreShell(
     result: ExploreResultClusterViewModel,
     #[prop(default = None)] on_input_event: Option<Callback<EditorInputEvent>>,
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
+    #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
     view! {
         <section class="onecalc-explore-shell" data-screen="explore">
@@ -252,6 +256,7 @@ pub fn ExploreShell(
                     editor=editor.clone()
                     on_input_event=on_input_event
                     on_command=on_command
+                    on_overlay_measurement=on_overlay_measurement
                 />
                 <ExploreResultPanel result=result />
                 <ExploreHelpPanel editor=editor />
