@@ -272,4 +272,98 @@ mod tests {
             other => panic!("expected workbench projection, got {other:?}"),
         }
     }
+
+    #[test]
+    fn build_active_mode_projection_updates_open_catalog_item_when_active_artifact_changes() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state.active_formula_space_view.active_mode = AppMode::Workbench;
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.latest_evaluation_summary = Some("Number".to_string());
+        state.formula_spaces.insert(formula_space);
+
+        import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id: formula_space_id.clone(),
+                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-1".to_string(),
+                    case_id: "case-1".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Mismatched,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("dna=1 excel=2".to_string()),
+            },
+        );
+        import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id,
+                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-2".to_string(),
+                    case_id: "case-2".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Blocked,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            },
+        );
+
+        state.retained_artifacts.open_artifact_id = Some("artifact-1".to_string());
+        let first_projection =
+            build_active_mode_projection(&state).expect("first projection should be available");
+
+        match first_projection {
+            ActiveModeProjection::Workbench(view_model) => {
+                assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-1"));
+                let first_item = view_model
+                    .retained_catalog_items
+                    .iter()
+                    .find(|item| item.artifact_id == "artifact-1")
+                    .expect("artifact-1 catalog item");
+                let second_item = view_model
+                    .retained_catalog_items
+                    .iter()
+                    .find(|item| item.artifact_id == "artifact-2")
+                    .expect("artifact-2 catalog item");
+                assert!(first_item.is_open);
+                assert!(!second_item.is_open);
+                assert_eq!(
+                    view_model.retained_discrepancy_summary.as_deref(),
+                    Some("dna=1 excel=2")
+                );
+            }
+            other => panic!("expected workbench projection, got {other:?}"),
+        }
+
+        state.retained_artifacts.open_artifact_id = Some("artifact-2".to_string());
+        let second_projection =
+            build_active_mode_projection(&state).expect("second projection should be available");
+
+        match second_projection {
+            ActiveModeProjection::Workbench(view_model) => {
+                assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-2"));
+                let first_item = view_model
+                    .retained_catalog_items
+                    .iter()
+                    .find(|item| item.artifact_id == "artifact-1")
+                    .expect("artifact-1 catalog item");
+                let second_item = view_model
+                    .retained_catalog_items
+                    .iter()
+                    .find(|item| item.artifact_id == "artifact-2")
+                    .expect("artifact-2 catalog item");
+                assert!(!first_item.is_open);
+                assert!(second_item.is_open);
+                assert_eq!(view_model.outcome_summary.as_deref(), Some("Blocked"));
+                assert_eq!(
+                    view_model.retained_discrepancy_summary.as_deref(),
+                    Some("excel lane unavailable")
+                );
+            }
+            other => panic!("expected workbench projection, got {other:?}"),
+        }
+    }
 }
