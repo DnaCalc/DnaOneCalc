@@ -16,6 +16,7 @@ pub fn WorkbenchShell(
     actions: WorkbenchActionsClusterViewModel,
     catalog: WorkbenchCatalogClusterViewModel,
     #[prop(default = None)] on_open_retained_artifact: Option<Callback<String>>,
+    #[prop(default = None)] on_open_retained_artifact_in_inspect: Option<Callback<String>>,
     #[prop(default = None)] on_import_retained_artifact: Option<Callback<ManualRetainedArtifactImportRequest>>,
 ) -> impl IntoView {
     let outcome_summary = outcome
@@ -105,7 +106,9 @@ pub fn WorkbenchShell(
                             .into_iter()
                             .map(|item| {
                                 let on_open_retained_artifact = on_open_retained_artifact.clone();
+                                let on_open_retained_artifact_in_inspect = on_open_retained_artifact_in_inspect.clone();
                                 let artifact_id = item.artifact_id.clone();
+                                let inspect_artifact_id = item.artifact_id.clone();
                                 view! {
                                     <li
                                         data-role="retained-catalog-item"
@@ -132,6 +135,17 @@ pub fn WorkbenchShell(
                                         >
                                             "Open"
                                         </button>
+                                        <button
+                                            type="button"
+                                            data-role="retained-catalog-open-inspect"
+                                            on:click=move |_| {
+                                                if let Some(callback) = on_open_retained_artifact_in_inspect.as_ref() {
+                                                    callback.run(inspect_artifact_id.clone());
+                                                }
+                                            }
+                                        >
+                                            "Inspect"
+                                        </button>
                                     </li>
                                 }
                             })
@@ -151,30 +165,71 @@ pub fn WorkbenchShell(
                     </ul>
                     <div class="onecalc-workbench-shell__import-surface" data-role="retained-import-surface">
                         <h3>"Import Retained Artifact"</h3>
+                        <p data-role="retained-import-description">
+                            "Capture a retained discrepancy from the programmatic comparison path so it can be reopened in Workbench or escalated into Inspect."
+                        </p>
+                        <div class="onecalc-workbench-shell__import-field-group" data-role="retained-import-metadata-group">
+                            <label class="onecalc-workbench-shell__import-label" for="retained-import-artifact-id">
+                                "Artifact Id"
+                            </label>
+                            <div class="onecalc-workbench-shell__import-help">
+                                "Stable retained artifact key emitted by the headless comparison path."
+                            </div>
+                        </div>
                         <input
                             type="text"
+                            id="retained-import-artifact-id"
                             data-role="retained-import-artifact-id"
                             prop:value=artifact_id
                             on:input=move |ev| {
                                 set_artifact_id.set(event_target_value(&ev));
                             }
                         />
+                        <div class="onecalc-workbench-shell__import-field-group" data-role="retained-import-case-group">
+                            <label class="onecalc-workbench-shell__import-label" for="retained-import-case-id">
+                                "Case Id"
+                            </label>
+                            <div class="onecalc-workbench-shell__import-help">
+                                "Programmatic corpus or replay case identifier for this retained artifact."
+                            </div>
+                        </div>
                         <input
                             type="text"
+                            id="retained-import-case-id"
                             data-role="retained-import-case-id"
                             prop:value=case_id
                             on:input=move |ev| {
                                 set_case_id.set(event_target_value(&ev));
                             }
                         />
+                        <div class="onecalc-workbench-shell__import-field-group" data-role="retained-import-summary-group">
+                            <label class="onecalc-workbench-shell__import-label" for="retained-import-summary">
+                                "Discrepancy Summary"
+                            </label>
+                            <div class="onecalc-workbench-shell__import-help">
+                                "Short explanation of the mismatch or blocked condition to seed triage."
+                            </div>
+                        </div>
                         <input
                             type="text"
+                            id="retained-import-summary"
                             data-role="retained-import-summary"
                             prop:value=discrepancy_summary
                             on:input=move |ev| {
                                 set_discrepancy_summary.set(event_target_value(&ev));
                             }
                         />
+                        <div class="onecalc-workbench-shell__import-outcome-guide" data-role="retained-import-outcome-guide">
+                            <div data-role="retained-import-outcome-matched">
+                                "Matched: retain a replay packet for later inspect browsing."
+                            </div>
+                            <div data-role="retained-import-outcome-mismatched">
+                                "Mismatched: open a discrepancy for compare-first workbench review."
+                            </div>
+                            <div data-role="retained-import-outcome-blocked">
+                                "Blocked: capture the host or capability limitation that prevented comparison."
+                            </div>
+                        </div>
                         <div class="onecalc-workbench-shell__import-buttons">
                             {[
                                 ("matched", ProgrammaticComparisonStatus::Matched),
@@ -260,6 +315,7 @@ mod tests {
                     }],
                 }
                 on_open_retained_artifact=None
+                on_open_retained_artifact_in_inspect=None
                 on_import_retained_artifact=None
             />
         }
@@ -275,8 +331,11 @@ mod tests {
         assert!(html.contains("data-panel=\"workbench-catalog\""));
         assert!(html.contains("data-role=\"retained-catalog-item\""));
         assert!(html.contains("data-role=\"retained-catalog-open\""));
+        assert!(html.contains("data-role=\"retained-catalog-open-inspect\""));
         assert!(html.contains("data-open=\"true\""));
         assert!(html.contains("data-role=\"retained-import-surface\""));
+        assert!(html.contains("data-role=\"retained-import-description\""));
+        assert!(html.contains("data-role=\"retained-import-outcome-guide\""));
         assert!(html.contains("data-role=\"retained-import-artifact-id\""));
         assert!(html.contains("data-role=\"retained-import-case-id\""));
         assert!(html.contains("data-role=\"retained-import-summary\""));

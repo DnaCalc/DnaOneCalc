@@ -300,11 +300,17 @@ pub fn FormulaEditorSurface(
                                 <div
                                     class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--completion"
                                     data-role="completion-popup-container"
+                                    data-focused-assist="completion"
                                     data-popup-line=popup_box.start.line_index
                                     data-popup-column=popup_box.start.column_index
                                     style=overlay_popup_style(popup_box)
                                 >
-                                    <div class="onecalc-formula-editor-surface__completion-popup" data-role="completion-popup">
+                                    <div
+                                        class="onecalc-formula-editor-surface__completion-popup"
+                                        data-role="completion-popup"
+                                        role="listbox"
+                                        aria-label="Formula completion proposals"
+                                    >
                                         {editor
                                             .completion_items
                                             .iter()
@@ -331,6 +337,10 @@ pub fn FormulaEditorSurface(
                                                         data-doc-ref=item.documentation_ref.clone().unwrap_or_default()
                                                         data-requires-revalidation=if item.requires_revalidation { "true" } else { "false" }
                                                         data-selected=if is_selected { "true" } else { "false" }
+                                                        data-active-row=if is_selected { "true" } else { "false" }
+                                                        role="option"
+                                                        aria-selected=if is_selected { "true" } else { "false" }
+                                                        tabindex=if is_selected { "0" } else { "-1" }
                                                         on:click=move |_| {
                                                             if let Some(command_callback) = popup_command.as_ref() {
                                                                 command_callback.run(EditorCommand::AcceptCompletionByIndex(index));
@@ -384,6 +394,7 @@ pub fn FormulaEditorSurface(
                                 <div
                                     class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--signature"
                                     data-role="signature-help-popup-container"
+                                    data-focused-assist="signature"
                                     data-popup-line=popup_box.start.line_index
                                     data-popup-column=popup_box.start.column_index
                                     style=overlay_popup_style(popup_box)
@@ -391,6 +402,8 @@ pub fn FormulaEditorSurface(
                                     <div
                                         class="onecalc-formula-editor-surface__signature-help-popup"
                                         data-role="signature-help-popup"
+                                        role="status"
+                                        aria-live="polite"
                                     >
                                         {editor
                                             .signature_help
@@ -752,6 +765,7 @@ mod tests {
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
         assert!(html.contains("data-role=\"signature-help-popup-container\""));
         assert!(html.contains("data-role=\"completion-popup\""));
+        assert!(html.contains("role=\"listbox\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));
         assert!(html.contains("data-completion-id=\"proposal-1\""));
         assert!(html.contains("data-completion-index=\"0\""));
@@ -759,6 +773,8 @@ mod tests {
         assert!(html.contains("data-doc-ref=\"preview:function:SUM\""));
         assert!(html.contains("data-requires-revalidation=\"true\""));
         assert!(html.contains("data-selected=\"true\""));
+        assert!(html.contains("data-active-row=\"true\""));
+        assert!(html.contains("aria-selected=\"true\""));
         assert!(html.contains("data-active-argument-index=\"1\""));
         assert!(html.contains("data-call-span-start=\"0\""));
         assert!(html.contains("data-call-span-len=\"9\""));

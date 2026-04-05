@@ -36,7 +36,7 @@ fn in_08_inspect_panel_clusters_split_walk_and_summary_fields_for_rendering() {
     formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
     formula_space.latest_evaluation_summary = Some("Number".to_string());
 
-    let mode_view = build_inspect_view_model(&formula_space);
+    let mode_view = build_inspect_view_model(&formula_space, None);
     let walk_cluster = build_inspect_walk_cluster(&mode_view);
     let summary_cluster = build_inspect_summary_cluster(&mode_view);
 

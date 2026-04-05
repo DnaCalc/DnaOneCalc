@@ -9,7 +9,7 @@ fn in_04_inspect_view_model_projects_formula_walk_and_summaries() {
     formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
     formula_space.latest_evaluation_summary = Some("Number".to_string());
 
-    let view_model = build_inspect_view_model(&formula_space);
+    let view_model = build_inspect_view_model(&formula_space, None);
 
     assert_eq!(view_model.raw_entered_cell_text, "=SUM(1,2)");
     assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
@@ -31,7 +31,7 @@ fn in_04_inspect_view_model_projects_formula_walk_and_summaries() {
 fn in_06_inspect_view_model_keeps_read_only_fallback_without_editor_document() {
     let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-2"), "'123.4");
 
-    let view_model = build_inspect_view_model(&formula_space);
+    let view_model = build_inspect_view_model(&formula_space, None);
 
     assert_eq!(view_model.raw_entered_cell_text, "'123.4");
     assert!(view_model.green_tree_key.is_none());

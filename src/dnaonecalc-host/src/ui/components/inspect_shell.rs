@@ -102,6 +102,41 @@ pub fn InspectShell(
 
                 <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
                     <h2>"Summaries"</h2>
+                    {summary
+                        .retained_artifact_context
+                        .as_ref()
+                        .map(|context| {
+                            view! {
+                                <section
+                                    class="onecalc-inspect-shell__retained-context"
+                                    data-role="inspect-retained-context"
+                                    data-artifact-id=context.artifact_id.clone()
+                                    data-comparison-status=context.comparison_status.clone()
+                                >
+                                    <h3>"Retained Artifact Context"</h3>
+                                    <div data-role="inspect-retained-artifact-id">
+                                        "Artifact: "
+                                        {context.artifact_id.clone()}
+                                    </div>
+                                    <div data-role="inspect-retained-case-id">
+                                        "Case: "
+                                        {context.case_id.clone()}
+                                    </div>
+                                    <div data-role="inspect-retained-comparison-status">
+                                        "Status: "
+                                        {context.comparison_status.clone()}
+                                    </div>
+                                    {context
+                                        .discrepancy_summary
+                                        .as_ref()
+                                        .map(|summary| view! {
+                                            <div data-role="inspect-retained-discrepancy-summary">
+                                                {summary.clone()}
+                                            </div>
+                                        })}
+                                </section>
+                            }
+                        })}
                     <InspectSummaryCard title="Parse" value=parse_status data_panel="inspect-parse" />
                     <InspectSummaryCard title="Bind" value=bind_summary data_panel="inspect-bind" />
                     <InspectSummaryCard title="Eval" value=eval_summary data_panel="inspect-eval" />
@@ -151,6 +186,12 @@ mod tests {
                 profile_summary: "OC-H0".to_string(),
                 blocked_reason: None,
             }),
+            retained_artifact_context: Some(crate::services::inspect_mode::InspectRetainedArtifactContextView {
+                artifact_id: "artifact-1".to_string(),
+                case_id: "case-1".to_string(),
+                comparison_status: "blocked".to_string(),
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            }),
         };
 
         let html = view! {
@@ -167,5 +208,9 @@ mod tests {
         assert!(html.contains("data-node-id=\"node-1\""));
         assert!(html.contains("Parse"));
         assert!(html.contains("Valid"));
+        assert!(html.contains("data-role=\"inspect-retained-context\""));
+        assert!(html.contains("Artifact: "));
+        assert!(html.contains("artifact-1"));
+        assert!(html.contains("excel lane unavailable"));
     }
 }

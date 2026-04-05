@@ -2,7 +2,7 @@ use crate::adapters::oxfml::{
     BindSummary, EvalSummary, FormulaWalkNode, FormulaWalkNodeState, ParseSummary,
     ProvenanceSummary,
 };
-use crate::state::FormulaSpaceState;
+use crate::state::{FormulaSpaceState, RetainedArtifactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectViewModel {
@@ -14,6 +14,7 @@ pub struct InspectViewModel {
     pub bind_summary: Option<BindSummary>,
     pub eval_summary: Option<EvalSummary>,
     pub provenance_summary: Option<ProvenanceSummary>,
+    pub retained_artifact_context: Option<InspectRetainedArtifactContextView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +26,18 @@ pub struct InspectFormulaWalkNodeView {
     pub children: Vec<InspectFormulaWalkNodeView>,
 }
 
-pub fn build_inspect_view_model(formula_space: &FormulaSpaceState) -> InspectViewModel {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectRetainedArtifactContextView {
+    pub artifact_id: String,
+    pub case_id: String,
+    pub comparison_status: String,
+    pub discrepancy_summary: Option<String>,
+}
+
+pub fn build_inspect_view_model(
+    formula_space: &FormulaSpaceState,
+    retained_artifact: Option<&RetainedArtifactRecord>,
+) -> InspectViewModel {
     let (
         green_tree_key,
         formula_walk_nodes,
@@ -49,6 +61,23 @@ pub fn build_inspect_view_model(formula_space: &FormulaSpaceState) -> InspectVie
         None => (None, Vec::new(), None, None, None, None),
     };
 
+    let retained_artifact_context = retained_artifact.map(|artifact| InspectRetainedArtifactContextView {
+        artifact_id: artifact.artifact_id.clone(),
+        case_id: artifact.case_id.clone(),
+        comparison_status: match artifact.comparison_status {
+            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => {
+                "matched".to_string()
+            }
+            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => {
+                "mismatched".to_string()
+            }
+            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => {
+                "blocked".to_string()
+            }
+        },
+        discrepancy_summary: artifact.discrepancy_summary.clone(),
+    });
+
     InspectViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         inspect_result_summary: formula_space.latest_evaluation_summary.clone(),
@@ -58,6 +87,7 @@ pub fn build_inspect_view_model(formula_space: &FormulaSpaceState) -> InspectVie
         bind_summary,
         eval_summary,
         provenance_summary,
+        retained_artifact_context,
     }
 }
 
@@ -129,7 +159,7 @@ mod tests {
             }),
         });
 
-        let view_model = build_inspect_view_model(&formula_space);
+        let view_model = build_inspect_view_model(&formula_space, None);
         assert_eq!(view_model.raw_entered_cell_text, "=LET(x,1,x)");
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
         assert_eq!(view_model.formula_walk_nodes.len(), 1);
@@ -143,6 +173,34 @@ mod tests {
                 .as_ref()
                 .map(|x| x.profile_summary.as_str()),
             Some("OC-H0")
+        );
+        assert!(view_model.retained_artifact_context.is_none());
+    }
+
+    #[test]
+    fn inspect_view_model_projects_open_retained_artifact_context() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        let retained_artifact = crate::state::RetainedArtifactRecord {
+            artifact_id: "artifact-1".to_string(),
+            case_id: "case-1".to_string(),
+            formula_space_id,
+            comparison_status: crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked,
+            open_mode_hint: crate::services::programmatic_testing::ProgrammaticOpenModeHint::Workbench,
+            discrepancy_summary: Some("excel lane unavailable".to_string()),
+        };
+
+        let view_model = build_inspect_view_model(&formula_space, Some(&retained_artifact));
+
+        let context = view_model
+            .retained_artifact_context
+            .expect("retained artifact context");
+        assert_eq!(context.artifact_id, "artifact-1");
+        assert_eq!(context.case_id, "case-1");
+        assert_eq!(context.comparison_status, "blocked");
+        assert_eq!(
+            context.discrepancy_summary.as_deref(),
+            Some("excel lane unavailable")
         );
     }
 }

@@ -70,6 +70,21 @@ pub fn open_retained_artifact_by_id(
     Ok(())
 }
 
+pub fn open_retained_artifact_in_inspect_by_id(
+    state: &mut OneCalcHostState,
+    artifact_id: &str,
+) -> Result<(), String> {
+    let Some(record) = state.retained_artifacts.catalog.get(artifact_id) else {
+        return Err(format!("retained artifact not found: {artifact_id}"));
+    };
+
+    state.retained_artifacts.open_artifact_id = Some(record.artifact_id.clone());
+    state.workspace_shell.active_formula_space_id = Some(record.formula_space_id.clone());
+    state.active_formula_space_view.selected_formula_space_id = Some(record.formula_space_id.clone());
+    state.active_formula_space_view.active_mode = crate::state::AppMode::Inspect;
+    Ok(())
+}
+
 pub fn import_manual_artifact_for_active_formula_space(
     state: &mut OneCalcHostState,
     request: ManualRetainedArtifactImportRequest,
@@ -207,6 +222,37 @@ mod tests {
             Some("space-1")
         );
         assert_eq!(state.active_formula_space_view.active_mode, crate::state::AppMode::Workbench);
+    }
+
+    #[test]
+    fn opening_retained_artifact_in_inspect_routes_shell_to_inspect_mode() {
+        let mut state = OneCalcHostState::default();
+        import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id: FormulaSpaceId::new("space-1"),
+                catalog_entry: ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-1".to_string(),
+                    case_id: "case-1".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Mismatched,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("dna=1 excel=2".to_string()),
+            },
+        );
+
+        open_retained_artifact_in_inspect_by_id(&mut state, "artifact-1")
+            .expect("artifact should open in inspect");
+
+        assert_eq!(
+            state.workspace_shell.active_formula_space_id.as_ref().map(|id| id.as_str()),
+            Some("space-1")
+        );
+        assert_eq!(state.active_formula_space_view.active_mode, crate::state::AppMode::Inspect);
+        assert_eq!(
+            state.retained_artifacts.open_artifact_id.as_deref(),
+            Some("artifact-1")
+        );
     }
 
     #[test]

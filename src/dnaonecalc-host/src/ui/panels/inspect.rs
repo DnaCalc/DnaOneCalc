@@ -1,5 +1,7 @@
 use crate::adapters::oxfml::{BindSummary, EvalSummary, ParseSummary, ProvenanceSummary};
-use crate::services::inspect_mode::{InspectFormulaWalkNodeView, InspectViewModel};
+use crate::services::inspect_mode::{
+    InspectFormulaWalkNodeView, InspectRetainedArtifactContextView, InspectViewModel,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectWalkClusterViewModel {
@@ -15,6 +17,7 @@ pub struct InspectSummaryClusterViewModel {
     pub bind_summary: Option<BindSummary>,
     pub eval_summary: Option<EvalSummary>,
     pub provenance_summary: Option<ProvenanceSummary>,
+    pub retained_artifact_context: Option<InspectRetainedArtifactContextView>,
 }
 
 pub fn build_inspect_walk_cluster(
@@ -36,6 +39,7 @@ pub fn build_inspect_summary_cluster(
         bind_summary: view_model.bind_summary.clone(),
         eval_summary: view_model.eval_summary.clone(),
         provenance_summary: view_model.provenance_summary.clone(),
+        retained_artifact_context: view_model.retained_artifact_context.clone(),
     }
 }
 
@@ -65,6 +69,7 @@ mod tests {
             bind_summary: None,
             eval_summary: None,
             provenance_summary: None,
+            retained_artifact_context: None,
         };
 
         let cluster = build_inspect_walk_cluster(&view_model);
@@ -96,6 +101,12 @@ mod tests {
                 profile_summary: "OC-H0".to_string(),
                 blocked_reason: None,
             }),
+            retained_artifact_context: Some(InspectRetainedArtifactContextView {
+                artifact_id: "artifact-1".to_string(),
+                case_id: "case-1".to_string(),
+                comparison_status: "blocked".to_string(),
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            }),
         };
 
         let cluster = build_inspect_summary_cluster(&view_model);
@@ -108,6 +119,13 @@ mod tests {
                 .as_ref()
                 .map(|x| x.profile_summary.as_str()),
             Some("OC-H0")
+        );
+        assert_eq!(
+            cluster
+                .retained_artifact_context
+                .as_ref()
+                .map(|x| x.artifact_id.as_str()),
+            Some("artifact-1")
         );
     }
 }

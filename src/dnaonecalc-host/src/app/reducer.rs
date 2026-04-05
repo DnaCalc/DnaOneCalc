@@ -1,6 +1,7 @@
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::services::retained_artifacts::{
     import_manual_artifact_for_active_formula_space, open_retained_artifact_by_id,
+    open_retained_artifact_in_inspect_by_id,
     ManualRetainedArtifactImportRequest,
 };
 use crate::ui::editor::commands::{
@@ -71,6 +72,13 @@ pub fn open_retained_artifact_from_catalog(
     artifact_id: &str,
 ) -> bool {
     open_retained_artifact_by_id(state, artifact_id).is_ok()
+}
+
+pub fn open_retained_artifact_from_catalog_in_inspect(
+    state: &mut OneCalcHostState,
+    artifact_id: &str,
+) -> bool {
+    open_retained_artifact_in_inspect_by_id(state, artifact_id).is_ok()
 }
 
 pub fn import_manual_retained_artifact_into_active_formula_space(
@@ -424,6 +432,45 @@ mod tests {
         assert_eq!(
             state.active_formula_space_view.active_mode,
             crate::state::AppMode::Workbench
+        );
+    }
+
+    #[test]
+    fn open_retained_artifact_in_inspect_routes_shell_to_inspect_context() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+        crate::services::retained_artifacts::import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id: formula_space_id.clone(),
+                catalog_entry: ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-inspect".to_string(),
+                    case_id: "case-inspect".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Blocked,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            },
+        );
+
+        let opened = open_retained_artifact_from_catalog_in_inspect(&mut state, "artifact-inspect");
+
+        assert!(opened);
+        assert_eq!(
+            state.retained_artifacts.open_artifact_id.as_deref(),
+            Some("artifact-inspect")
+        );
+        assert_eq!(
+            state.workspace_shell.active_formula_space_id.as_ref(),
+            Some(&formula_space_id)
+        );
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            crate::state::AppMode::Inspect
         );
     }
 }

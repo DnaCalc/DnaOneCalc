@@ -14,7 +14,7 @@ fn in_10_real_inspect_render_path_projects_walk_and_summary_into_html() {
     formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
     formula_space.latest_evaluation_summary = Some("Number".to_string());
 
-    let view_model = build_inspect_view_model(&formula_space);
+    let view_model = build_inspect_view_model(&formula_space, None);
     let html = view! {
         <InspectShell
             walk=build_inspect_walk_cluster(&view_model)

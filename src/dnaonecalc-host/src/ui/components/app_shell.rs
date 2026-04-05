@@ -7,7 +7,7 @@ use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
     apply_editor_overlay_measurement_to_active_formula_space,
     import_manual_retained_artifact_into_active_formula_space,
-    open_retained_artifact_from_catalog,
+    open_retained_artifact_from_catalog, open_retained_artifact_from_catalog_in_inspect,
 };
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
@@ -70,6 +70,11 @@ pub fn OneCalcShellApp(
             let _ = open_retained_artifact_from_catalog(state, &artifact_id);
         });
     });
+    let on_open_retained_artifact_in_inspect = Callback::new(move |artifact_id: String| {
+        state.update(|state| {
+            let _ = open_retained_artifact_from_catalog_in_inspect(state, &artifact_id);
+        });
+    });
     let on_import_retained_artifact = Callback::new(
         move |request: crate::services::retained_artifacts::ManualRetainedArtifactImportRequest| {
             state.update(|state| {
@@ -122,6 +127,7 @@ pub fn OneCalcShellApp(
                                     actions=build_workbench_actions_cluster(&view_model)
                                     catalog=build_workbench_catalog_cluster(&view_model)
                                     on_open_retained_artifact=Some(on_open_retained_artifact)
+                                    on_open_retained_artifact_in_inspect=Some(on_open_retained_artifact_in_inspect)
                                     on_import_retained_artifact=Some(on_import_retained_artifact)
                                 />
                             </ShellFrame>

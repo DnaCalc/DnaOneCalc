@@ -352,6 +352,7 @@ async fn completion_popup_selection_and_acceptance_work_in_browser_mount() {
         html.contains("preview:function:AVERAGE")
             && html.contains("data-completion-id=\"proposal-2\"")
             && html.contains("data-selected=\"true\"")
+            && html.contains("aria-selected=\"true\"")
     })
     .await;
     assert!(
@@ -381,6 +382,88 @@ async fn completion_popup_selection_and_acceptance_work_in_browser_mount() {
     assert!(
         accepted_html.contains("Function help target: None"),
         "mounted html after acceptance: {accepted_html}"
+    );
+
+    drop(mount_handle);
+    host.remove();
+}
+
+#[wasm_bindgen_test(async)]
+async fn workbench_catalog_inspect_open_routes_into_inspect_with_retained_context() {
+    let window = web_sys::window().expect("window");
+    let document = window.document().expect("document");
+    let host = prepare_host_root(&document);
+
+    let formula_space_id = FormulaSpaceId::new("space-mounted");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .workspace_shell
+        .open_formula_space_order
+        .push(formula_space_id.clone());
+    state.active_formula_space_view.active_mode = dnaonecalc_host::state::AppMode::Workbench;
+
+    let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+    formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+    formula_space.latest_evaluation_summary = Some("Number".to_string());
+    state.formula_spaces.insert(formula_space);
+
+    import_programmatic_artifact(
+        &mut state,
+        RetainedArtifactImportRequest {
+            formula_space_id,
+            catalog_entry: build_programmatic_artifact_catalog_entry(
+                "artifact-inspect-1",
+                "case-inspect-1",
+                ProgrammaticComparisonStatus::Blocked,
+            ),
+            discrepancy_summary: Some("excel lane unavailable".to_string()),
+        },
+    );
+
+    let host_element: web_sys::HtmlElement = host.clone().unchecked_into();
+    let mount_handle = mount_to(host_element, move || {
+        view! { <OneCalcShellApp initial_state=state.clone() /> }
+    });
+
+    let initial_html = wait_for_host_html(&document, |html| {
+        html.contains("data-screen=\"workbench\"")
+            && html.contains("data-artifact-id=\"artifact-inspect-1\"")
+    })
+    .await;
+    assert!(
+        initial_html.contains("data-role=\"retained-catalog-open-inspect\""),
+        "initial mounted html: {initial_html}"
+    );
+
+    let inspect_button = document
+        .query_selector(
+            "[data-artifact-id='artifact-inspect-1'] [data-role='retained-catalog-open-inspect']",
+        )
+        .expect("query ok")
+        .expect("inspect open button");
+    inspect_button
+        .dispatch_event(&web_sys::Event::new("click").expect("click event"))
+        .expect("dispatch click");
+
+    let html = wait_for_host_html(&document, |html| {
+        html.contains("data-screen=\"inspect\"")
+            && html.contains("data-role=\"inspect-retained-context\"")
+            && html.contains("artifact-inspect-1")
+            && html.contains("excel lane unavailable")
+    })
+    .await;
+    assert!(
+        html.contains("data-screen=\"inspect\""),
+        "mounted html after inspect open: {html}"
+    );
+    assert!(
+        html.contains("artifact-inspect-1"),
+        "mounted html after inspect open: {html}"
+    );
+    assert!(
+        html.contains("excel lane unavailable"),
+        "mounted html after inspect open: {html}"
     );
 
     drop(mount_handle);

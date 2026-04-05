@@ -131,7 +131,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-workbench-shell__outcome-card,
 .onecalc-workbench-shell__lineage-card,
 .onecalc-workbench-shell__actions-card,
-.onecalc-workbench-shell__evidence-card {
+.onecalc-workbench-shell__evidence-card,
+.onecalc-workbench-shell__catalog-card,
+.onecalc-workbench-shell__compare-card,
+.onecalc-workbench-shell__replay-card {
   background: var(--oc-color-surface);
   border: 1px solid var(--oc-color-border);
   border-radius: var(--oc-radius-panel);
@@ -224,6 +227,21 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: grid;
   gap: var(--oc-space-2);
   margin-top: var(--oc-space-2);
+  min-width: 16rem;
+  padding: var(--oc-space-2);
+  border: 1px solid var(--oc-color-border);
+  border-radius: 12px;
+  background: rgba(255, 250, 242, 0.98);
+  box-shadow: var(--oc-shadow-panel);
+}
+
+.onecalc-formula-editor-surface__popup-container {
+  z-index: 4;
+}
+
+.onecalc-formula-editor-surface__popup-container[data-focused-assist="completion"] .onecalc-formula-editor-surface__completion-popup,
+.onecalc-formula-editor-surface__popup-container[data-focused-assist="signature"] .onecalc-formula-editor-surface__signature-help-popup {
+  border-color: var(--oc-color-accent);
 }
 
 .onecalc-formula-editor-surface__completion-item {
@@ -232,11 +250,20 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border-radius: 10px;
   background: var(--oc-color-surface);
   padding: var(--oc-space-2) var(--oc-space-3);
+  color: var(--oc-color-ink);
 }
 
-.onecalc-formula-editor-surface__completion-item[data-selected="true"] {
+.onecalc-formula-editor-surface__completion-item[data-selected="true"],
+.onecalc-formula-editor-surface__completion-item[data-active-row="true"] {
   border-color: var(--oc-color-accent);
   background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  font-weight: 600;
+}
+
+.onecalc-formula-editor-surface__completion-item:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 2px;
 }
 
 .onecalc-signature-form {
@@ -326,6 +353,49 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-inspect-shell__walk-node-header {
   display: flex;
   justify-content: space-between;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-inspect-shell__retained-context,
+.onecalc-workbench-shell__import-field-group,
+.onecalc-workbench-shell__import-outcome-guide {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-inspect-shell__retained-context {
+  margin-bottom: var(--oc-space-3);
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  border: 1px solid var(--oc-color-border);
+  background: #fbf6ed;
+}
+
+.onecalc-workbench-shell__import-surface {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-workbench-shell__import-label {
+  font-weight: 600;
+}
+
+.onecalc-workbench-shell__import-help {
+  color: var(--oc-color-muted);
+  font-size: 0.9rem;
+}
+
+.onecalc-workbench-shell__import-outcome-guide {
+  margin-top: var(--oc-space-2);
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  background: #fbf6ed;
+  border: 1px solid var(--oc-color-border);
+}
+
+.onecalc-workbench-shell__import-buttons {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--oc-space-2);
 }
 
