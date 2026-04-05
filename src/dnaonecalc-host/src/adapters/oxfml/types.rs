@@ -133,6 +133,21 @@ pub struct ProvenanceSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaArrayPreview {
+    pub label: String,
+    pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaValuePresentation {
+    pub evaluation_summary: String,
+    pub effective_display_summary: Option<String>,
+    pub array_preview: Option<FormulaArrayPreview>,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorDocument {
     pub source_text: String,
     pub text_change_range: Option<FormulaTextChangeRange>,
@@ -147,6 +162,7 @@ pub struct EditorDocument {
     pub bind_summary: Option<BindSummary>,
     pub eval_summary: Option<EvalSummary>,
     pub provenance_summary: Option<ProvenanceSummary>,
+    pub value_presentation: Option<FormulaValuePresentation>,
 }
 
 impl EditorDocument {

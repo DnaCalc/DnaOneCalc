@@ -320,6 +320,7 @@ version = "0.1.0"
 dependencies = [
  "leptos",
  "oxfml_core",
+ "oxfunc_core",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

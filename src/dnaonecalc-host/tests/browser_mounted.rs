@@ -1,5 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
+use std::sync::Arc;
+
+use dnaonecalc_host::adapters::oxfml::PreviewOxfmlBridge;
+use dnaonecalc_host::app::host_mount::{bootstrap_editor_bridge, HostMountTarget};
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::app::preview_state::preview_host_state;
 use dnaonecalc_host::services::programmatic_testing::{
@@ -181,6 +185,102 @@ async fn preview_host_allows_switching_between_seeded_demo_scenarios() {
     .await;
     assert!(html.contains("Array · Dynamic spill"), "mounted html after switch: {html}");
     assert!(html.contains("2x2 spill preview"), "mounted html after switch: {html}");
+
+    drop(mount_handle);
+    host.remove();
+}
+
+#[wasm_bindgen_test(async)]
+async fn preview_host_initial_state_does_not_auto_open_assist_popups() {
+    let window = web_sys::window().expect("window");
+    let document = window.document().expect("document");
+    let host = prepare_host_root(&document);
+    let state = preview_host_state();
+
+    let host_element: web_sys::HtmlElement = host.clone().unchecked_into();
+    let mount_handle = mount_to(host_element, move || {
+        view! {
+            <OneCalcShellApp
+                initial_state=state.clone()
+                editor_bridge=Some(Arc::new(PreviewOxfmlBridge))
+            />
+        }
+    });
+
+    let html = wait_for_host_html(&document, |html| {
+        html.contains("Success · SUM result")
+            && html.contains("data-screen=\"explore\"")
+    })
+    .await;
+
+    assert!(!html.contains("data-role=\"completion-popup\""), "mounted html: {html}");
+    assert!(
+        !html.contains("data-role=\"signature-help-popup\""),
+        "mounted html: {html}"
+    );
+
+    drop(mount_handle);
+    host.remove();
+}
+
+#[wasm_bindgen_test(async)]
+async fn live_bridge_typing_updates_visible_calculated_result() {
+    let window = web_sys::window().expect("window");
+    let document = window.document().expect("document");
+    let host = prepare_host_root(&document);
+
+    let formula_space_id = FormulaSpaceId::new("space-live-preview");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .workspace_shell
+        .open_formula_space_order
+        .push(formula_space_id.clone());
+    state
+        .formula_spaces
+        .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+    let host_element: web_sys::HtmlElement = host.clone().unchecked_into();
+    let editor_bridge = bootstrap_editor_bridge(HostMountTarget::WebBrowser);
+    let mount_handle = mount_to(host_element, move || {
+        view! {
+            <OneCalcShellApp
+                initial_state=state.clone()
+                editor_bridge=Some(editor_bridge.clone())
+            />
+        }
+    });
+
+    let textarea = document
+        .query_selector("[data-role='editor-input']")
+        .expect("query ok")
+        .expect("editor input")
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .expect("textarea");
+    textarea.set_value("=SUM(1,2,3)");
+    textarea
+        .set_selection_range(11, 11)
+        .expect("set selection range");
+    textarea
+        .dispatch_event(&web_sys::InputEvent::new("input").expect("input event"))
+        .expect("dispatch input event");
+
+    let html = wait_for_host_html(&document, |html| {
+        html.contains("Value: Number · 6")
+            && html.contains("Effective display: 6")
+            && html.contains("Evaluation summary: Number · 6")
+    })
+    .await;
+
+    assert!(html.contains("Value: Number · 6"), "mounted html after typing: {html}");
+    assert!(
+        html.contains("Effective display: 6"),
+        "mounted html after typing: {html}"
+    );
+    assert!(
+        html.contains("Evaluation summary: Number · 6"),
+        "mounted html after typing: {html}"
+    );
 
     drop(mount_handle);
     host.remove();

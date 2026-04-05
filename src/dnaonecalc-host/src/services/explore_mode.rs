@@ -142,14 +142,8 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
     };
 
     let mut editor_surface_state = formula_space.editor_surface_state.clone();
-    if !completion_items.is_empty() && editor_surface_state.completion_anchor_offset.is_none() {
-        editor_surface_state.completion_anchor_offset = Some(editor_surface_state.caret.offset);
-    }
     if !completion_items.is_empty() && editor_surface_state.completion_selected_index.is_none() {
         editor_surface_state.completion_selected_index = Some(0);
-    }
-    if signature_help.is_some() && editor_surface_state.signature_help_anchor_offset.is_none() {
-        editor_surface_state.signature_help_anchor_offset = Some(editor_surface_state.caret.offset);
     }
 
     ExploreViewModel {
@@ -376,6 +370,7 @@ mod tests {
             bind_summary: None,
             eval_summary: None,
             provenance_summary: None,
+            value_presentation: None,
         });
 
         let view_model = build_explore_view_model(&formula_space);
@@ -438,6 +433,7 @@ mod tests {
             bind_summary: None,
             eval_summary: None,
             provenance_summary: None,
+            value_presentation: None,
         });
 
         let view_model = build_explore_view_model(&formula_space);

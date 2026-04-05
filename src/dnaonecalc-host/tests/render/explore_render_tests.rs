@@ -13,7 +13,9 @@ use leptos::prelude::*;
 fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
     formula_space.editor_document = Some(sample_editor_document("=LET(x,1,x)"));
+    formula_space.editor_surface_state.completion_anchor_offset = Some(4);
     formula_space.editor_surface_state.completion_selected_index = Some(0);
+    formula_space.editor_surface_state.signature_help_anchor_offset = Some(4);
     formula_space.effective_display_summary = Some("1".to_string());
     formula_space.latest_evaluation_summary = Some("Number".to_string());
 

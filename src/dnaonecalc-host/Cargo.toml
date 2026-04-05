@@ -7,13 +7,14 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
-oxfml-live = ["dep:oxfml_core"]
+default = ["oxfml-live"]
+oxfml-live = ["dep:oxfml_core", "dep:oxfunc_core"]
 
 [dependencies]
 web-sys = { version = "0.3", features = ["HtmlTextAreaElement", "HtmlInputElement", "HtmlElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "Event", "Window", "Document", "Element", "Node"] }
 wasm-bindgen = "=0.2.117"
 oxfml_core = { path = "../../../OxFml/crates/oxfml_core", optional = true }
+oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 leptos = { version = "0.8.17", default-features = false, features = ["ssr"] }

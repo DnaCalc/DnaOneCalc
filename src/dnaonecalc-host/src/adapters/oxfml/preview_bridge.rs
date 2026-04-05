@@ -117,6 +117,7 @@ fn preview_document(request: &FormulaEditRequest) -> EditorDocument {
             profile_summary: "PreviewBridge".to_string(),
             blocked_reason: None,
         }),
+        value_presentation: None,
     }
 }
 

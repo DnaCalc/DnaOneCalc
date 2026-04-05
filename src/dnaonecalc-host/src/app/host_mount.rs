@@ -33,8 +33,8 @@ pub fn bootstrap_editor_bridge(
     _target: HostMountTarget,
 ) -> Arc<dyn OxfmlEditorBridge + Send + Sync> {
     #[cfg(feature = "oxfml-live")]
-    if std::env::var_os("ONECALC_ENABLE_OXFML_LIVE_BRIDGE").is_some() {
-        return Arc::new(LiveOxfmlBridge);
+    if std::env::var_os("ONECALC_FORCE_PREVIEW_BRIDGE").is_none() {
+        return Arc::new(LiveOxfmlBridge::default());
     }
 
     Arc::new(PreviewOxfmlBridge)

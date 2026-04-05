@@ -95,6 +95,7 @@ pub fn sample_editor_document_with_green_key(source_text: &str, green_tree_key: 
             profile_summary: "OC-H0".to_string(),
             blocked_reason: None,
         }),
+        value_presentation: None,
     }
 }
 

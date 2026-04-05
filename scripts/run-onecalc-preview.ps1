@@ -105,6 +105,18 @@ $listener = [System.Net.HttpListener]::new()
 $prefix = "http://127.0.0.1:$Port/"
 $listener.Prefixes.Add($prefix)
 $listener.Start()
+$script:previewStopRequested = $false
+$script:previewListener = $listener
+
+$cancelHandler = [System.ConsoleCancelEventHandler]{
+    param($sender, $eventArgs)
+    $script:previewStopRequested = $true
+    $eventArgs.Cancel = $true
+    if ($script:previewListener -and $script:previewListener.IsListening) {
+        $script:previewListener.Stop()
+    }
+}
+[Console]::add_CancelKeyPress($cancelHandler)
 
 if (-not $NoOpen) {
     Start-Process $prefix | Out-Null
@@ -114,8 +126,28 @@ Write-Host "DNA OneCalc preview available at $prefix"
 Write-Host "Press Ctrl+C to stop the preview server."
 
 try {
-    while ($listener.IsListening) {
-        $context = $listener.GetContext()
+    while ((-not $script:previewStopRequested) -and $listener.IsListening) {
+        $getContextTask = $listener.GetContextAsync()
+        while ((-not $script:previewStopRequested) -and $listener.IsListening -and (-not $getContextTask.Wait(200))) {
+        }
+
+        if ($script:previewStopRequested -or (-not $listener.IsListening)) {
+            break
+        }
+
+        try {
+            $context = $getContextTask.GetAwaiter().GetResult()
+        }
+        catch [System.ObjectDisposedException] {
+            break
+        }
+        catch [System.Net.HttpListenerException] {
+            if ($script:previewStopRequested) {
+                break
+            }
+            throw
+        }
+
         $requestPath = $context.Request.Url.AbsolutePath.TrimStart('/')
         if ([string]::IsNullOrWhiteSpace($requestPath)) {
             $requestPath = "index.html"
@@ -139,8 +171,11 @@ try {
     }
 }
 finally {
+    [Console]::remove_CancelKeyPress($cancelHandler)
     if ($listener.IsListening) {
         $listener.Stop()
     }
     $listener.Close()
+    $script:previewListener = $null
+    $script:previewStopRequested = $false
 }

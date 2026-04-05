@@ -177,6 +177,7 @@ mod tests {
                 profile_summary: "OC-H0".to_string(),
                 blocked_reason: None,
             }),
+            value_presentation: None,
         });
 
         let view_model = build_inspect_view_model(&formula_space, None);
