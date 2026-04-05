@@ -1,2 +1,10 @@
+pub mod adapters;
 pub mod app;
+pub mod domain;
+pub mod extensions;
+pub mod persistence;
+pub mod platform;
+pub mod services;
 pub mod state;
+pub mod test_support;
+pub mod ui;

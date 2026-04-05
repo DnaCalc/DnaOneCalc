@@ -15,6 +15,6 @@ impl OneCalcHostApp {
     }
 
     pub fn launch_message(&self) -> &'static str {
-        "DNA OneCalc host skeleton initialized"
+        "DNA OneCalc shared app core scaffold initialized"
     }
 }
