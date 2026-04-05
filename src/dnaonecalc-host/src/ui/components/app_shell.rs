@@ -8,8 +8,12 @@ use crate::state::OneCalcHostState;
 use crate::ui::components::explore_shell::ExploreShell;
 use crate::ui::components::inspect_shell::InspectShell;
 use crate::ui::components::shell_frame::ShellFrame;
+use crate::ui::components::workbench_shell::WorkbenchShell;
 use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
+use crate::ui::panels::workbench::{
+    build_workbench_evidence_cluster, build_workbench_outcome_cluster,
+};
 
 #[component]
 pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
@@ -48,13 +52,13 @@ pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
                     }
                     .into_any()
                 }
-                (Some(frame), Some(ActiveModeProjection::WorkbenchStub)) => {
+                (Some(frame), Some(ActiveModeProjection::Workbench(view_model))) => {
                     view! {
                         <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
-                            <section class="onecalc-workbench-shell">
-                                <h1>"Twin Oracle Workbench"</h1>
-                                <div>"Rendering scaffold pending"</div>
-                            </section>
+                            <WorkbenchShell
+                                outcome=build_workbench_outcome_cluster(&view_model)
+                                evidence=build_workbench_evidence_cluster(&view_model)
+                            />
                         </ShellFrame>
                     }
                     .into_any()
@@ -119,5 +123,27 @@ mod tests {
         assert!(html.contains("DNA OneCalc"));
         assert!(html.contains("Semantic Inspect"));
         assert!(html.contains("data-mode=\"Inspect\""));
+    }
+
+    #[test]
+    fn app_shell_renders_workbench_projection_in_shared_frame() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state.active_formula_space_view.active_mode = AppMode::Workbench;
+        let mut formula_space = FormulaSpaceState::new(formula_space_id, "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.latest_evaluation_summary = Some("Number".to_string());
+        state.formula_spaces.insert(formula_space);
+
+        let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
+
+        assert!(html.contains("DNA OneCalc"));
+        assert!(html.contains("Twin Oracle Workbench"));
+        assert!(html.contains("data-mode=\"Workbench\""));
     }
 }

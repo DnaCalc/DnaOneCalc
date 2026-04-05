@@ -46,3 +46,25 @@ fn in_01_shell_render_path_wraps_inspect_mode_inside_shared_frame() {
     assert!(html.contains("Semantic Inspect"));
     assert!(html.contains("data-mode=\"Inspect\""));
 }
+
+#[test]
+fn wb_02_shell_render_path_wraps_workbench_mode_inside_shared_frame() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .workspace_shell
+        .open_formula_space_order
+        .push(formula_space_id.clone());
+    state.active_formula_space_view.active_mode = AppMode::Workbench;
+    let mut formula_space = FormulaSpaceState::new(formula_space_id, "=SUM(1,2)");
+    formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+    formula_space.latest_evaluation_summary = Some("Number".to_string());
+    state.formula_spaces.insert(formula_space);
+
+    let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
+
+    assert!(html.contains("DNA OneCalc"));
+    assert!(html.contains("Twin Oracle Workbench"));
+    assert!(html.contains("data-panel=\"workbench-outcome\""));
+}

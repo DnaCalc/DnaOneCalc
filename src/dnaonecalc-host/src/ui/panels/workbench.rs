@@ -1,0 +1,58 @@
+use crate::services::workbench_mode::WorkbenchViewModel;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchOutcomeClusterViewModel {
+    pub outcome_summary: Option<String>,
+    pub recommended_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchEvidenceClusterViewModel {
+    pub raw_entered_cell_text: String,
+    pub evidence_summary: Option<String>,
+}
+
+pub fn build_workbench_outcome_cluster(
+    view_model: &WorkbenchViewModel,
+) -> WorkbenchOutcomeClusterViewModel {
+    WorkbenchOutcomeClusterViewModel {
+        outcome_summary: view_model.outcome_summary.clone(),
+        recommended_action: view_model.recommended_action.clone(),
+    }
+}
+
+pub fn build_workbench_evidence_cluster(
+    view_model: &WorkbenchViewModel,
+) -> WorkbenchEvidenceClusterViewModel {
+    WorkbenchEvidenceClusterViewModel {
+        raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
+        evidence_summary: view_model.evidence_summary.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::workbench_mode::WorkbenchViewModel;
+
+    #[test]
+    fn workbench_clusters_split_outcome_and_evidence_fields() {
+        let view_model = WorkbenchViewModel {
+            raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            outcome_summary: Some("Number".to_string()),
+            evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
+            recommended_action: "Retain and compare".to_string(),
+        };
+
+        let outcome = build_workbench_outcome_cluster(&view_model);
+        let evidence = build_workbench_evidence_cluster(&view_model);
+
+        assert_eq!(outcome.outcome_summary.as_deref(), Some("Number"));
+        assert_eq!(outcome.recommended_action, "Retain and compare");
+        assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
+        assert!(evidence
+            .evidence_summary
+            .as_deref()
+            .is_some_and(|value| value.contains("green-1")));
+    }
+}

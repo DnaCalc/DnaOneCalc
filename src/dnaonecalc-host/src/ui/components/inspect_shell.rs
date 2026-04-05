@@ -5,6 +5,46 @@ use crate::ui::panels::inspect::{
 };
 
 #[component]
+fn InspectWalkNode(node: crate::services::inspect_mode::InspectFormulaWalkNodeView) -> impl IntoView {
+    let state_label = format!("{:?}", node.state);
+    let value_preview = node.value_preview.clone().unwrap_or_else(|| "Unavailable".to_string());
+
+    view! {
+        <li class="onecalc-inspect-shell__walk-node" data-node-id=node.node_id.clone()>
+            <div class="onecalc-inspect-shell__walk-node-header">
+                <span class="onecalc-inspect-shell__walk-node-label">{node.label.clone()}</span>
+                <span class="onecalc-inspect-shell__walk-node-state">{state_label}</span>
+            </div>
+            <div class="onecalc-inspect-shell__walk-node-value">{value_preview}</div>
+            {if node.children.is_empty() {
+                view! { <></> }.into_any()
+            } else {
+                view! {
+                    <ul class="onecalc-inspect-shell__walk-node-children">
+                        {node
+                            .children
+                            .into_iter()
+                            .map(|child| view! { <InspectWalkNode node=child /> })
+                            .collect_view()}
+                    </ul>
+                }
+                .into_any()
+            }}
+        </li>
+    }
+}
+
+#[component]
+fn InspectSummaryCard(title: &'static str, value: String, data_panel: &'static str) -> impl IntoView {
+    view! {
+        <section class="onecalc-inspect-shell__summary-card" data-panel=data_panel>
+            <h3>{title}</h3>
+            <div>{value}</div>
+        </section>
+    }
+}
+
+#[component]
 pub fn InspectShell(
     walk: InspectWalkClusterViewModel,
     summary: InspectSummaryClusterViewModel,
@@ -29,21 +69,9 @@ pub fn InspectShell(
         .as_ref()
         .map(|value| value.profile_summary.clone())
         .unwrap_or_else(|| "Unavailable".to_string());
-    let walk_text = if walk.formula_walk_nodes.is_empty() {
-        "No formula walk".to_string()
-    } else {
-        walk.formula_walk_nodes
-            .iter()
-            .map(|node| match &node.value_preview {
-                Some(value) => format!("{} -> {}", node.label, value),
-                None => node.label.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
 
     view! {
-        <section class="onecalc-inspect-shell">
+        <section class="onecalc-inspect-shell" data-screen="inspect">
             <header class="onecalc-inspect-shell__header">
                 <h1>"Semantic Inspect"</h1>
                 <div class="onecalc-inspect-shell__meta">
@@ -53,18 +81,31 @@ pub fn InspectShell(
             </header>
 
             <div class="onecalc-inspect-shell__body">
-                <section class="onecalc-inspect-shell__walk-cluster">
+                <section class="onecalc-inspect-shell__walk-cluster" data-panel="inspect-walk">
                     <h2>"Formula Walk"</h2>
                     <pre class="onecalc-inspect-shell__source">{walk.raw_entered_cell_text}</pre>
-                    <div class="onecalc-inspect-shell__walk">{walk_text}</div>
+                    <ul class="onecalc-inspect-shell__walk">
+                        {if walk.formula_walk_nodes.is_empty() {
+                            view! { <li>"No formula walk"</li> }.into_any()
+                        } else {
+                            view! {
+                                {walk
+                                    .formula_walk_nodes
+                                    .into_iter()
+                                    .map(|node| view! { <InspectWalkNode node=node /> })
+                                    .collect_view()}
+                            }
+                            .into_any()
+                        }}
+                    </ul>
                 </section>
 
-                <section class="onecalc-inspect-shell__summary-cluster">
+                <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
                     <h2>"Summaries"</h2>
-                    <div>"Parse: " {parse_status}</div>
-                    <div>"Bind: " {bind_summary}</div>
-                    <div>"Eval: " {eval_summary}</div>
-                    <div>"Provenance: " {provenance_summary}</div>
+                    <InspectSummaryCard title="Parse" value=parse_status data_panel="inspect-parse" />
+                    <InspectSummaryCard title="Bind" value=bind_summary data_panel="inspect-bind" />
+                    <InspectSummaryCard title="Eval" value=eval_summary data_panel="inspect-eval" />
+                    <InspectSummaryCard title="Provenance" value=provenance_summary data_panel="inspect-provenance" />
                 </section>
             </div>
         </section>
@@ -122,8 +163,9 @@ mod tests {
 
         assert!(html.contains("Semantic Inspect"));
         assert!(html.contains("=LET(x,1,x)"));
-        assert!(html.contains("LET -&gt; 1") || html.contains("LET -&gt;"));
-        assert!(html.contains("Parse: "));
+        assert!(html.contains("data-panel=\"inspect-walk\""));
+        assert!(html.contains("data-node-id=\"node-1\""));
+        assert!(html.contains("Parse"));
         assert!(html.contains("Valid"));
     }
 }

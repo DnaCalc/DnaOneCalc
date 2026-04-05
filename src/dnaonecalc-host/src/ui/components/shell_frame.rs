@@ -27,9 +27,15 @@ pub fn ShellFrame(
                             } else {
                                 "onecalc-shell-frame__space-item"
                             };
+                            let data_state = if formula_space.is_active { "active" } else { "idle" };
                             view! {
-                                <li class=item_class>
+                                <li class=item_class data-state=data_state data-pinned=if formula_space.is_pinned { "true" } else { "false" }>
                                     {formula_space.label.clone()}
+                                    {if formula_space.is_pinned {
+                                        view! { <span class="onecalc-shell-frame__space-pin">"Pinned"</span> }.into_any()
+                                    } else {
+                                        view! { <></> }.into_any()
+                                    }}
                                 </li>
                             }
                         })
@@ -56,6 +62,7 @@ pub fn ShellFrame(
                                         type="button"
                                         class=button_class
                                         data-mode=tab.label
+                                        data-state=if tab.is_active { "active" } else { "idle" }
                                         on:click=move |_| {
                                             if let Some(callback) = on_mode_select.as_ref() {
                                                 callback.run(tab_mode);
@@ -107,6 +114,7 @@ mod tests {
                         formula_space_id: "space-1".to_string(),
                         label: "space-1".to_string(),
                         is_active: true,
+                        is_pinned: true,
                     }],
                 }
                 on_mode_select=None
@@ -120,6 +128,8 @@ mod tests {
         assert!(html.contains("Active space: "));
         assert!(html.contains("space-1"));
         assert!(html.contains("data-mode=\"Explore\""));
+        assert!(html.contains("data-state=\"active\""));
+        assert!(html.contains("Pinned"));
         assert!(html.contains("Body"));
     }
 }

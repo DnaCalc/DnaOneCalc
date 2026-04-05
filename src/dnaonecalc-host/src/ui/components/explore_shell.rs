@@ -5,22 +5,11 @@ use crate::ui::panels::explore::{
 };
 
 #[component]
-pub fn ExploreShell(
-    editor: ExploreEditorClusterViewModel,
-    result: ExploreResultClusterViewModel,
-) -> impl IntoView {
+fn ExploreEditorPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
     let function_help = editor
         .function_help_lookup_key
         .clone()
         .unwrap_or_else(|| "None".to_string());
-    let effective_display = result
-        .effective_display_summary
-        .clone()
-        .unwrap_or_else(|| "Unavailable".to_string());
-    let evaluation_summary = result
-        .latest_evaluation_summary
-        .clone()
-        .unwrap_or_else(|| "Unavailable".to_string());
     let diagnostics_text = if editor.diagnostics.is_empty() {
         "No diagnostics".to_string()
     } else {
@@ -31,34 +20,96 @@ pub fn ExploreShell(
             .collect::<Vec<_>>()
             .join(" | ")
     };
+    let syntax_text = if editor.syntax_runs.is_empty() {
+        "No syntax projection".to_string()
+    } else {
+        editor
+            .syntax_runs
+            .iter()
+            .map(|run| run.text.clone())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
 
     view! {
-        <section class="onecalc-explore-shell">
+        <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
+            <h2>"Editor"</h2>
+            <pre class="onecalc-explore-shell__editor-text">{editor.raw_entered_cell_text}</pre>
+            <div class="onecalc-explore-shell__syntax-runs" data-role="syntax-runs">{syntax_text}</div>
+            <div class="onecalc-explore-shell__editor-meta">
+                <span>"Completions: " {editor.completion_count}</span>
+                <span>"Signature help: " {if editor.has_signature_help { "on" } else { "off" }}</span>
+            </div>
+            <div class="onecalc-explore-shell__diagnostics" data-role="diagnostics">{diagnostics_text}</div>
+            <div class="onecalc-explore-shell__editor-state">
+                <span>"Green tree: " {editor.green_tree_key.unwrap_or_else(|| "none".to_string())}</span>
+                <span>"Reused: " {if editor.reused_green_tree { "yes" } else { "no" }}</span>
+            </div>
+            <div class="onecalc-explore-shell__help-hint">
+                "Function help target: "
+                {function_help}
+            </div>
+        </section>
+    }
+}
+
+#[component]
+fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
+    let effective_display = result
+        .effective_display_summary
+        .clone()
+        .unwrap_or_else(|| "Unavailable".to_string());
+    let evaluation_summary = result
+        .latest_evaluation_summary
+        .clone()
+        .unwrap_or_else(|| "Unavailable".to_string());
+
+    view! {
+        <section class="onecalc-explore-shell__result-panel" data-panel="explore-result">
+            <h2>"Result"</h2>
+            <div>"Effective display: " {effective_display}</div>
+            <div>"Evaluation summary: " {evaluation_summary}</div>
+        </section>
+    }
+}
+
+#[component]
+fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
+    let function_help = editor
+        .function_help_lookup_key
+        .clone()
+        .unwrap_or_else(|| "None".to_string());
+    let help_summary = if editor.has_signature_help {
+        "Signature help available"
+    } else {
+        "Signature help unavailable"
+    };
+
+    view! {
+        <section class="onecalc-explore-shell__help-panel" data-panel="explore-help">
+            <h2>"Help"</h2>
+            <div>"Function target: " {function_help}</div>
+            <div>{help_summary}</div>
+            <div>"Completion entries: " {editor.completion_count}</div>
+        </section>
+    }
+}
+
+#[component]
+pub fn ExploreShell(
+    editor: ExploreEditorClusterViewModel,
+    result: ExploreResultClusterViewModel,
+) -> impl IntoView {
+    view! {
+        <section class="onecalc-explore-shell" data-screen="explore">
             <header class="onecalc-explore-shell__header">
                 <h1>"Formula Explorer"</h1>
-                <div class="onecalc-explore-shell__meta">
-                    <span>"Green tree: " {editor.green_tree_key.unwrap_or_else(|| "none".to_string())}</span>
-                    <span>"Reused: " {if editor.reused_green_tree { "yes" } else { "no" }}</span>
-                </div>
             </header>
 
             <div class="onecalc-explore-shell__body">
-                <section class="onecalc-explore-shell__editor-cluster">
-                    <h2>"Editor"</h2>
-                    <pre class="onecalc-explore-shell__editor-text">{editor.raw_entered_cell_text}</pre>
-                    <div class="onecalc-explore-shell__editor-meta">
-                        <span>"Completions: " {editor.completion_count}</span>
-                        <span>"Signature help: " {if editor.has_signature_help { "on" } else { "off" }}</span>
-                        <span>"Function help: " {function_help}</span>
-                    </div>
-                    <div class="onecalc-explore-shell__diagnostics">{diagnostics_text}</div>
-                </section>
-
-                <section class="onecalc-explore-shell__result-cluster">
-                    <h2>"Result"</h2>
-                    <div>"Effective display: " {effective_display}</div>
-                    <div>"Evaluation summary: " {evaluation_summary}</div>
-                </section>
+                <ExploreEditorPanel editor=editor.clone() />
+                <ExploreResultPanel result=result />
+                <ExploreHelpPanel editor=editor />
             </div>
         </section>
     }
@@ -107,9 +158,10 @@ mod tests {
 
         assert!(html.contains("Formula Explorer"));
         assert!(html.contains("=SUM(1,2)"));
-        assert!(html.contains("Effective display: "));
+        assert!(html.contains("data-panel=\"explore-editor\""));
+        assert!(html.contains("data-panel=\"explore-help\""));
         assert!(html.contains(">3<"));
-        assert!(html.contains("Function help: "));
+        assert!(html.contains("Function target: "));
         assert!(html.contains("SUM"));
     }
 }

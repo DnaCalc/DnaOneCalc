@@ -27,6 +27,7 @@ fn in_10_real_inspect_render_path_projects_walk_and_summary_into_html() {
     assert!(html.contains("=SUM(1,2)"));
     assert!(html.contains("Green tree: "));
     assert!(html.contains("green-1"));
-    assert!(html.contains("Parse: "));
+    assert!(html.contains("data-panel=\"inspect-parse\""));
+    assert!(html.contains("Parse"));
     assert!(html.contains("Valid"));
 }

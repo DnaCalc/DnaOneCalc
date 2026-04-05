@@ -1,12 +1,13 @@
 use crate::services::explore_mode::{build_explore_view_model, ExploreViewModel};
 use crate::services::inspect_mode::{build_inspect_view_model, InspectViewModel};
+use crate::services::workbench_mode::{build_workbench_view_model, WorkbenchViewModel};
 use crate::state::{AppMode, FormulaSpaceState, OneCalcHostState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActiveModeProjection {
     Explore(ExploreViewModel),
     Inspect(InspectViewModel),
-    WorkbenchStub,
+    Workbench(WorkbenchViewModel),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub struct ShellFormulaSpaceListItemViewModel {
     pub formula_space_id: String,
     pub label: String,
     pub is_active: bool,
+    pub is_pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +50,9 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
         AppMode::Inspect => Some(ActiveModeProjection::Inspect(build_inspect_view_model(
             formula_space,
         ))),
-        AppMode::Workbench => Some(ActiveModeProjection::WorkbenchStub),
+        AppMode::Workbench => Some(ActiveModeProjection::Workbench(build_workbench_view_model(
+            formula_space,
+        ))),
     }
 }
 
@@ -79,6 +83,10 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                     formula_space_id: formula_space.formula_space_id.as_str().to_string(),
                     label: formula_space.formula_space_id.as_str().to_string(),
                     is_active: &formula_space.formula_space_id == active_formula_space_id,
+                    is_pinned: state
+                        .workspace_shell
+                        .pinned_formula_space_ids
+                        .contains(&formula_space.formula_space_id),
                 }
             })
         })
@@ -182,6 +190,7 @@ mod tests {
         assert_eq!(frame.active_formula_space_label, "space-1");
         assert_eq!(frame.formula_spaces.len(), 1);
         assert!(frame.formula_spaces[0].is_active);
+        assert!(!frame.formula_spaces[0].is_pinned);
         assert!(frame.mode_tabs.iter().any(|tab| tab.mode == AppMode::Inspect && tab.is_active));
     }
 
@@ -193,5 +202,26 @@ mod tests {
         switch_active_mode(&mut state, AppMode::Inspect);
 
         assert_eq!(state.active_formula_space_view.active_mode, AppMode::Inspect);
+    }
+
+    #[test]
+    fn build_active_mode_projection_routes_to_workbench_projection() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state.active_formula_space_view.active_mode = AppMode::Workbench;
+        let mut formula_space = FormulaSpaceState::new(formula_space_id, "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.latest_evaluation_summary = Some("Number".to_string());
+        state.formula_spaces.insert(formula_space);
+
+        let projection =
+            build_active_mode_projection(&state).expect("projection should be available");
+        match projection {
+            ActiveModeProjection::Workbench(view_model) => {
+                assert_eq!(view_model.outcome_summary.as_deref(), Some("Number"));
+            }
+            other => panic!("expected workbench projection, got {other:?}"),
+        }
     }
 }
