@@ -283,10 +283,17 @@ pub fn FormulaEditorSurface(
                                     data-anchor-measurement-source=measurement_source_label(anchor_measurement_source)
                                     data-anchor-span-start=completion_anchor_span.map(|span| span.start)
                                     data-anchor-span-len=completion_anchor_span.map(|span| span.len)
-                                    style=overlay_popup_style(anchor_box)
                                 >
                                     "Completion anchor: "
                                     {offset}
+                                </div>
+                                <div
+                                    class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--completion"
+                                    data-role="completion-popup-container"
+                                    data-popup-line=anchor_box.start.line_index
+                                    data-popup-column=anchor_box.start.column_index
+                                    style=overlay_popup_style(anchor_box)
+                                >
                                     <div class="onecalc-formula-editor-surface__completion-popup" data-role="completion-popup">
                                         {editor
                                             .completion_items
@@ -352,10 +359,17 @@ pub fn FormulaEditorSurface(
                                     data-anchor-width-px=call_box.width_px
                                     data-anchor-height-px=call_box.height_px
                                     data-anchor-measurement-source=measurement_source_label(call_measurement_source)
-                                    style=overlay_popup_style(call_box)
                                 >
                                     "Signature help anchor: "
                                     {offset}
+                                </div>
+                                <div
+                                    class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--signature"
+                                    data-role="signature-help-popup-container"
+                                    data-popup-line=call_box.start.line_index
+                                    data-popup-column=call_box.start.column_index
+                                    style=overlay_popup_style(call_box)
+                                >
                                     <div
                                         class="onecalc-formula-editor-surface__signature-help-popup"
                                         data-role="signature-help-popup"
@@ -699,7 +713,9 @@ mod tests {
         assert!(html.contains("position:absolute;"));
         assert!(html.contains("top:86px;"));
         assert!(html.contains("left:24px;"));
+        assert!(html.contains("data-role=\"completion-popup-container\""));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
+        assert!(html.contains("data-role=\"signature-help-popup-container\""));
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));
         assert!(html.contains("data-completion-id=\"proposal-1\""));

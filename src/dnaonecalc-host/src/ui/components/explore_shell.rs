@@ -94,6 +94,22 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
                                     crate::services::explore_mode::ExploreCompletionKindView::SyntaxAssist => "syntax-assist",
                                 }}
                             </span>
+                            <span data-role="selected-completion-doc-ref">
+                                {item
+                                    .documentation_ref
+                                    .clone()
+                                    .unwrap_or_else(|| "no-doc-ref".to_string())}
+                            </span>
+                            <span
+                                data-role="selected-completion-revalidation"
+                                data-requires-revalidation=if item.requires_revalidation { "true" } else { "false" }
+                            >
+                                {if item.requires_revalidation {
+                                    "requires revalidation"
+                                } else {
+                                    "stable"
+                                }}
+                            </span>
                         </div>
                     }
                 })}
@@ -356,6 +372,10 @@ mod tests {
         assert!(html.contains("Function target: "));
         assert!(html.contains("data-role=\"help-sync-lookup\""));
         assert!(html.contains("data-role=\"selected-completion-summary\""));
+        assert!(html.contains("data-role=\"selected-completion-doc-ref\""));
+        assert!(html.contains("preview:function:SUM"));
+        assert!(html.contains("data-role=\"selected-completion-revalidation\""));
+        assert!(html.contains("data-requires-revalidation=\"true\""));
         assert!(html.contains("SUM"));
         assert!(html.contains("Completion entries: "));
         assert!(html.contains("data-role=\"function-help-card\""));
