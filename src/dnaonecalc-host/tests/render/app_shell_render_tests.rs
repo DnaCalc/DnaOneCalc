@@ -20,6 +20,8 @@ fn ex_01_shell_render_path_wraps_explore_mode_inside_shared_frame() {
 
     let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+    assert!(html.contains("data-theme=\"onecalc-theme\""));
+    assert!(html.contains("data-host-app=\"onecalc\""));
     assert!(html.contains("DNA OneCalc"));
     assert!(html.contains("Formula Explorer"));
     assert!(html.contains("data-mode=\"Explore\""));
@@ -42,6 +44,7 @@ fn in_01_shell_render_path_wraps_inspect_mode_inside_shared_frame() {
 
     let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+    assert!(html.contains("data-theme=\"onecalc-theme\""));
     assert!(html.contains("DNA OneCalc"));
     assert!(html.contains("Semantic Inspect"));
     assert!(html.contains("data-mode=\"Inspect\""));
@@ -64,7 +67,10 @@ fn wb_02_shell_render_path_wraps_workbench_mode_inside_shared_frame() {
 
     let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+    assert!(html.contains("data-theme=\"onecalc-theme\""));
     assert!(html.contains("DNA OneCalc"));
     assert!(html.contains("Twin Oracle Workbench"));
     assert!(html.contains("data-panel=\"workbench-outcome\""));
+    assert!(html.contains("data-panel=\"workbench-compare\""));
+    assert!(html.contains("data-panel=\"workbench-replay\""));
 }

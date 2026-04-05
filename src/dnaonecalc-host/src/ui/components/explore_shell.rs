@@ -1,8 +1,7 @@
 use leptos::prelude::*;
 
-use crate::ui::panels::explore::{
-    ExploreEditorClusterViewModel, ExploreResultClusterViewModel,
-};
+use crate::ui::components::formula_editor_surface::FormulaEditorSurface;
+use crate::ui::panels::explore::{ExploreEditorClusterViewModel, ExploreResultClusterViewModel};
 
 #[component]
 fn ExploreEditorPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
@@ -10,41 +9,11 @@ fn ExploreEditorPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
         .function_help_lookup_key
         .clone()
         .unwrap_or_else(|| "None".to_string());
-    let diagnostics_text = if editor.diagnostics.is_empty() {
-        "No diagnostics".to_string()
-    } else {
-        editor
-            .diagnostics
-            .iter()
-            .map(|diagnostic| format!("{}: {}", diagnostic.diagnostic_id, diagnostic.message))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-    let syntax_text = if editor.syntax_runs.is_empty() {
-        "No syntax projection".to_string()
-    } else {
-        editor
-            .syntax_runs
-            .iter()
-            .map(|run| run.text.clone())
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
 
     view! {
         <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
             <h2>"Editor"</h2>
-            <pre class="onecalc-explore-shell__editor-text">{editor.raw_entered_cell_text}</pre>
-            <div class="onecalc-explore-shell__syntax-runs" data-role="syntax-runs">{syntax_text}</div>
-            <div class="onecalc-explore-shell__editor-meta">
-                <span>"Completions: " {editor.completion_count}</span>
-                <span>"Signature help: " {if editor.has_signature_help { "on" } else { "off" }}</span>
-            </div>
-            <div class="onecalc-explore-shell__diagnostics" data-role="diagnostics">{diagnostics_text}</div>
-            <div class="onecalc-explore-shell__editor-state">
-                <span>"Green tree: " {editor.green_tree_key.unwrap_or_else(|| "none".to_string())}</span>
-                <span>"Reused: " {if editor.reused_green_tree { "yes" } else { "no" }}</span>
-            </div>
+            <FormulaEditorSurface editor=editor.clone() />
             <div class="onecalc-explore-shell__help-hint">
                 "Function help target: "
                 {function_help}
@@ -158,8 +127,10 @@ mod tests {
         .to_html();
 
         assert!(html.contains("Formula Explorer"));
-        assert!(html.contains("=SUM(1,2)"));
         assert!(html.contains("data-panel=\"explore-editor\""));
+        assert!(html.contains("data-component=\"formula-editor-surface\""));
+        assert!(html.contains("data-role=\"editor-input\""));
+        assert!(html.contains("data-token-role=\"function\""));
         assert!(html.contains("data-panel=\"explore-help\""));
         assert!(html.contains(">3<"));
         assert!(html.contains("Function target: "));

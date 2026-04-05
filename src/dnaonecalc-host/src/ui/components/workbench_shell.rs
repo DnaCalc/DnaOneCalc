@@ -20,6 +20,18 @@ pub fn WorkbenchShell(
         .evidence_summary
         .clone()
         .unwrap_or_else(|| "No retained evidence yet".to_string());
+    let compare_summary = format!(
+        "Compare against baseline: {}",
+        outcome
+            .outcome_summary
+            .clone()
+            .unwrap_or_else(|| "pending".to_string())
+    );
+    let replay_summary = lineage
+        .lineage_items
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "No replay state yet".to_string());
 
     view! {
         <section class="onecalc-workbench-shell" data-screen="workbench">
@@ -35,6 +47,16 @@ pub fn WorkbenchShell(
                     <h2>"Outcome"</h2>
                     <div>{outcome.outcome_summary.unwrap_or_else(|| "Unavailable".to_string())}</div>
                     <div>{outcome.recommended_action}</div>
+                </section>
+
+                <section class="onecalc-workbench-shell__compare-card" data-panel="workbench-compare">
+                    <h2>"Compare"</h2>
+                    <div>{compare_summary}</div>
+                </section>
+
+                <section class="onecalc-workbench-shell__replay-card" data-panel="workbench-replay">
+                    <h2>"Replay"</h2>
+                    <div>{replay_summary}</div>
                 </section>
 
                 <section class="onecalc-workbench-shell__evidence-card" data-panel="workbench-evidence">
@@ -101,6 +123,8 @@ mod tests {
         assert!(html.contains("Retain and compare"));
         assert!(html.contains("green=green-1"));
         assert!(html.contains("data-panel=\"workbench-lineage\""));
+        assert!(html.contains("data-panel=\"workbench-compare\""));
+        assert!(html.contains("data-panel=\"workbench-replay\""));
         assert!(html.contains("Prepare handoff"));
     }
 }

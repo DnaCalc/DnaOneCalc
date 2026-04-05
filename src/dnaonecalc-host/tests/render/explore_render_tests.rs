@@ -25,9 +25,10 @@ fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     .to_html();
 
     assert!(html.contains("Formula Explorer"));
-    assert!(html.contains("=LET(x,1,x)"));
-    assert!(html.contains("Green tree: "));
-    assert!(html.contains("green-1"));
+    assert!(html.contains("data-component=\"formula-editor-surface\""));
+    assert!(html.contains("data-role=\"editor-input\""));
+    assert!(html.contains("data-role=\"syntax-layer\""));
+    assert!(html.contains("data-token-role=\"function\""));
     assert!(html.contains("Evaluation summary: "));
     assert!(html.contains("Number"));
 }
