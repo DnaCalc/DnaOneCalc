@@ -105,6 +105,19 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
             );
             true
         }
+        EditorCommand::SelectCompletionByIndex(index) => {
+            let proposal_count = formula_space
+                .editor_document
+                .as_ref()
+                .map(|document| document.completion_proposals.len())
+                .unwrap_or(0);
+            if proposal_count == 0 {
+                return false;
+            }
+            formula_space.editor_surface_state.completion_selected_index =
+                Some((*index).min(proposal_count.saturating_sub(1)));
+            true
+        }
         EditorCommand::AcceptSelectedCompletion => {
             let Some(document) = formula_space.editor_document.as_ref() else {
                 return false;
@@ -144,6 +157,19 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
             );
             apply_local_editor_text_change(formula_space, result.text, result.state);
             true
+        }
+        EditorCommand::AcceptCompletionByIndex(index) => {
+            let proposal_count = formula_space
+                .editor_document
+                .as_ref()
+                .map(|document| document.completion_proposals.len())
+                .unwrap_or(0);
+            if proposal_count == 0 {
+                return false;
+            }
+            formula_space.editor_surface_state.completion_selected_index =
+                Some((*index).min(proposal_count.saturating_sub(1)));
+            apply_completion_command(formula_space, &EditorCommand::AcceptSelectedCompletion)
         }
         _ => false,
     }

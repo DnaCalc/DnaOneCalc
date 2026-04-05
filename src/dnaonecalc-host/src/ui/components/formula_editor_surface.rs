@@ -163,6 +163,7 @@ pub fn FormulaEditorSurface(
                     {editor_state
                         .completion_anchor_offset
                         .map(|offset| {
+                            let popup_command = on_command.clone();
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
@@ -175,18 +176,27 @@ pub fn FormulaEditorSurface(
                                         {editor
                                             .completion_items
                                             .iter()
-                                            .map(|item| {
+                                            .enumerate()
+                                            .map(|(index, item)| {
                                                 let is_selected = selected_completion_proposal_id
                                                     .as_ref()
                                                     .is_some_and(|proposal_id| proposal_id == &item.proposal_id);
+                                                let popup_command = popup_command.clone();
                                                 view! {
-                                                    <div
+                                                    <button
                                                         class="onecalc-formula-editor-surface__completion-item"
+                                                        type="button"
                                                         data-completion-id=item.proposal_id.clone()
+                                                        data-completion-index=index
                                                         data-selected=if is_selected { "true" } else { "false" }
+                                                        on:click=move |_| {
+                                                            if let Some(command_callback) = popup_command.as_ref() {
+                                                                command_callback.run(EditorCommand::AcceptCompletionByIndex(index));
+                                                            }
+                                                        }
                                                     >
                                                         {item.display_text.clone()}
-                                                    </div>
+                                                    </button>
                                                 }
                                             })
                                             .collect_view()}
@@ -212,12 +222,24 @@ pub fn FormulaEditorSurface(
                                         {editor
                                             .signature_help
                                             .as_ref()
-                                            .map(|help| format!(
-                                                "{} arg {}",
-                                                help.callee_text,
-                                                help.active_argument_index
-                                            ))
-                                            .unwrap_or_else(|| "Unavailable".to_string())}
+                                            .map(|help| {
+                                                view! {
+                                                    <div
+                                                        data-role="signature-help-content"
+                                                        data-active-argument-index=help.active_argument_index
+                                                    >
+                                                        <span data-role="signature-help-callee">
+                                                            {help.callee_text.clone()}
+                                                        </span>
+                                                        <span data-role="signature-help-argument">
+                                                            {"arg "}
+                                                            {help.active_argument_index}
+                                                        </span>
+                                                    </div>
+                                                }
+                                                .into_any()
+                                            })
+                                            .unwrap_or_else(|| view! { <div>"Unavailable"</div> }.into_any())}
                                     </div>
                                 </div>
                             }
@@ -343,6 +365,8 @@ mod tests {
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));
         assert!(html.contains("data-completion-id=\"proposal-1\""));
+        assert!(html.contains("data-completion-index=\"0\""));
         assert!(html.contains("data-selected=\"true\""));
+        assert!(html.contains("data-active-argument-index=\"1\""));
     }
 }

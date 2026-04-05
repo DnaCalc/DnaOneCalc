@@ -44,7 +44,9 @@ pub fn apply_live_editor_command(
     }
     if matches!(
         command,
-        EditorCommand::SelectPreviousCompletion | EditorCommand::SelectNextCompletion
+        EditorCommand::SelectPreviousCompletion
+            | EditorCommand::SelectNextCompletion
+            | EditorCommand::SelectCompletionByIndex(_)
     ) {
         return Ok(true);
     }

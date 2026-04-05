@@ -9,7 +9,9 @@ pub enum EditorCommand {
     ExtendSelectionRight,
     SelectPreviousCompletion,
     SelectNextCompletion,
+    SelectCompletionByIndex(usize),
     AcceptSelectedCompletion,
+    AcceptCompletionByIndex(usize),
     Backspace,
     Delete,
     IndentWithSpaces,
@@ -97,7 +99,9 @@ pub fn apply_editor_command(
         }
         EditorCommand::SelectPreviousCompletion
         | EditorCommand::SelectNextCompletion
-        | EditorCommand::AcceptSelectedCompletion => EditorCommandResult {
+        | EditorCommand::SelectCompletionByIndex(_)
+        | EditorCommand::AcceptSelectedCompletion
+        | EditorCommand::AcceptCompletionByIndex(_) => EditorCommandResult {
             text: text.to_string(),
             state: state.clone(),
         },

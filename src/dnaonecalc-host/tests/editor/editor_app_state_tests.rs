@@ -193,3 +193,38 @@ fn ex_26_accept_completion_replaces_current_prefix_range() {
     assert!(active.editor_surface_state.selection.is_collapsed());
     assert!(active.editor_document.is_none());
 }
+
+#[test]
+fn ex_27_accept_completion_by_index_updates_selection_and_replaces_text() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SU");
+    let mut editor_document = sample_editor_document("=SU");
+    editor_document.completion_proposals = vec![
+        dnaonecalc_host::adapters::oxfml::CompletionProposal {
+            proposal_id: "proposal-1".to_string(),
+            display_text: "SUM".to_string(),
+            insert_text: "SUM(".to_string(),
+            replacement_span: Some(dnaonecalc_host::adapters::oxfml::FormulaTextSpan { start: 1, len: 2 }),
+        },
+        dnaonecalc_host::adapters::oxfml::CompletionProposal {
+            proposal_id: "proposal-2".to_string(),
+            display_text: "SUBTOTAL".to_string(),
+            insert_text: "SUBTOTAL(".to_string(),
+            replacement_span: Some(dnaonecalc_host::adapters::oxfml::FormulaTextSpan { start: 1, len: 2 }),
+        },
+    ];
+    formula_space.editor_document = Some(editor_document);
+    state.formula_spaces.insert(formula_space);
+
+    let changed = apply_editor_command_to_active_formula_space(
+        &mut state,
+        EditorCommand::AcceptCompletionByIndex(1),
+    );
+
+    assert!(changed);
+    let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+    assert_eq!(active.raw_entered_cell_text, "=SUBTOTAL(");
+    assert_eq!(active.editor_surface_state.caret.offset, 10);
+}
