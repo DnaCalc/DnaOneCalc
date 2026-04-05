@@ -1,11 +1,22 @@
 use crate::domain::ids::FormulaSpaceId;
-use crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry;
+use crate::services::programmatic_testing::{
+    build_programmatic_artifact_catalog_entry, ProgrammaticArtifactCatalogEntry,
+    ProgrammaticComparisonStatus,
+};
 use crate::state::{OneCalcHostState, RetainedArtifactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetainedArtifactImportRequest {
     pub formula_space_id: FormulaSpaceId,
     pub catalog_entry: ProgrammaticArtifactCatalogEntry,
+    pub discrepancy_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualRetainedArtifactImportRequest {
+    pub artifact_id: String,
+    pub case_id: String,
+    pub comparison_status: ProgrammaticComparisonStatus,
     pub discrepancy_summary: Option<String>,
 }
 
@@ -57,6 +68,35 @@ pub fn open_retained_artifact_by_id(
         }
     };
     Ok(())
+}
+
+pub fn import_manual_artifact_for_active_formula_space(
+    state: &mut OneCalcHostState,
+    request: ManualRetainedArtifactImportRequest,
+) -> Result<(), String> {
+    let Some(formula_space_id) = state
+        .workspace_shell
+        .active_formula_space_id
+        .clone()
+        .or(state.active_formula_space_view.selected_formula_space_id.clone())
+    else {
+        return Err("no active formula space for retained artifact import".to_string());
+    };
+
+    let artifact_id = request.artifact_id;
+    import_programmatic_artifact(
+        state,
+        RetainedArtifactImportRequest {
+            formula_space_id,
+            catalog_entry: build_programmatic_artifact_catalog_entry(
+                artifact_id.clone(),
+                request.case_id,
+                request.comparison_status,
+            ),
+            discrepancy_summary: request.discrepancy_summary,
+        },
+    );
+    open_retained_artifact_by_id(state, &artifact_id)
 }
 
 pub fn active_retained_artifact<'a>(
@@ -165,6 +205,36 @@ mod tests {
         assert_eq!(
             state.workspace_shell.active_formula_space_id.as_ref().map(|id| id.as_str()),
             Some("space-1")
+        );
+        assert_eq!(state.active_formula_space_view.active_mode, crate::state::AppMode::Workbench);
+    }
+
+    #[test]
+    fn importing_manual_artifact_uses_active_formula_space_and_opens_it() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+
+        import_manual_artifact_for_active_formula_space(
+            &mut state,
+            ManualRetainedArtifactImportRequest {
+                artifact_id: "artifact-9".to_string(),
+                case_id: "case-9".to_string(),
+                comparison_status: ProgrammaticComparisonStatus::Blocked,
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            },
+        )
+        .expect("manual artifact should import");
+
+        let record = state
+            .retained_artifacts
+            .catalog
+            .get("artifact-9")
+            .expect("artifact imported");
+        assert_eq!(record.formula_space_id, formula_space_id);
+        assert_eq!(
+            state.retained_artifacts.open_artifact_id.as_deref(),
+            Some("artifact-9")
         );
         assert_eq!(state.active_formula_space_view.active_mode, crate::state::AppMode::Workbench);
     }

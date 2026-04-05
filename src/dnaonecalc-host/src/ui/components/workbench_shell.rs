@@ -1,5 +1,7 @@
 use leptos::prelude::*;
 
+use crate::services::programmatic_testing::ProgrammaticComparisonStatus;
+use crate::services::retained_artifacts::ManualRetainedArtifactImportRequest;
 use crate::ui::panels::workbench::{
     WorkbenchActionsClusterViewModel, WorkbenchCatalogClusterViewModel,
     WorkbenchEvidenceClusterViewModel,
@@ -14,6 +16,7 @@ pub fn WorkbenchShell(
     actions: WorkbenchActionsClusterViewModel,
     catalog: WorkbenchCatalogClusterViewModel,
     #[prop(default = None)] on_open_retained_artifact: Option<Callback<String>>,
+    #[prop(default = None)] on_import_retained_artifact: Option<Callback<ManualRetainedArtifactImportRequest>>,
 ) -> impl IntoView {
     let outcome_summary = outcome
         .outcome_summary
@@ -35,6 +38,9 @@ pub fn WorkbenchShell(
         .last()
         .cloned()
         .unwrap_or_else(|| "No replay state yet".to_string());
+    let (artifact_id, set_artifact_id) = signal(String::new());
+    let (case_id, set_case_id) = signal(String::new());
+    let (discrepancy_summary, set_discrepancy_summary) = signal(String::new());
 
     view! {
         <section class="onecalc-workbench-shell" data-screen="workbench">
@@ -143,6 +149,77 @@ pub fn WorkbenchShell(
                             .map(|item| view! { <li>{item}</li> })
                             .collect_view()}
                     </ul>
+                    <div class="onecalc-workbench-shell__import-surface" data-role="retained-import-surface">
+                        <h3>"Import Retained Artifact"</h3>
+                        <input
+                            type="text"
+                            data-role="retained-import-artifact-id"
+                            prop:value=artifact_id
+                            on:input=move |ev| {
+                                set_artifact_id.set(event_target_value(&ev));
+                            }
+                        />
+                        <input
+                            type="text"
+                            data-role="retained-import-case-id"
+                            prop:value=case_id
+                            on:input=move |ev| {
+                                set_case_id.set(event_target_value(&ev));
+                            }
+                        />
+                        <input
+                            type="text"
+                            data-role="retained-import-summary"
+                            prop:value=discrepancy_summary
+                            on:input=move |ev| {
+                                set_discrepancy_summary.set(event_target_value(&ev));
+                            }
+                        />
+                        <div class="onecalc-workbench-shell__import-buttons">
+                            {[
+                                ("matched", ProgrammaticComparisonStatus::Matched),
+                                ("mismatched", ProgrammaticComparisonStatus::Mismatched),
+                                ("blocked", ProgrammaticComparisonStatus::Blocked),
+                            ]
+                                .into_iter()
+                                .map(|(label, comparison_status)| {
+                                    let on_import_retained_artifact = on_import_retained_artifact.clone();
+                                    let artifact_id = artifact_id.clone();
+                                    let case_id = case_id.clone();
+                                    let discrepancy_summary = discrepancy_summary.clone();
+                                    view! {
+                                        <button
+                                            type="button"
+                                            data-role="retained-import-submit"
+                                            data-import-status=label
+                                            on:click=move |_| {
+                                                if let Some(callback) = on_import_retained_artifact.as_ref() {
+                                                    let artifact_id = artifact_id.get_untracked();
+                                                    let case_id = case_id.get_untracked();
+                                                    if artifact_id.is_empty() || case_id.is_empty() {
+                                                        return;
+                                                    }
+                                                    let discrepancy_summary = discrepancy_summary.get_untracked();
+                                                    callback.run(ManualRetainedArtifactImportRequest {
+                                                        artifact_id,
+                                                        case_id,
+                                                        comparison_status,
+                                                        discrepancy_summary: if discrepancy_summary.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(discrepancy_summary)
+                                                        },
+                                                    });
+                                                }
+                                            }
+                                        >
+                                            {format!("Import {}", label)}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
                 </section>
             </div>
         </section>
@@ -183,6 +260,7 @@ mod tests {
                     }],
                 }
                 on_open_retained_artifact=None
+                on_import_retained_artifact=None
             />
         }
         .to_html();
@@ -198,6 +276,12 @@ mod tests {
         assert!(html.contains("data-role=\"retained-catalog-item\""));
         assert!(html.contains("data-role=\"retained-catalog-open\""));
         assert!(html.contains("data-open=\"true\""));
+        assert!(html.contains("data-role=\"retained-import-surface\""));
+        assert!(html.contains("data-role=\"retained-import-artifact-id\""));
+        assert!(html.contains("data-role=\"retained-import-case-id\""));
+        assert!(html.contains("data-role=\"retained-import-summary\""));
+        assert!(html.contains("data-role=\"retained-import-submit\""));
+        assert!(html.contains("data-import-status=\"blocked\""));
         assert!(html.contains("data-panel=\"workbench-lineage\""));
         assert!(html.contains("data-panel=\"workbench-compare\""));
         assert!(html.contains("data-panel=\"workbench-replay\""));

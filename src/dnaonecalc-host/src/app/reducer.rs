@@ -1,5 +1,8 @@
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
-use crate::services::retained_artifacts::open_retained_artifact_by_id;
+use crate::services::retained_artifacts::{
+    import_manual_artifact_for_active_formula_space, open_retained_artifact_by_id,
+    ManualRetainedArtifactImportRequest,
+};
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
@@ -68,6 +71,13 @@ pub fn open_retained_artifact_from_catalog(
     artifact_id: &str,
 ) -> bool {
     open_retained_artifact_by_id(state, artifact_id).is_ok()
+}
+
+pub fn import_manual_retained_artifact_into_active_formula_space(
+    state: &mut OneCalcHostState,
+    request: ManualRetainedArtifactImportRequest,
+) -> bool {
+    import_manual_artifact_for_active_formula_space(state, request).is_ok()
 }
 
 fn active_formula_space_mut(state: &mut OneCalcHostState) -> Option<&mut FormulaSpaceState> {
@@ -380,6 +390,36 @@ mod tests {
         assert_eq!(
             state.workspace_shell.active_formula_space_id.as_ref(),
             Some(&formula_space_id)
+        );
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            crate::state::AppMode::Workbench
+        );
+    }
+
+    #[test]
+    fn importing_manual_retained_artifact_routes_shell_to_workbench_context() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        let imported = import_manual_retained_artifact_into_active_formula_space(
+            &mut state,
+            crate::services::retained_artifacts::ManualRetainedArtifactImportRequest {
+                artifact_id: "artifact-2".to_string(),
+                case_id: "case-2".to_string(),
+                comparison_status: ProgrammaticComparisonStatus::Blocked,
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            },
+        );
+
+        assert!(imported);
+        assert_eq!(
+            state.retained_artifacts.open_artifact_id.as_deref(),
+            Some("artifact-2")
         );
         assert_eq!(
             state.active_formula_space_view.active_mode,
