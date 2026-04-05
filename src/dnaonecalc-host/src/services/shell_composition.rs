@@ -9,6 +9,27 @@ pub enum ActiveModeProjection {
     WorkbenchStub,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellModeTabViewModel {
+    pub mode: AppMode,
+    pub label: &'static str,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellFormulaSpaceListItemViewModel {
+    pub formula_space_id: String,
+    pub label: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellFrameViewModel {
+    pub active_formula_space_label: String,
+    pub mode_tabs: Vec<ShellModeTabViewModel>,
+    pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
+}
+
 pub fn active_formula_space(state: &OneCalcHostState) -> Option<&FormulaSpaceState> {
     let formula_space_id = state
         .workspace_shell
@@ -29,6 +50,49 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
         ))),
         AppMode::Workbench => Some(ActiveModeProjection::WorkbenchStub),
     }
+}
+
+pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFrameViewModel> {
+    let active_formula_space = active_formula_space(state)?;
+    let active_formula_space_id = &active_formula_space.formula_space_id;
+
+    let mode_tabs = [AppMode::Explore, AppMode::Inspect, AppMode::Workbench]
+        .into_iter()
+        .map(|mode| ShellModeTabViewModel {
+            mode,
+            label: match mode {
+                AppMode::Explore => "Explore",
+                AppMode::Inspect => "Inspect",
+                AppMode::Workbench => "Workbench",
+            },
+            is_active: state.active_formula_space_view.active_mode == mode,
+        })
+        .collect();
+
+    let formula_spaces = state
+        .workspace_shell
+        .open_formula_space_order
+        .iter()
+        .filter_map(|formula_space_id| {
+            state.formula_spaces.get(formula_space_id).map(|formula_space| {
+                ShellFormulaSpaceListItemViewModel {
+                    formula_space_id: formula_space.formula_space_id.as_str().to_string(),
+                    label: formula_space.formula_space_id.as_str().to_string(),
+                    is_active: &formula_space.formula_space_id == active_formula_space_id,
+                }
+            })
+        })
+        .collect();
+
+    Some(ShellFrameViewModel {
+        active_formula_space_label: active_formula_space_id.as_str().to_string(),
+        mode_tabs,
+        formula_spaces,
+    })
+}
+
+pub fn switch_active_mode(state: &mut OneCalcHostState, next_mode: AppMode) {
+    state.active_formula_space_view.active_mode = next_mode;
 }
 
 #[cfg(test)]
@@ -98,5 +162,36 @@ mod tests {
         };
 
         assert!(build_active_mode_projection(&state).is_none());
+    }
+
+    #[test]
+    fn shell_frame_view_model_tracks_active_space_and_mode_tabs() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state.active_formula_space_view.active_mode = AppMode::Inspect;
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        let frame = build_shell_frame_view_model(&state).expect("frame should exist");
+        assert_eq!(frame.active_formula_space_label, "space-1");
+        assert_eq!(frame.formula_spaces.len(), 1);
+        assert!(frame.formula_spaces[0].is_active);
+        assert!(frame.mode_tabs.iter().any(|tab| tab.mode == AppMode::Inspect && tab.is_active));
+    }
+
+    #[test]
+    fn switch_active_mode_updates_state() {
+        let mut state = OneCalcHostState::default();
+        assert_eq!(state.active_formula_space_view.active_mode, AppMode::Explore);
+
+        switch_active_mode(&mut state, AppMode::Inspect);
+
+        assert_eq!(state.active_formula_space_view.active_mode, AppMode::Inspect);
     }
 }
