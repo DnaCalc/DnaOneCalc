@@ -10,11 +10,21 @@ pub struct WorkbenchViewModel {
     pub recommended_action: String,
     pub retained_artifact_id: Option<String>,
     pub retained_discrepancy_summary: Option<String>,
+    pub retained_catalog_items: Vec<WorkbenchRetainedCatalogItemView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchRetainedCatalogItemView {
+    pub artifact_id: String,
+    pub comparison_status: String,
+    pub discrepancy_summary: Option<String>,
+    pub is_open: bool,
 }
 
 pub fn build_workbench_view_model(
     formula_space: &FormulaSpaceState,
     retained_artifact: Option<&RetainedArtifactRecord>,
+    retained_catalog: &[&RetainedArtifactRecord],
 ) -> WorkbenchViewModel {
     let evidence_summary = formula_space.editor_document.as_ref().map(|document| {
         format!(
@@ -81,6 +91,26 @@ pub fn build_workbench_view_model(
         },
         retained_artifact_id: retained_artifact.map(|artifact| artifact.artifact_id.clone()),
         retained_discrepancy_summary,
+        retained_catalog_items: retained_catalog
+            .iter()
+            .map(|artifact| WorkbenchRetainedCatalogItemView {
+                artifact_id: artifact.artifact_id.clone(),
+                comparison_status: match artifact.comparison_status {
+                    crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => {
+                        "matched".to_string()
+                    }
+                    crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => {
+                        "mismatched".to_string()
+                    }
+                    crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => {
+                        "blocked".to_string()
+                    }
+                },
+                discrepancy_summary: artifact.discrepancy_summary.clone(),
+                is_open: retained_artifact
+                    .is_some_and(|open_artifact| open_artifact.artifact_id == artifact.artifact_id),
+            })
+            .collect(),
     }
 }
 
@@ -98,7 +128,7 @@ mod tests {
         formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
         formula_space.latest_evaluation_summary = Some("Number".to_string());
 
-        let view_model = build_workbench_view_model(&formula_space, None);
+        let view_model = build_workbench_view_model(&formula_space, None, &[]);
         assert_eq!(view_model.outcome_summary.as_deref(), Some("Number"));
         assert!(view_model
             .evidence_summary
@@ -124,10 +154,12 @@ mod tests {
             discrepancy_summary: Some("dna=1 excel=2".to_string()),
         };
 
-        let view_model = build_workbench_view_model(&formula_space, Some(&retained_artifact));
+        let view_model = build_workbench_view_model(&formula_space, Some(&retained_artifact), &[&retained_artifact]);
         assert_eq!(view_model.outcome_summary.as_deref(), Some("Mismatched"));
         assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-1"));
         assert_eq!(view_model.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
         assert_eq!(view_model.recommended_action, "Review discrepancy in workbench");
+        assert_eq!(view_model.retained_catalog_items.len(), 1);
+        assert!(view_model.retained_catalog_items[0].is_open);
     }
 }

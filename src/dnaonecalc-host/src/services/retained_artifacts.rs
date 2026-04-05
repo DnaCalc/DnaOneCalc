@@ -28,6 +28,15 @@ pub fn import_programmatic_artifact(
         .insert(record.artifact_id.clone(), record);
 }
 
+pub fn import_programmatic_artifacts(
+    state: &mut OneCalcHostState,
+    requests: impl IntoIterator<Item = RetainedArtifactImportRequest>,
+) {
+    for request in requests {
+        import_programmatic_artifact(state, request);
+    }
+}
+
 pub fn open_retained_artifact_by_id(
     state: &mut OneCalcHostState,
     artifact_id: &str,
@@ -57,6 +66,20 @@ pub fn active_retained_artifact<'a>(
     state.retained_artifacts.catalog.get(artifact_id)
 }
 
+pub fn retained_artifacts_for_formula_space<'a>(
+    state: &'a OneCalcHostState,
+    formula_space_id: &FormulaSpaceId,
+) -> Vec<&'a RetainedArtifactRecord> {
+    let mut records = state
+        .retained_artifacts
+        .catalog
+        .values()
+        .filter(|record| &record.formula_space_id == formula_space_id)
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+    records
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +106,41 @@ mod tests {
         );
 
         assert!(state.retained_artifacts.catalog.contains_key("artifact-1"));
+    }
+
+    #[test]
+    fn importing_multiple_programmatic_artifacts_populates_sorted_formula_space_catalog() {
+        let mut state = OneCalcHostState::default();
+        import_programmatic_artifacts(
+            &mut state,
+            [
+                RetainedArtifactImportRequest {
+                    formula_space_id: FormulaSpaceId::new("space-1"),
+                    catalog_entry: ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-2".to_string(),
+                        case_id: "case-2".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Matched,
+                        open_mode_hint: ProgrammaticOpenModeHint::Inspect,
+                    },
+                    discrepancy_summary: None,
+                },
+                RetainedArtifactImportRequest {
+                    formula_space_id: FormulaSpaceId::new("space-1"),
+                    catalog_entry: ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-1".to_string(),
+                        case_id: "case-1".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Mismatched,
+                        open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                    },
+                    discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                },
+            ],
+        );
+
+        let records = retained_artifacts_for_formula_space(&state, &FormulaSpaceId::new("space-1"));
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].artifact_id, "artifact-1");
+        assert_eq!(records[1].artifact_id, "artifact-2");
     }
 
     #[test]

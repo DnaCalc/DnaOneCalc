@@ -77,6 +77,7 @@ fn wb_02_shell_render_path_wraps_workbench_mode_inside_shared_frame() {
     assert!(html.contains("DNA OneCalc"));
     assert!(html.contains("Twin Oracle Workbench"));
     assert!(html.contains("data-panel=\"workbench-outcome\""));
+    assert!(html.contains("data-panel=\"workbench-catalog\""));
     assert!(html.contains("data-panel=\"workbench-compare\""));
     assert!(html.contains("data-panel=\"workbench-replay\""));
 }
@@ -118,4 +119,6 @@ fn wb_03_workbench_render_path_surfaces_open_retained_artifact() {
     assert!(html.contains("artifact-1"));
     assert!(html.contains("data-role=\"retained-discrepancy-summary\""));
     assert!(html.contains("dna=1 excel=2"));
+    assert!(html.contains("data-role=\"retained-catalog-item\""));
+    assert!(html.contains("data-open=\"true\""));
 }

@@ -1,6 +1,8 @@
 use crate::services::explore_mode::{build_explore_view_model, ExploreViewModel};
 use crate::services::inspect_mode::{build_inspect_view_model, InspectViewModel};
-use crate::services::retained_artifacts::active_retained_artifact;
+use crate::services::retained_artifacts::{
+    active_retained_artifact, retained_artifacts_for_formula_space,
+};
 use crate::services::workbench_mode::{build_workbench_view_model, WorkbenchViewModel};
 use crate::state::{AppMode, FormulaSpaceState, OneCalcHostState};
 
@@ -55,6 +57,7 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
             formula_space,
             active_retained_artifact(state)
                 .filter(|artifact| artifact.formula_space_id == formula_space.formula_space_id),
+            &retained_artifacts_for_formula_space(state, &formula_space.formula_space_id),
         ))),
     }
 }

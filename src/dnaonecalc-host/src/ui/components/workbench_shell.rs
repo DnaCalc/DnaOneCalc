@@ -1,7 +1,8 @@
 use leptos::prelude::*;
 
 use crate::ui::panels::workbench::{
-    WorkbenchActionsClusterViewModel, WorkbenchEvidenceClusterViewModel,
+    WorkbenchActionsClusterViewModel, WorkbenchCatalogClusterViewModel,
+    WorkbenchEvidenceClusterViewModel,
     WorkbenchLineageClusterViewModel, WorkbenchOutcomeClusterViewModel,
 };
 
@@ -11,6 +12,7 @@ pub fn WorkbenchShell(
     evidence: WorkbenchEvidenceClusterViewModel,
     lineage: WorkbenchLineageClusterViewModel,
     actions: WorkbenchActionsClusterViewModel,
+    catalog: WorkbenchCatalogClusterViewModel,
 ) -> impl IntoView {
     let outcome_summary = outcome
         .outcome_summary
@@ -88,6 +90,33 @@ pub fn WorkbenchShell(
                     </ul>
                 </section>
 
+                <section class="onecalc-workbench-shell__catalog-card" data-panel="workbench-catalog">
+                    <h2>"Retained Catalog"</h2>
+                    <ul data-role="retained-catalog-list">
+                        {catalog
+                            .retained_catalog_items
+                            .into_iter()
+                            .map(|item| view! {
+                                <li
+                                    data-role="retained-catalog-item"
+                                    data-artifact-id=item.artifact_id.clone()
+                                    data-comparison-status=item.comparison_status.clone()
+                                    data-open=if item.is_open { "true" } else { "false" }
+                                >
+                                    <span data-role="retained-catalog-label">{item.artifact_id.clone()}</span>
+                                    <span data-role="retained-catalog-status">{item.comparison_status.clone()}</span>
+                                    {item
+                                        .discrepancy_summary
+                                        .as_ref()
+                                        .map(|summary| view! {
+                                            <span data-role="retained-catalog-summary">{summary.clone()}</span>
+                                        })}
+                                </li>
+                            })
+                            .collect_view()}
+                    </ul>
+                </section>
+
                 <section class="onecalc-workbench-shell__actions-card" data-panel="workbench-actions">
                     <h2>"Actions"</h2>
                     <div>{actions.recommended_action}</div>
@@ -129,6 +158,14 @@ mod tests {
                     action_items: vec!["Retain snapshot".to_string(), "Prepare handoff".to_string()],
                     recommended_action: "Retain and compare".to_string(),
                 }
+                catalog=WorkbenchCatalogClusterViewModel {
+                    retained_catalog_items: vec![crate::services::workbench_mode::WorkbenchRetainedCatalogItemView {
+                        artifact_id: "artifact-1".to_string(),
+                        comparison_status: "mismatched".to_string(),
+                        discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                        is_open: true,
+                    }],
+                }
             />
         }
         .to_html();
@@ -140,6 +177,9 @@ mod tests {
         assert!(html.contains("artifact-1"));
         assert!(html.contains("data-role=\"retained-discrepancy-summary\""));
         assert!(html.contains("dna=1 excel=2"));
+        assert!(html.contains("data-panel=\"workbench-catalog\""));
+        assert!(html.contains("data-role=\"retained-catalog-item\""));
+        assert!(html.contains("data-open=\"true\""));
         assert!(html.contains("data-panel=\"workbench-lineage\""));
         assert!(html.contains("data-panel=\"workbench-compare\""));
         assert!(html.contains("data-panel=\"workbench-replay\""));

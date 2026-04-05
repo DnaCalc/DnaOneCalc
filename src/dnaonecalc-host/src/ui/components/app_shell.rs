@@ -23,8 +23,9 @@ use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 use crate::ui::panels::workbench::{
-    build_workbench_actions_cluster, build_workbench_evidence_cluster,
-    build_workbench_lineage_cluster, build_workbench_outcome_cluster,
+    build_workbench_actions_cluster, build_workbench_catalog_cluster,
+    build_workbench_evidence_cluster, build_workbench_lineage_cluster,
+    build_workbench_outcome_cluster,
 };
 
 #[component]
@@ -105,6 +106,7 @@ pub fn OneCalcShellApp(
                                     evidence=build_workbench_evidence_cluster(&view_model)
                                     lineage=build_workbench_lineage_cluster(&view_model)
                                     actions=build_workbench_actions_cluster(&view_model)
+                                    catalog=build_workbench_catalog_cluster(&view_model)
                                 />
                             </ShellFrame>
                         }

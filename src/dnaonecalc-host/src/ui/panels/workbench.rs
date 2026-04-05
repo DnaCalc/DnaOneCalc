@@ -1,4 +1,4 @@
-use crate::services::workbench_mode::WorkbenchViewModel;
+use crate::services::workbench_mode::{WorkbenchRetainedCatalogItemView, WorkbenchViewModel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchOutcomeClusterViewModel {
@@ -23,6 +23,11 @@ pub struct WorkbenchLineageClusterViewModel {
 pub struct WorkbenchActionsClusterViewModel {
     pub action_items: Vec<String>,
     pub recommended_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchCatalogClusterViewModel {
+    pub retained_catalog_items: Vec<WorkbenchRetainedCatalogItemView>,
 }
 
 pub fn build_workbench_outcome_cluster(
@@ -62,6 +67,14 @@ pub fn build_workbench_actions_cluster(
     }
 }
 
+pub fn build_workbench_catalog_cluster(
+    view_model: &WorkbenchViewModel,
+) -> WorkbenchCatalogClusterViewModel {
+    WorkbenchCatalogClusterViewModel {
+        retained_catalog_items: view_model.retained_catalog_items.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,12 +91,19 @@ mod tests {
             recommended_action: "Retain and compare".to_string(),
             retained_artifact_id: Some("artifact-1".to_string()),
             retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
+            retained_catalog_items: vec![WorkbenchRetainedCatalogItemView {
+                artifact_id: "artifact-1".to_string(),
+                comparison_status: "mismatched".to_string(),
+                discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                is_open: true,
+            }],
         };
 
         let outcome = build_workbench_outcome_cluster(&view_model);
         let evidence = build_workbench_evidence_cluster(&view_model);
         let lineage = build_workbench_lineage_cluster(&view_model);
         let actions = build_workbench_actions_cluster(&view_model);
+        let catalog = build_workbench_catalog_cluster(&view_model);
 
         assert_eq!(outcome.outcome_summary.as_deref(), Some("Number"));
         assert_eq!(outcome.recommended_action, "Retain and compare");
@@ -92,6 +112,8 @@ mod tests {
         assert_eq!(evidence.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
         assert_eq!(lineage.lineage_items.len(), 1);
         assert_eq!(actions.action_items.len(), 1);
+        assert_eq!(catalog.retained_catalog_items.len(), 1);
+        assert!(catalog.retained_catalog_items[0].is_open);
         assert!(evidence
             .evidence_summary
             .as_deref()
