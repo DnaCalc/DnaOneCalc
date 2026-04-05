@@ -53,6 +53,22 @@ fn ex_28_browser_measurement_path_surfaces_dom_measured_overlay_geometry() {
             line_index: 0,
             column_index: 0,
         }),
+        completion_popup_box: Some(EditorMeasuredOverlayBox {
+            top_px: 70,
+            left_px: 24,
+            width_px: 48,
+            height_px: 22,
+            line_index: 0,
+            column_index: 1,
+        }),
+        signature_help_popup_box: Some(EditorMeasuredOverlayBox {
+            top_px: 92,
+            left_px: 0,
+            width_px: 88,
+            height_px: 22,
+            line_index: 0,
+            column_index: 0,
+        }),
     });
     formula_space.effective_display_summary = Some("1".to_string());
     formula_space.latest_evaluation_summary = Some("Number".to_string());
@@ -103,6 +119,15 @@ fn multiline_completion_popup_uses_measured_box_position() {
             column_index: 2,
         }),
         signature_help_anchor_box: None,
+        completion_popup_box: Some(EditorMeasuredOverlayBox {
+            top_px: 110,
+            left_px: 18,
+            width_px: 45,
+            height_px: 22,
+            line_index: 1,
+            column_index: 2,
+        }),
+        signature_help_popup_box: None,
     });
     state.formula_spaces.insert(formula_space);
 
@@ -131,6 +156,15 @@ fn multiline_signature_popup_uses_measured_box_position() {
         selection_box: None,
         completion_anchor_box: None,
         signature_help_anchor_box: Some(EditorMeasuredOverlayBox {
+            top_px: 132,
+            left_px: 6,
+            width_px: 80,
+            height_px: 22,
+            line_index: 0,
+            column_index: 0,
+        }),
+        completion_popup_box: None,
+        signature_help_popup_box: Some(EditorMeasuredOverlayBox {
             top_px: 132,
             left_px: 6,
             width_px: 80,

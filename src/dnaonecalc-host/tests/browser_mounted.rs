@@ -38,7 +38,7 @@ fn mounts_shell_into_browser_dom_container() {
     state.formula_spaces.insert(formula_space);
 
     let host_element: web_sys::HtmlElement = host.unchecked_into();
-    mount_to(host_element, move || {
+    let _ = mount_to(host_element, move || {
         view! { <OneCalcShellApp initial_state=state.clone() /> }
     });
 

@@ -310,6 +310,8 @@ mod tests {
                     selection_box: None,
                     completion_anchor_box: None,
                     signature_help_anchor_box: None,
+                    completion_popup_box: None,
+                    signature_help_popup_box: None,
                 },
             },
         );

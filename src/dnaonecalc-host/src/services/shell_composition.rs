@@ -1,5 +1,6 @@
 use crate::services::explore_mode::{build_explore_view_model, ExploreViewModel};
 use crate::services::inspect_mode::{build_inspect_view_model, InspectViewModel};
+use crate::services::retained_artifacts::active_retained_artifact;
 use crate::services::workbench_mode::{build_workbench_view_model, WorkbenchViewModel};
 use crate::state::{AppMode, FormulaSpaceState, OneCalcHostState};
 
@@ -52,6 +53,8 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
         ))),
         AppMode::Workbench => Some(ActiveModeProjection::Workbench(build_workbench_view_model(
             formula_space,
+            active_retained_artifact(state)
+                .filter(|artifact| artifact.formula_space_id == formula_space.formula_space_id),
         ))),
     }
 }
@@ -107,6 +110,9 @@ pub fn switch_active_mode(state: &mut OneCalcHostState, next_mode: AppMode) {
 mod tests {
     use super::*;
     use crate::domain::ids::FormulaSpaceId;
+    use crate::services::programmatic_testing::{ProgrammaticComparisonStatus, ProgrammaticOpenModeHint};
+    use crate::services::retained_artifacts::import_programmatic_artifact;
+    use crate::services::retained_artifacts::RetainedArtifactImportRequest;
     use crate::state::{FormulaSpaceCollectionState, FormulaSpaceState, OneCalcHostState};
     use crate::test_support::sample_editor_document;
 
@@ -220,6 +226,45 @@ mod tests {
         match projection {
             ActiveModeProjection::Workbench(view_model) => {
                 assert_eq!(view_model.outcome_summary.as_deref(), Some("Number"));
+            }
+            other => panic!("expected workbench projection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_active_mode_projection_routes_open_retained_artifact_into_workbench() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state.active_formula_space_view.active_mode = AppMode::Workbench;
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        state.formula_spaces.insert(formula_space);
+
+        import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id,
+                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-1".to_string(),
+                    case_id: "case-1".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Blocked,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+            },
+        );
+        state.retained_artifacts.open_artifact_id = Some("artifact-1".to_string());
+
+        let projection =
+            build_active_mode_projection(&state).expect("projection should be available");
+        match projection {
+            ActiveModeProjection::Workbench(view_model) => {
+                assert_eq!(view_model.outcome_summary.as_deref(), Some("Blocked"));
+                assert_eq!(
+                    view_model.retained_discrepancy_summary.as_deref(),
+                    Some("excel lane unavailable")
+                );
             }
             other => panic!("expected workbench projection, got {other:?}"),
         }

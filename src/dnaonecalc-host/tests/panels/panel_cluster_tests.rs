@@ -51,7 +51,7 @@ fn wb_04_workbench_panel_clusters_split_outcome_and_evidence_fields_for_renderin
     formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
     formula_space.latest_evaluation_summary = Some("Number".to_string());
 
-    let mode_view = build_workbench_view_model(&formula_space);
+    let mode_view = build_workbench_view_model(&formula_space, None);
     let outcome_cluster = build_workbench_outcome_cluster(&mode_view);
     let evidence_cluster = build_workbench_evidence_cluster(&mode_view);
 

@@ -47,6 +47,12 @@ pub fn WorkbenchShell(
                     <h2>"Outcome"</h2>
                     <div>{outcome.outcome_summary.unwrap_or_else(|| "Unavailable".to_string())}</div>
                     <div>{outcome.recommended_action}</div>
+                    {outcome
+                        .retained_artifact_id
+                        .clone()
+                        .map(|artifact_id| view! {
+                            <div data-role="retained-artifact-id">"Artifact: " {artifact_id}</div>
+                        })}
                 </section>
 
                 <section class="onecalc-workbench-shell__compare-card" data-panel="workbench-compare">
@@ -63,6 +69,12 @@ pub fn WorkbenchShell(
                     <h2>"Evidence"</h2>
                     <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
                     <div>{evidence_summary}</div>
+                    {evidence
+                        .retained_discrepancy_summary
+                        .clone()
+                        .map(|summary| view! {
+                            <div data-role="retained-discrepancy-summary">{summary}</div>
+                        })}
                 </section>
 
                 <section class="onecalc-workbench-shell__lineage-card" data-panel="workbench-lineage">
@@ -103,10 +115,12 @@ mod tests {
                 outcome=WorkbenchOutcomeClusterViewModel {
                     outcome_summary: Some("Number".to_string()),
                     recommended_action: "Retain and compare".to_string(),
+                    retained_artifact_id: Some("artifact-1".to_string()),
                 }
                 evidence=WorkbenchEvidenceClusterViewModel {
                     raw_entered_cell_text: "=SUM(1,2)".to_string(),
                     evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
+                    retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
                 }
                 lineage=WorkbenchLineageClusterViewModel {
                     lineage_items: vec!["Scenario opened".to_string(), "Evaluation captured".to_string()],
@@ -122,6 +136,10 @@ mod tests {
         assert!(html.contains("Twin Oracle Workbench"));
         assert!(html.contains("Retain and compare"));
         assert!(html.contains("green=green-1"));
+        assert!(html.contains("data-role=\"retained-artifact-id\""));
+        assert!(html.contains("artifact-1"));
+        assert!(html.contains("data-role=\"retained-discrepancy-summary\""));
+        assert!(html.contains("dna=1 excel=2"));
         assert!(html.contains("data-panel=\"workbench-lineage\""));
         assert!(html.contains("data-panel=\"workbench-compare\""));
         assert!(html.contains("data-panel=\"workbench-replay\""));

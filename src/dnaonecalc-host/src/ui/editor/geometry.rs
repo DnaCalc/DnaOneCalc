@@ -45,6 +45,8 @@ pub struct EditorOverlayGeometrySnapshot {
     pub selection_box: Option<EditorMeasuredOverlayBox>,
     pub completion_anchor_box: Option<EditorMeasuredOverlayBox>,
     pub signature_help_anchor_box: Option<EditorMeasuredOverlayBox>,
+    pub completion_popup_box: Option<EditorMeasuredOverlayBox>,
+    pub signature_help_popup_box: Option<EditorMeasuredOverlayBox>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +177,10 @@ pub fn derive_overlay_snapshot(
             .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
         signature_help_anchor_box: signature_help_span
             .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
+        completion_popup_box: completion_anchor_span
+            .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
+        signature_help_popup_box: signature_help_span
+            .map(|span| measured_box_from_overlay_box(measurement.span_box(text, span))),
     }
 }
 
@@ -208,6 +214,18 @@ pub fn derive_overlay_snapshot_with_metrics(
             ))
         }),
         signature_help_anchor_box: signature_help_span.map(|span| {
+            measured_box_from_overlay_box(adjust_for_scroll(
+                measurement.span_box(text, span),
+                metrics,
+            ))
+        }),
+        completion_popup_box: completion_anchor_span.map(|span| {
+            measured_box_from_overlay_box(adjust_for_scroll(
+                measurement.span_box(text, span),
+                metrics,
+            ))
+        }),
+        signature_help_popup_box: signature_help_span.map(|span| {
             measured_box_from_overlay_box(adjust_for_scroll(
                 measurement.span_box(text, span),
                 metrics,
@@ -316,6 +334,8 @@ mod tests {
         assert_eq!(snapshot.selection_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(24));
         assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
         assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
+        assert_eq!(snapshot.completion_popup_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
+        assert_eq!(snapshot.signature_help_popup_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
     }
 
     #[test]
@@ -338,5 +358,7 @@ mod tests {
         assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.left_px), Some(0));
         assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(0));
         assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.height_px), Some(80));
+        assert_eq!(snapshot.completion_popup_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(0));
+        assert_eq!(snapshot.signature_help_popup_box.as_ref().map(|box_geometry| box_geometry.height_px), Some(80));
     }
 }

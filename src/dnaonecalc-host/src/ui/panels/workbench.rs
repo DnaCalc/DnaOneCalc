@@ -4,12 +4,14 @@ use crate::services::workbench_mode::WorkbenchViewModel;
 pub struct WorkbenchOutcomeClusterViewModel {
     pub outcome_summary: Option<String>,
     pub recommended_action: String,
+    pub retained_artifact_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchEvidenceClusterViewModel {
     pub raw_entered_cell_text: String,
     pub evidence_summary: Option<String>,
+    pub retained_discrepancy_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,7 @@ pub fn build_workbench_outcome_cluster(
     WorkbenchOutcomeClusterViewModel {
         outcome_summary: view_model.outcome_summary.clone(),
         recommended_action: view_model.recommended_action.clone(),
+        retained_artifact_id: view_model.retained_artifact_id.clone(),
     }
 }
 
@@ -38,6 +41,7 @@ pub fn build_workbench_evidence_cluster(
     WorkbenchEvidenceClusterViewModel {
         raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
         evidence_summary: view_model.evidence_summary.clone(),
+        retained_discrepancy_summary: view_model.retained_discrepancy_summary.clone(),
     }
 }
 
@@ -72,6 +76,8 @@ mod tests {
             lineage_items: vec!["Scenario opened".to_string()],
             action_items: vec!["Retain snapshot".to_string()],
             recommended_action: "Retain and compare".to_string(),
+            retained_artifact_id: Some("artifact-1".to_string()),
+            retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
         };
 
         let outcome = build_workbench_outcome_cluster(&view_model);
@@ -81,7 +87,9 @@ mod tests {
 
         assert_eq!(outcome.outcome_summary.as_deref(), Some("Number"));
         assert_eq!(outcome.recommended_action, "Retain and compare");
+        assert_eq!(outcome.retained_artifact_id.as_deref(), Some("artifact-1"));
         assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(evidence.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
         assert_eq!(lineage.lineage_items.len(), 1);
         assert_eq!(actions.action_items.len(), 1);
         assert!(evidence

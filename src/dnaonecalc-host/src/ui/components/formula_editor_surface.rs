@@ -5,9 +5,13 @@ use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
 use crate::ui::editor::commands::{
     classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use crate::ui::editor::geometry::{
-    derive_overlay_snapshot, resolve_overlay_box, EditorOverlayGeometrySnapshot,
-    EditorOverlayMeasurement, EditorOverlayMeasurementEvent, EditorOverlayMeasurementSource,
+    derive_overlay_snapshot,
+};
+use crate::ui::editor::geometry::{
+    resolve_overlay_box, EditorOverlayGeometrySnapshot, EditorOverlayMeasurement,
+    EditorOverlayMeasurementEvent, EditorOverlayMeasurementSource,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::ui::editor::browser_measurement::capture_overlay_measurement_event;
@@ -269,6 +273,12 @@ pub fn FormulaEditorSurface(
                                     .map(|span| overlay_measurement.span_box(&editor.raw_entered_cell_text, span))
                                     .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset)),
                             );
+                            let (_, popup_box) = resolve_overlay_box(
+                                overlay_geometry.completion_popup_box,
+                                completion_anchor_span
+                                    .map(|span| overlay_measurement.span_box(&editor.raw_entered_cell_text, span))
+                                    .unwrap_or(anchor_box),
+                            );
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
@@ -290,9 +300,9 @@ pub fn FormulaEditorSurface(
                                 <div
                                     class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--completion"
                                     data-role="completion-popup-container"
-                                    data-popup-line=anchor_box.start.line_index
-                                    data-popup-column=anchor_box.start.column_index
-                                    style=overlay_popup_style(anchor_box)
+                                    data-popup-line=popup_box.start.line_index
+                                    data-popup-column=popup_box.start.column_index
+                                    style=overlay_popup_style(popup_box)
                                 >
                                     <div class="onecalc-formula-editor-surface__completion-popup" data-role="completion-popup">
                                         {editor
@@ -347,6 +357,14 @@ pub fn FormulaEditorSurface(
                                     .map(|help| overlay_measurement.span_box(&editor.raw_entered_cell_text, help.call_span))
                                     .unwrap_or_else(|| overlay_measurement.offset_box(&editor.raw_entered_cell_text, offset)),
                             );
+                            let (_, popup_box) = resolve_overlay_box(
+                                overlay_geometry.signature_help_popup_box,
+                                editor
+                                    .signature_help
+                                    .as_ref()
+                                    .map(|help| overlay_measurement.span_box(&editor.raw_entered_cell_text, help.call_span))
+                                    .unwrap_or(call_box),
+                            );
                             view! {
                                 <div
                                     class="onecalc-formula-editor-surface__assist-indicator"
@@ -366,9 +384,9 @@ pub fn FormulaEditorSurface(
                                 <div
                                     class="onecalc-formula-editor-surface__popup-container onecalc-formula-editor-surface__popup-container--signature"
                                     data-role="signature-help-popup-container"
-                                    data-popup-line=call_box.start.line_index
-                                    data-popup-column=call_box.start.column_index
-                                    style=overlay_popup_style(call_box)
+                                    data-popup-line=popup_box.start.line_index
+                                    data-popup-column=popup_box.start.column_index
+                                    style=overlay_popup_style(popup_box)
                                 >
                                     <div
                                         class="onecalc-formula-editor-surface__signature-help-popup"
@@ -426,6 +444,7 @@ fn measurement_source_label(source: EditorOverlayMeasurementSource) -> &'static 
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_overlay_measurement_event(
     editor: &ExploreEditorClusterViewModel,
 ) -> EditorOverlayMeasurementEvent {
@@ -661,6 +680,22 @@ mod tests {
                             column_index: 1,
                         }),
                         signature_help_anchor_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 86,
+                            left_px: 0,
+                            width_px: 72,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 0,
+                        }),
+                        completion_popup_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
+                            top_px: 64,
+                            left_px: 24,
+                            width_px: 40,
+                            height_px: 22,
+                            line_index: 0,
+                            column_index: 1,
+                        }),
+                        signature_help_popup_box: Some(crate::ui::editor::geometry::EditorMeasuredOverlayBox {
                             top_px: 86,
                             left_px: 0,
                             width_px: 72,

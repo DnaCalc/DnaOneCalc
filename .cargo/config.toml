@@ -1,0 +1,6 @@
+[alias]
+test-browser = "test --target wasm32-unknown-unknown"
+test-browser-live = "test --target wasm32-unknown-unknown --features oxfml-live"
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"

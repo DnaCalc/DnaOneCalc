@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
+use crate::services::programmatic_testing::{
+    ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
+};
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -123,7 +126,20 @@ impl Default for ActiveFormulaSpaceViewState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RetainedArtifactOpenState;
+pub struct RetainedArtifactOpenState {
+    pub open_artifact_id: Option<String>,
+    pub catalog: BTreeMap<String, RetainedArtifactRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedArtifactRecord {
+    pub artifact_id: String,
+    pub case_id: String,
+    pub formula_space_id: FormulaSpaceId,
+    pub comparison_status: ProgrammaticComparisonStatus,
+    pub open_mode_hint: ProgrammaticOpenModeHint,
+    pub discrepancy_summary: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CapabilityAndEnvironmentState;
@@ -158,6 +174,7 @@ pub struct OpenFormulaSpaceRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::programmatic_testing::{ProgrammaticComparisonStatus, ProgrammaticOpenModeHint};
 
     #[test]
     fn formula_space_tracks_raw_entered_cell_text() {
@@ -170,5 +187,27 @@ mod tests {
         let state = OneCalcHostState::default();
         assert_eq!(state.active_formula_space_view.active_mode, AppMode::Explore);
         assert!(state.workspace_shell.active_formula_space_id.is_none());
+    }
+
+    #[test]
+    fn retained_artifact_open_state_defaults_to_empty_catalog() {
+        let state = RetainedArtifactOpenState::default();
+        assert!(state.open_artifact_id.is_none());
+        assert!(state.catalog.is_empty());
+    }
+
+    #[test]
+    fn retained_artifact_record_keeps_open_mode_hint() {
+        let record = RetainedArtifactRecord {
+            artifact_id: "artifact-1".to_string(),
+            case_id: "case-1".to_string(),
+            formula_space_id: FormulaSpaceId::new("space-1"),
+            comparison_status: ProgrammaticComparisonStatus::Blocked,
+            open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+            discrepancy_summary: Some("blocked by host policy".to_string()),
+        };
+
+        assert_eq!(record.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
+        assert_eq!(record.discrepancy_summary.as_deref(), Some("blocked by host policy"));
     }
 }
