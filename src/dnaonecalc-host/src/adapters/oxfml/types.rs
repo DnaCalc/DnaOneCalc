@@ -57,6 +57,47 @@ pub struct FunctionHelpPacket {
     pub lookup_key: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormulaWalkNodeState {
+    Evaluated,
+    Bound,
+    Opaque,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaWalkNode {
+    pub node_id: String,
+    pub label: String,
+    pub value_preview: Option<String>,
+    pub state: FormulaWalkNodeState,
+    pub children: Vec<FormulaWalkNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseSummary {
+    pub status: String,
+    pub token_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindSummary {
+    pub variable_count: usize,
+    pub reference_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalSummary {
+    pub step_count: usize,
+    pub duration_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenanceSummary {
+    pub profile_summary: String,
+    pub blocked_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorDocument {
     pub source_text: String,
@@ -67,6 +108,11 @@ pub struct EditorDocument {
     pub signature_help: Option<SignatureHelpContext>,
     pub function_help: Option<FunctionHelpPacket>,
     pub completion_proposals: Vec<CompletionProposal>,
+    pub formula_walk: Vec<FormulaWalkNode>,
+    pub parse_summary: Option<ParseSummary>,
+    pub bind_summary: Option<BindSummary>,
+    pub eval_summary: Option<EvalSummary>,
+    pub provenance_summary: Option<ProvenanceSummary>,
 }
 
 impl EditorDocument {

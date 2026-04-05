@@ -6,7 +6,8 @@ pub use bridge::{
     OxfmlEditorBridgeError,
 };
 pub use types::{
-    CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    FormulaEditReuseSummary, FormulaTextChangeRange, FunctionHelpPacket, LiveDiagnostic,
-    LiveDiagnosticSnapshot, SignatureHelpContext,
+    BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
+    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaWalkNode,
+    FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnostic, LiveDiagnosticSnapshot,
+    ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };

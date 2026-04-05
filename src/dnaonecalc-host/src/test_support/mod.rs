@@ -1,7 +1,8 @@
 use crate::adapters::oxfml::{
-    CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    FormulaEditReuseSummary, FormulaTextChangeRange, FunctionHelpPacket, LiveDiagnostic,
-    LiveDiagnosticSnapshot, SignatureHelpContext,
+    BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
+    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaWalkNode,
+    FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnostic, LiveDiagnosticSnapshot,
+    ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
 
 pub fn sample_editor_document(source_text: &str) -> EditorDocument {
@@ -46,5 +47,28 @@ pub fn sample_editor_document(source_text: &str) -> EditorDocument {
             display_text: "SUM".to_string(),
             insert_text: "SUM(".to_string(),
         }],
+        formula_walk: vec![FormulaWalkNode {
+            node_id: "node-1".to_string(),
+            label: "SUM".to_string(),
+            value_preview: Some("3".to_string()),
+            state: FormulaWalkNodeState::Evaluated,
+            children: vec![],
+        }],
+        parse_summary: Some(ParseSummary {
+            status: "Valid".to_string(),
+            token_count: 1,
+        }),
+        bind_summary: Some(BindSummary {
+            variable_count: 0,
+            reference_count: 0,
+        }),
+        eval_summary: Some(EvalSummary {
+            step_count: 1,
+            duration_text: "0.1ms".to_string(),
+        }),
+        provenance_summary: Some(ProvenanceSummary {
+            profile_summary: "OC-H0".to_string(),
+            blocked_reason: None,
+        }),
     }
 }

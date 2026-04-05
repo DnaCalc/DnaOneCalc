@@ -98,6 +98,11 @@ mod tests {
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
             }],
+            formula_walk: vec![],
+            parse_summary: None,
+            bind_summary: None,
+            eval_summary: None,
+            provenance_summary: None,
         }
     }
 
