@@ -12,12 +12,13 @@ Companion notes:
 5. [APP_UX_SCREEN_SPEC_INSPECT.md](APP_UX_SCREEN_SPEC_INSPECT.md)
 6. [APP_UX_SCREEN_SPEC_WORKBENCH.md](APP_UX_SCREEN_SPEC_WORKBENCH.md)
 7. [APP_UX_USE_CASE_CROSSWALK.md](APP_UX_USE_CASE_CROSSWALK.md)
+8. [APP_IMPLEMENTATION_LAYOUT_AND_TDD.md](APP_IMPLEMENTATION_LAYOUT_AND_TDD.md)
 
-Relevant current code:
-1. [src/dnaonecalc-host/src/shell.rs](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/shell.rs)
-2. [src/dnaonecalc-host/src/runtime.rs](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/runtime.rs)
-3. [src/dnaonecalc-host/src/retained.rs](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/retained.rs)
-4. [src/dnaonecalc-host/src/extension.rs](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/extension.rs)
+Relevant archived reference code:
+1. [shell.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/shell.rs)
+2. [runtime.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/runtime.rs)
+3. [retained.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/retained.rs)
+4. [extension.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/extension.rs)
 
 ## 1. Purpose
 This note maps the current UX model onto implementation-facing state slices for the Rust host.
@@ -35,8 +36,8 @@ It is not:
 3. or permission to widen UX scope.
 
 ## 2. Current Code Read
-### 2.1 Current Shell Reality
-The current host already contains useful state slices in [`src/dnaonecalc-host/src/shell.rs`](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/shell.rs):
+### 2.1 Archived Shell Reality
+The archived pre-greenfield host already contains useful state slices in [shell.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/shell.rs):
 1. `FormulaEditorState`
 2. `CapabilityCenterState`
 3. `EffectiveDisplayRenderState`
@@ -57,8 +58,8 @@ This is useful, but it is still fundamentally:
 2. string-heavy in some UI-facing fields,
 3. and not yet shaped around the newer multi-space and mode-driven UX.
 
-### 2.2 Runtime Summary Reality
-The current runtime already exposes summary types in [`src/dnaonecalc-host/src/runtime.rs`](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/runtime.rs) that align with the intended UX:
+### 2.2 Archived Runtime Summary Reality
+The archived pre-greenfield runtime already exposes summary types in [runtime.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/runtime.rs) that align with the intended UX:
 1. `FormulaEditPacketSummary`
 2. `FormulaEvaluationSummary`
 3. `ArrayPreviewSummary`
@@ -73,7 +74,7 @@ The current runtime already exposes summary types in [`src/dnaonecalc-host/src/r
 12. `ScenarioSelectionDetail`
 
 Interpretation:
-1. the host does not need to invent everything from scratch,
+1. the greenfield host does not need to invent everything from scratch,
 2. but it does need a better state-owner structure to present these summaries coherently across modes and multiple formula spaces.
 
 ## 3. State-Slicing Principles
@@ -261,7 +262,7 @@ This slice should feed:
 2. extension-related portions of `environment_truth_panel`
 
 Current code relation:
-1. extension truth types already exist in [`src/dnaonecalc-host/src/extension.rs`](/C:/Work/DnaCalc/DnaOneCalc/src/dnaonecalc-host/src/extension.rs),
+1. extension truth types already exist in [extension.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/extension.rs),
 2. but they are not yet shaped into the newer shell model.
 
 ## 11. GlobalUiChromeState

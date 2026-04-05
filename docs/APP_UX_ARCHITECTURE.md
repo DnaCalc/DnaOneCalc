@@ -23,6 +23,7 @@ It is not:
 Companion synthesis note:
 1. [APP_UX_CONSTRAINED_MOCKUP_SYNTHESIS.md](APP_UX_CONSTRAINED_MOCKUP_SYNTHESIS.md) records what the current Figma exploration contributes after scope filtering.
 2. [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md) records the named panel set that the current shell and mode model should use.
+3. [APP_IMPLEMENTATION_LAYOUT_AND_TDD.md](APP_IMPLEMENTATION_LAYOUT_AND_TDD.md) records the greenfield implementation layout, `Leptos`/`Tauri` host topology, custom widget-toolkit policy, and TDD structure derived from this architecture.
 
 ## 2. Product Reading
 `DnaOneCalc` is one product with three ordered task perspectives:
