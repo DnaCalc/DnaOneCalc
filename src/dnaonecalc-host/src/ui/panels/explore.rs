@@ -1,0 +1,102 @@
+use crate::services::explore_mode::{ExploreDiagnosticView, ExploreViewModel};
+use crate::ui::editor::render_projection::SyntaxRun;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreEditorClusterViewModel {
+    pub raw_entered_cell_text: String,
+    pub syntax_runs: Vec<SyntaxRun>,
+    pub diagnostics: Vec<ExploreDiagnosticView>,
+    pub completion_count: usize,
+    pub has_signature_help: bool,
+    pub function_help_lookup_key: Option<String>,
+    pub green_tree_key: Option<String>,
+    pub reused_green_tree: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreResultClusterViewModel {
+    pub effective_display_summary: Option<String>,
+    pub latest_evaluation_summary: Option<String>,
+}
+
+pub fn build_explore_editor_cluster(
+    view_model: &ExploreViewModel,
+) -> ExploreEditorClusterViewModel {
+    ExploreEditorClusterViewModel {
+        raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
+        syntax_runs: view_model.syntax_runs.clone(),
+        diagnostics: view_model.diagnostics.clone(),
+        completion_count: view_model.completion_count,
+        has_signature_help: view_model.has_signature_help,
+        function_help_lookup_key: view_model.function_help_lookup_key.clone(),
+        green_tree_key: view_model.green_tree_key.clone(),
+        reused_green_tree: view_model.reused_green_tree,
+    }
+}
+
+pub fn build_explore_result_cluster(
+    view_model: &ExploreViewModel,
+) -> ExploreResultClusterViewModel {
+    ExploreResultClusterViewModel {
+        effective_display_summary: view_model.effective_display_summary.clone(),
+        latest_evaluation_summary: view_model.latest_evaluation_summary.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::explore_mode::ExploreViewModel;
+
+    #[test]
+    fn explore_editor_cluster_keeps_editing_surface_fields() {
+        let view_model = ExploreViewModel {
+            raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            syntax_runs: vec![SyntaxRun {
+                text: "SUM".to_string(),
+                span_start: 1,
+                span_len: 3,
+            }],
+            diagnostics: vec![ExploreDiagnosticView {
+                diagnostic_id: "diag-1".to_string(),
+                message: "sample".to_string(),
+                span_start: 1,
+                span_len: 3,
+            }],
+            completion_count: 2,
+            has_signature_help: true,
+            function_help_lookup_key: Some("SUM".to_string()),
+            effective_display_summary: Some("3".to_string()),
+            latest_evaluation_summary: Some("Number".to_string()),
+            green_tree_key: Some("green-1".to_string()),
+            reused_green_tree: true,
+        };
+
+        let cluster = build_explore_editor_cluster(&view_model);
+        assert_eq!(cluster.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(cluster.syntax_runs.len(), 1);
+        assert_eq!(cluster.diagnostics.len(), 1);
+        assert_eq!(cluster.function_help_lookup_key.as_deref(), Some("SUM"));
+        assert!(cluster.reused_green_tree);
+    }
+
+    #[test]
+    fn explore_result_cluster_keeps_result_surface_fields() {
+        let view_model = ExploreViewModel {
+            raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            syntax_runs: vec![],
+            diagnostics: vec![],
+            completion_count: 0,
+            has_signature_help: false,
+            function_help_lookup_key: None,
+            effective_display_summary: Some("3".to_string()),
+            latest_evaluation_summary: Some("Number".to_string()),
+            green_tree_key: None,
+            reused_green_tree: false,
+        };
+
+        let cluster = build_explore_result_cluster(&view_model);
+        assert_eq!(cluster.effective_display_summary.as_deref(), Some("3"));
+        assert_eq!(cluster.latest_evaluation_summary.as_deref(), Some("Number"));
+    }
+}
