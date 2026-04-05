@@ -9,6 +9,6 @@ oxfml-live = ["dep:oxfml_core"]
 
 [dependencies]
 leptos = { version = "0.8.17", default-features = false, features = ["ssr"] }
-web-sys = { version = "0.3", features = ["HtmlTextAreaElement", "InputEvent", "KeyboardEvent"] }
+web-sys = { version = "0.3", features = ["HtmlTextAreaElement", "HtmlElement", "InputEvent", "KeyboardEvent"] }
 wasm-bindgen = "0.2"
 oxfml_core = { path = "../../../OxFml/crates/oxfml_core", optional = true }

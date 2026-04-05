@@ -52,6 +52,14 @@ pub struct EditorOverlayMeasurementEvent {
     pub snapshot: EditorOverlayGeometrySnapshot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextareaMeasurementMetrics {
+    pub char_width_px: usize,
+    pub line_height_px: usize,
+    pub scroll_top_px: usize,
+    pub scroll_left_px: usize,
+}
+
 impl EditorOverlayMeasurement {
     pub fn derived_grid() -> Self {
         Self {
@@ -170,6 +178,53 @@ pub fn derive_overlay_snapshot(
     }
 }
 
+pub fn derive_overlay_snapshot_with_metrics(
+    text: &str,
+    caret_offset: usize,
+    selection_span: FormulaTextSpan,
+    completion_anchor_span: Option<FormulaTextSpan>,
+    signature_help_span: Option<FormulaTextSpan>,
+    metrics: TextareaMeasurementMetrics,
+) -> EditorOverlayGeometrySnapshot {
+    let measurement = EditorOverlayMeasurement {
+        source: EditorOverlayMeasurementSource::DomMeasured,
+        char_width_px: metrics.char_width_px.max(1),
+        line_height_px: metrics.line_height_px.max(1),
+    };
+
+    EditorOverlayGeometrySnapshot {
+        caret_box: Some(measured_box_from_overlay_box(adjust_for_scroll(
+            measurement.offset_box(text, caret_offset),
+            metrics,
+        ))),
+        selection_box: Some(measured_box_from_overlay_box(adjust_for_scroll(
+            measurement.span_box(text, selection_span),
+            metrics,
+        ))),
+        completion_anchor_box: completion_anchor_span.map(|span| {
+            measured_box_from_overlay_box(adjust_for_scroll(
+                measurement.span_box(text, span),
+                metrics,
+            ))
+        }),
+        signature_help_anchor_box: signature_help_span.map(|span| {
+            measured_box_from_overlay_box(adjust_for_scroll(
+                measurement.span_box(text, span),
+                metrics,
+            ))
+        }),
+    }
+}
+
+fn adjust_for_scroll(
+    mut box_geometry: EditorOverlayBox,
+    metrics: TextareaMeasurementMetrics,
+) -> EditorOverlayBox {
+    box_geometry.top_px = box_geometry.top_px.saturating_sub(metrics.scroll_top_px);
+    box_geometry.left_px = box_geometry.left_px.saturating_sub(metrics.scroll_left_px);
+    box_geometry
+}
+
 fn measured_box_from_overlay_box(box_geometry: EditorOverlayBox) -> EditorMeasuredOverlayBox {
     EditorMeasuredOverlayBox {
         top_px: box_geometry.top_px,
@@ -261,5 +316,27 @@ mod tests {
         assert_eq!(snapshot.selection_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(24));
         assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
         assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
+    }
+
+    #[test]
+    fn dom_metric_overlay_snapshot_accounts_for_scroll_and_multiline_offsets() {
+        let snapshot = derive_overlay_snapshot_with_metrics(
+            "=LET(\n  alpha,\n  beta,\n  alpha)",
+            15,
+            FormulaTextSpan { start: 6, len: 7 },
+            Some(FormulaTextSpan { start: 6, len: 5 }),
+            Some(FormulaTextSpan { start: 0, len: 31 }),
+            TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 20,
+                scroll_top_px: 20,
+                scroll_left_px: 9,
+            },
+        );
+
+        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(20));
+        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.left_px), Some(0));
+        assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(0));
+        assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.height_px), Some(80));
     }
 }

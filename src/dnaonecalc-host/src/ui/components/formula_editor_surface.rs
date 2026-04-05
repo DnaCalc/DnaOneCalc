@@ -9,6 +9,8 @@ use crate::ui::editor::geometry::{
     derive_overlay_snapshot, resolve_overlay_box, EditorOverlayGeometrySnapshot,
     EditorOverlayMeasurement, EditorOverlayMeasurementEvent, EditorOverlayMeasurementSource,
 };
+#[cfg(target_arch = "wasm32")]
+use crate::ui::editor::browser_measurement::capture_overlay_measurement_event;
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
@@ -80,14 +82,26 @@ pub fn FormulaEditorSurface(
                         class="onecalc-formula-editor-surface__textarea"
                         data-role="editor-input"
                         prop:value=editor.raw_entered_cell_text.clone()
-                        on:click=move |_| {
+                        on:click=move |ev| {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let _ = &ev;
                             if let Some(callback) = on_overlay_measurement.as_ref() {
-                                callback.run(build_overlay_measurement_event(&editor_for_click_measurement));
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    callback.run(capture_overlay_measurement_event(
+                                        &event_target::<HtmlTextAreaElement>(&ev),
+                                        &editor_for_click_measurement,
+                                    ));
+                                }
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    callback.run(build_overlay_measurement_event(&editor_for_click_measurement));
+                                }
                             }
                         }
                         on:input=move |ev| {
+                            let textarea = event_target::<HtmlTextAreaElement>(&ev);
                             if let Some(callback) = on_input_event.as_ref() {
-                                let textarea = event_target::<HtmlTextAreaElement>(&ev);
                                 let web_input_event = ev.dyn_ref::<WebInputEvent>();
                                 callback.run(EditorInputEvent {
                                     text: event_target_value(&ev),
@@ -108,12 +122,34 @@ pub fn FormulaEditorSurface(
                                 });
                             }
                             if let Some(callback) = on_overlay_measurement.as_ref() {
-                                callback.run(build_overlay_measurement_event(&editor_for_input_measurement));
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    callback.run(capture_overlay_measurement_event(
+                                        &textarea,
+                                        &editor_for_input_measurement,
+                                    ));
+                                }
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    callback.run(build_overlay_measurement_event(&editor_for_input_measurement));
+                                }
                             }
                         }
-                        on:keyup=move |_| {
+                        on:keyup=move |ev| {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let _ = &ev;
                             if let Some(callback) = on_overlay_measurement.as_ref() {
-                                callback.run(build_overlay_measurement_event(&editor_for_keyup_measurement));
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    callback.run(capture_overlay_measurement_event(
+                                        &event_target::<HtmlTextAreaElement>(&ev),
+                                        &editor_for_keyup_measurement,
+                                    ));
+                                }
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    callback.run(build_overlay_measurement_event(&editor_for_keyup_measurement));
+                                }
                             }
                         }
                         on:keydown=move |ev: KeyboardEvent| {
