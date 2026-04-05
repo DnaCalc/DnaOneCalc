@@ -1,6 +1,7 @@
 param(
     [string]$Version = "0.2.117",
-    [switch]$PrintPath
+    [switch]$PrintPath,
+    [switch]$PrintCliPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,9 +34,18 @@ function Get-WasmBindgenRunnerName {
     return "wasm-bindgen-test-runner"
 }
 
+function Get-WasmBindgenCliName {
+    $os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+    if ($os -match "Windows") {
+        return "wasm-bindgen.exe"
+    }
+
+    return "wasm-bindgen"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $targetTriple = Get-WasmBindgenTargetTriple
-$runnerName = Get-WasmBindgenRunnerName
+$toolName = if ($PrintCliPath) { Get-WasmBindgenCliName } else { Get-WasmBindgenRunnerName }
 $toolRoot = Join-Path $repoRoot ".tools\wasm-bindgen\$Version\$targetTriple"
 $archiveName = "wasm-bindgen-$Version-$targetTriple.tar.gz"
 $archivePath = Join-Path $toolRoot $archiveName
@@ -45,10 +55,10 @@ if (-not (Test-Path $toolRoot)) {
     New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
 }
 
-$runnerPath = Get-ChildItem -Path $toolRoot -Recurse -File -Filter $runnerName -ErrorAction SilentlyContinue |
+$toolPath = Get-ChildItem -Path $toolRoot -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
     Select-Object -First 1 -ExpandProperty FullName
 
-if (-not $runnerPath) {
+if (-not $toolPath) {
     if (-not (Test-Path $archivePath)) {
         Write-Host "Downloading $downloadUrl"
         Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
@@ -59,14 +69,14 @@ if (-not $runnerPath) {
         throw "Failed to extract wasm-bindgen archive from $archivePath"
     }
 
-    $runnerPath = Get-ChildItem -Path $toolRoot -Recurse -File -Filter $runnerName -ErrorAction SilentlyContinue |
+    $toolPath = Get-ChildItem -Path $toolRoot -Recurse -File -Filter $toolName -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
 }
 
-if (-not $runnerPath) {
-    throw "Could not locate $runnerName under $toolRoot after extraction"
+if (-not $toolPath) {
+    throw "Could not locate $toolName under $toolRoot after extraction"
 }
 
-if ($PrintPath) {
-    $runnerPath
+if ($PrintPath -or $PrintCliPath) {
+    $toolPath
 }

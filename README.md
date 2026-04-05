@@ -36,6 +36,9 @@ Verification entrypoints:
 - `powershell -File .\scripts\run-host-acceptance-full.ps1` runs the full `dnaonecalc-host` acceptance suite.
 - `powershell -File .\scripts\run-browser-tests.ps1` runs the wasm/browser-host suite using a repo-local `wasm-bindgen-test-runner` bootstrap.
 
+Preview entrypoint:
+- `powershell -File .\scripts\run-onecalc-preview.ps1` builds the current wasm preview, starts a local HTTP server, and opens the interactive browser app.
+
 Cross-repo rule:
 - This repo may read sibling repos under `C:\Work\DnaCalc` for upstream contracts, evidence, and alignment.
 - This repo must not write to sibling repos. Any required change outside `DnaOneCalc` must be routed through a handoff, prompt, or separate repo-scoped run.
