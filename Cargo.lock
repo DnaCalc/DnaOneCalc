@@ -321,6 +321,7 @@ dependencies = [
  "leptos",
  "oxfml_core",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]
