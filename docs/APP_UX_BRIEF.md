@@ -7,6 +7,8 @@ Scope: application UX direction for the desktop-first and web-capable `DnaOneCal
 Companion architecture note:
 1. [APP_UX_ARCHITECTURE.md](APP_UX_ARCHITECTURE.md) carries the shell model, mode model, surface inventory, ownership split, and likely upstream seam pressure implied by this brief.
 2. [APP_UX_SCOPE_FORMALIZATION.md](APP_UX_SCOPE_FORMALIZATION.md) carries the current UX scope breakdown, scope labels, and the rule that mockups do not expand product scope.
+3. [APP_IMPLEMENTATION_LAYOUT_AND_TDD.md](APP_IMPLEMENTATION_LAYOUT_AND_TDD.md) carries the active `Leptos`/`Tauri` implementation topology, custom widget-toolkit policy, and TDD structure that realize this brief.
+4. [APP_UX_FORMULA_EDITOR_SPEC.md](APP_UX_FORMULA_EDITOR_SPEC.md) carries the dedicated scope, compatibility floor, staged feature set, implementation design, and TDD obligations for the custom formula editor.
 
 ## 1. Purpose
 This note defines the intended user experience for `DnaOneCalc` as a serious modern application.
@@ -16,8 +18,8 @@ It is not a terminal or TUI brief.
 It is a brief for:
 1. a Rust-based product,
 2. with a Windows desktop host expected to be first-class,
-3. with a Tauri-hosted desktop expression strongly in scope,
-4. with a web and `wasm` expression already envisioned,
+3. with a chosen `Tauri`-hosted desktop expression,
+4. with a chosen browser and `wasm` expression over the same shared UI core,
 5. and with the final execution location of some logic still open.
 
 The brief should guide:
@@ -40,6 +42,17 @@ The product is:
 3. a serious evidence and comparison tool,
 4. and a downstream pressure surface for the `Ox*` libraries.
 
+Input interpretation rule:
+1. the editor accepts any text that could be entered into an Excel cell,
+2. this includes leading-`=` formulas, direct value entry without `=`, and apostrophe-forced string entry such as `'123.4`,
+3. OneCalc owns the editor surface and presentation,
+4. OxFml owns interpretation of the entered text and the resulting typed or formatted outcome.
+
+Editor-substrate rule:
+1. the OneCalc formula editor is intentionally specialized for OxFml rather than treated as a generic text-editor platform,
+2. so the UX should assume immutable edit packets, green-tree identity, contextual red projections, syntax snapshots, diagnostics, completion, and signature-help truth come from OxFml,
+3. and OneCalc should add interaction, presentation, and workflow value on top of that substrate rather than rebuilding it locally.
+
 The product is not:
 1. a worksheet grid clone,
 2. a terminal application,
@@ -51,8 +64,8 @@ UX should be designed for a family of hosts that share one product identity.
 
 Initial host assumptions:
 1. Windows desktop is first and must feel like a polished application.
-2. Tauri is a valid and likely host shell for the desktop product.
-3. A browser-hosted and `wasm`-capable version should already be considered in layout and interaction choices.
+2. `Tauri` is the chosen desktop shell for the first production host family.
+3. A browser-hosted and `wasm`-capable version is part of the active implementation direction, not just a later design consideration.
 4. The UX must not depend on desktop-only controls, native window chrome tricks, or terminal idioms.
 5. The UX must remain credible if some compute moves between local process, `wasm`, helper service, or remote execution later.
 
@@ -60,7 +73,8 @@ Practical implication:
 1. the visual system should be web-native and responsive,
 2. the interaction model should be keyboard-capable and pointer-capable,
 3. the state model should tolerate latency, loading, offline, and capability gates honestly,
-4. and the product should not look or behave like a tool accidentally trapped inside a shell.
+4. the UI should be implementable in a shared `Leptos` core used by both `Tauri` and browser hosts,
+5. and the product should not look or behave like a tool accidentally trapped inside a shell.
 
 ## 4. Core UX Principles
 The application should follow these principles:
@@ -221,6 +235,13 @@ Rule:
 ## 7. Formula Editing Experience
 Formula editing is a first-class product problem and should receive unusual care.
 
+In this product, “formula editing” is shorthand for editing the entered cell text of one Excel-like calculation cell.
+That means the same editor must support:
+1. leading-`=` formulas,
+2. direct value entry,
+3. apostrophe-forced string entry,
+4. and the resulting Excel-like effective-display behavior under the admitted host policy.
+
 ### 7.1 Editing Goals
 Editing should feel:
 1. easy,
@@ -230,6 +251,7 @@ Editing should feel:
 5. and pleasant under repeated use.
 
 The editor should not feel like a generic textarea with syntax colors added later.
+It also should not assume that every valid entry begins with `=`.
 
 ### 7.2 Core Editing Behaviors
 The desired baseline includes:
@@ -241,6 +263,12 @@ The desired baseline includes:
 6. stable undo and redo,
 7. good paste behavior,
 8. keyboard shortcuts that match ordinary editor expectations where reasonable.
+
+Interpretation rule:
+1. when the entry is a direct value or apostrophe-forced string rather than a leading-`=` formula, the editor should still use the same surface,
+2. but formula-specific assists should activate only when semantically relevant,
+3. effective display should reflect OxFml-driven interpretation plus current formatting context,
+4. and the editing experience should be read as a UX projection over OxFml's immutable syntax-tree and language-service packets rather than as a second local parser or semantic engine.
 
 ### 7.3 Indentation And Structure
 Indented multi-line formulas should be treated as a normal and encouraged workflow.
@@ -316,7 +344,7 @@ Each formula space should retain:
 The explorer is the primary face of the product.
 
 It should emphasize:
-1. formula text,
+1. entered cell text,
 2. result,
 3. effective display,
 4. function discovery,
@@ -324,6 +352,7 @@ It should emphasize:
 6. and keyboard flow.
 
 The explorer should make scalar and array results both feel intentional.
+It should also make non-formula entries feel honest and Excel-like, including direct number entry under `General` formatting and apostrophe-forced string entry.
 
 For arrays:
 1. a bounded preview is correct,

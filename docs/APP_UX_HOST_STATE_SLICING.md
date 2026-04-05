@@ -21,14 +21,15 @@ Relevant archived reference code:
 4. [extension.rs](/C:/Work/DnaCalc/DnaOneCalc/src_archive_ref/dnaonecalc-host/src/extension.rs)
 
 ## 1. Purpose
-This note maps the current UX model onto implementation-facing state slices for the Rust host.
+This note maps the current UX model onto implementation-facing state slices for the shared `DnaOneCalc` application core.
 
 It exists to:
 1. say which panels depend on which state,
 2. separate durable state from derived state,
 3. distinguish workspace-level from formula-space-level state,
 4. distinguish active-authoring state from retained artifact state,
-5. and make the gap between the current single-space shell and the intended multi-space shell explicit.
+5. make the gap between the archived single-space shell and the intended multi-space shell explicit,
+6. and support both `Tauri` desktop and browser/WASM hosts over one shared state model.
 
 It is not:
 1. a final Rust type design,
@@ -125,19 +126,29 @@ This slice should be a map keyed by formula-space ID.
 
 Each `FormulaSpaceState` should own:
 1. authored formula identity,
-2. formula text,
+2. raw entered cell text,
 3. editor state,
-4. edit-session state,
-5. current diagnostics,
-6. completion items,
-7. current help,
-8. latest evaluation summary,
-9. effective display summary,
-10. array preview summary,
-11. scenario policy summary,
-12. inspect selection state,
-13. retained-run references relevant to the space,
-14. compare-entry references relevant to the space.
+4. latest OxFml editor document or equivalent structured edit result,
+5. current `EditorSyntaxSnapshot`,
+6. current green-tree key,
+7. current text-change-range summary,
+8. current reuse summary,
+9. current diagnostics,
+10. completion items,
+11. current help,
+12. latest evaluation summary,
+13. effective display summary,
+14. array preview summary,
+15. scenario policy summary,
+16. inspect selection state,
+17. retained-run references relevant to the space,
+18. compare-entry references relevant to the space.
+
+Interpretation rule:
+1. the stored authored text is the raw cell-entry text for the space,
+2. not a host-reinterpreted leading-`=` formula string,
+3. so direct values and apostrophe-forced strings travel through the same state path,
+4. and syntax tokenization, trivia ownership, diagnostics staging, and red-context projection should be retained from OxFml packets rather than re-derived locally.
 
 This slice should feed:
 1. `formula_editor_panel`
@@ -153,6 +164,10 @@ This slice should feed:
 Current code relation:
 1. `FormulaEditorState`, `FormulaEditorSession`, `FormulaEditPacketSummary`, `FormulaEvaluationSummary`, `CompletionProposalSummary`, and `FunctionHelpSummary` are already real ingredients,
 2. but they currently live as one active bundle in `OneCalcShellApp`.
+
+Forward rule:
+1. the greenfield host should be willing to store OxFml-native editor packet concepts directly,
+2. because OneCalc is intentionally co-evolving with OxFml rather than hiding it behind a generic editor service layer.
 
 ## 7. ActiveFormulaSpaceViewState
 This slice should be transient and per active space.
@@ -339,12 +354,16 @@ Rule:
 The host should distinguish:
 
 ### 13.1 Source State
-1. formula text
+1. raw entered cell text
 2. editor selection
-3. scenario policy choices
-4. retained artifact summaries
-5. capability snapshot summaries
-6. extension runtime truth
+3. current OxFml editor document or equivalent structured edit result
+4. current `EditorSyntaxSnapshot`
+5. current green-tree key
+6. current reuse summary
+7. scenario policy choices
+8. retained artifact summaries
+9. capability snapshot summaries
+10. extension runtime truth
 
 ### 13.2 Derived State
 1. formatted display text
@@ -353,6 +372,7 @@ The host should distinguish:
 4. retained badges
 5. mode availability strings
 6. blocked-dimension summary chips
+7. syntax coloration and token overlay projection if they are rendered from retained syntax snapshots rather than separately persisted
 
 Rule:
 1. source state should be structured,
@@ -389,4 +409,5 @@ This state model is intended to support:
 This note should now feed:
 1. a screen-detail-element map under the existing anchors,
 2. a host-state-to-Rust-type proposal,
-3. and later a narrow implementation plan for restructuring `OneCalcShellApp` without prematurely coding the full UI.
+3. the shared app-core implementation layout in [APP_IMPLEMENTATION_LAYOUT_AND_TDD.md](APP_IMPLEMENTATION_LAYOUT_AND_TDD.md),
+4. and later a narrow implementation plan for replacing the archived shell with the new shared app core without prematurely coding the full UI.

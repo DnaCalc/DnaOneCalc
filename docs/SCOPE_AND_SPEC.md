@@ -56,7 +56,7 @@ The right reading is:
 
 ## 3. Core Thesis
 The core mission of `DNA OneCalc` is:
-1. accept a formula string of arbitrary supported complexity,
+1. accept any Excel cell-entry text of arbitrary supported complexity, including leading-`=` formulas, direct value entry, and apostrophe-forced string entry,
 2. evaluate it through `OxFml` and `OxFunc`,
 3. present the result, help, diagnostics, and effective display state in a serious interactive host,
 4. expose mechanism-facing `Live Formula Semantic X-Ray` surfaces over the same active scenario,
@@ -225,7 +225,7 @@ The ordered product perspectives are:
 3. `Twin Oracle Workbench`.
 
 The explorer perspective should make the following first-class:
-1. formula text,
+1. entered cell text,
 2. host-driving and recalc context,
 3. live diagnostics,
 4. deterministic completion and validated completion application,
@@ -1350,7 +1350,7 @@ The first serious command surface should include:
 13. `Open capability center`
 
 Interaction rules adopted from the design pack:
-1. the formula editor is the default focus target,
+1. the formula editor is the default focus target and accepts any Excel cell-entry text rather than only leading-`=` formulas,
 2. diagnostics, completion, compare filters, library filters, and handoff review must all be keyboard-usable,
 3. the deep inspection area should behave like a durable drawer or tabbed panel rather than a fragile transient popover,
 4. compare and handoff should feel like modes of the same workbench rather than unrelated routes.
@@ -1873,7 +1873,7 @@ What must remain explicit:
 ## 16. Success Criteria
 The first serious `DNA OneCalc` scope should be considered real only when:
 1. the repo-derived control surfaces required by this spec are published coherently,
-2. a formula string can be entered and evaluated through `OxFml` and `OxFunc` against an explicitly pinned admitted function surface,
+2. Excel cell-entry text can be entered and interpreted through `OxFml` and `OxFunc` against an explicitly pinned admitted function surface,
 3. the formula/function explorer is usable, keyboard-first, and stable under ordinary resize and navigation behavior,
 4. OxFml-derived diagnostics are visible and trustworthy in the editor,
 5. deterministic completion and currently available function or argument help are integrated into the editor flow,

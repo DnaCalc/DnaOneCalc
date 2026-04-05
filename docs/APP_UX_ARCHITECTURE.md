@@ -24,6 +24,7 @@ Companion synthesis note:
 1. [APP_UX_CONSTRAINED_MOCKUP_SYNTHESIS.md](APP_UX_CONSTRAINED_MOCKUP_SYNTHESIS.md) records what the current Figma exploration contributes after scope filtering.
 2. [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md) records the named panel set that the current shell and mode model should use.
 3. [APP_IMPLEMENTATION_LAYOUT_AND_TDD.md](APP_IMPLEMENTATION_LAYOUT_AND_TDD.md) records the greenfield implementation layout, `Leptos`/`Tauri` host topology, custom widget-toolkit policy, and TDD structure derived from this architecture.
+4. [APP_UX_FORMULA_EDITOR_SPEC.md](APP_UX_FORMULA_EDITOR_SPEC.md) records the dedicated custom-editor scope, Excel-compatibility floor, overlay architecture, and staged feature ladder used by `Explore` and later DNA Calc hosts.
 
 ## 2. Product Reading
 `DnaOneCalc` is one product with three ordered task perspectives:
@@ -54,6 +55,15 @@ The UX should distinguish these object types explicitly:
 Rule:
 1. object types must not be blurred into one generic panel language,
 2. the shell should make it clear whether the user is editing a scenario, inspecting a run, or reviewing retained evidence.
+
+Entry-text rule:
+1. a `FormulaSpace` is still the right product term,
+2. but its primary authored text is Excel cell-entry text, not necessarily a leading-`=` formula string,
+3. interpretation of that text remains upstream semantic truth rather than host-local parsing policy.
+
+Syntax-substrate rule:
+1. the formula-space editing surface is intentionally coupled to OxFml's immutable syntax and language-service substrate,
+2. so OneCalc should project OxFml green-tree, red-projection, and editor-snapshot truth rather than owning a second syntax model.
 
 ## 4. Shell Model
 The preferred shell model is:
@@ -232,6 +242,10 @@ The current target surface inventory is:
 22. handoff panel,
 23. extension state.
 
+Interpretation rule:
+1. the formula editor surface must also support direct value entry and apostrophe-forced string entry,
+2. while continuing to project formula-specific help and diagnostics only when the current entry meaning admits them.
+
 ## 9. Scenario Policy Inventory
 The scenario policy area should be explicitly modeled rather than treated as a miscellaneous menu.
 
@@ -265,6 +279,10 @@ Rule:
 1. future richer function guidance should deepen the main product surfaces,
 2. it should not force OneCalc into a separate function-browser product.
 
+Editor-language-service rule:
+1. function interaction should be driven through the same OxFml editor packet flow used for completions and signature help,
+2. not through a disconnected local sidebar data model.
+
 ## 11. Upstream Seam Pressure
 The current UX direction suggests likely upstream library pressure.
 
@@ -275,6 +293,12 @@ The inspect direction likely wants:
 3. partial evaluation projections where admitted,
 4. explicit blocked or opaque reasons,
 5. richer bind and provenance packet detail suitable for durable UI correlation.
+
+The explore and inspect directions also now assume:
+1. immutable green-tree identity and green-tree-key continuity across edits,
+2. contextual red projections suitable for cursor and selection correlation,
+3. editor-grade syntax snapshots with owned trivia for rendering and span overlays,
+4. incremental reuse evidence that can support both responsiveness and later operational truth surfaces.
 
 ### 11.2 OxFunc
 The richer function interaction direction likely wants:

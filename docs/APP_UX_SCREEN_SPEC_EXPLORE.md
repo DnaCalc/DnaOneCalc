@@ -39,6 +39,11 @@ Its job is:
 4. inspect result and effective display,
 5. and preserve scenario meaning clearly.
 
+Input rule:
+1. the primary entry surface accepts any Excel cell-entry text,
+2. including leading-`=` formulas, direct value entry, and apostrophe-forced string entry,
+3. while preserving one coherent editing experience.
+
 It must feel like:
 1. a serious formula editor,
 2. a result-reading surface,
@@ -140,6 +145,11 @@ It must not become:
 4. active completion choice
 5. scenario policy for the current formula space
 6. formatting or conditional-formatting settings only if those surfaces are admitted
+
+Interpretation rule:
+1. “formula text” here means the raw entered cell text for the active formula space,
+2. typed meaning and effective-display outcomes remain OxFml-derived,
+3. syntax coloration, diagnostics, completion, and signature-help surfaces should be projected from OxFml editor packets rather than reconstructed from host-local parser state.
 
 ### 6.2 User Cannot Change Here
 1. result values directly

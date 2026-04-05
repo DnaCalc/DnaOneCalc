@@ -10,8 +10,9 @@ Authority chain:
 3. [APP_UX_ARCHITECTURE.md](APP_UX_ARCHITECTURE.md) owns shell, mode, surface, and ownership structure.
 4. [APP_UX_SCOPE_FORMALIZATION.md](APP_UX_SCOPE_FORMALIZATION.md) owns current UX scope boundaries.
 5. [APP_UX_MODE_VISIBILITY_MAP.md](APP_UX_MODE_VISIBILITY_MAP.md), [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md), [APP_UX_USE_CASES.md](APP_UX_USE_CASES.md), [APP_UX_USE_CASE_CROSSWALK.md](APP_UX_USE_CASE_CROSSWALK.md), and the mode screen specs own mode-specific UX behavior and traceability.
-6. [APP_UX_HOST_STATE_SLICING.md](APP_UX_HOST_STATE_SLICING.md) owns the implementation-facing host state slices that this layout must respect.
-7. This note owns implementation layout, production UI toolkit policy, and TDD structure only.
+6. [APP_UX_FORMULA_EDITOR_SPEC.md](APP_UX_FORMULA_EDITOR_SPEC.md) owns the specialized custom formula-editor scope, compatibility floor, overlay design, and editor TDD obligations.
+7. [APP_UX_HOST_STATE_SLICING.md](APP_UX_HOST_STATE_SLICING.md) owns the implementation-facing host state slices that this layout must respect.
+8. This note owns implementation layout, production UI toolkit policy, and TDD structure only.
 
 ## 1. Purpose
 This note defines how the greenfield `DnaOneCalc` implementation should be organized so that:
@@ -46,6 +47,11 @@ Implementation posture:
 3. do not split into many small crates yet,
 4. and do not preserve the archived file structure as the new internal shape.
 
+Decision rule:
+1. if a concern belongs to both desktop and browser, it belongs in the shared app crate,
+2. if a concern belongs only to shell wiring, packaging, or platform boot, it belongs in a host wrapper,
+3. if a concern is product behavior, it must not be implemented first in a host wrapper.
+
 ## 3. Active Implementation Root
 The active implementation root is:
 1. `src/dnaonecalc-host`
@@ -65,6 +71,10 @@ The production UI stack is:
 2. custom OneCalc design-system primitives and application widgets,
 3. CSS custom properties for theme, spacing, state, and semantic color tokens,
 4. OneCalc-owned widget vocabulary for the visible product shell.
+
+Platform shortcut rule:
+1. Windows desktop is the strict-first target for Excel-style editing shortcuts and formula-entry interaction,
+2. browser/WASM is best-effort for shortcut parity and should prefer equivalent outcomes over exact keybinding duplication where the platform prevents it.
 
 The production toolkit is not:
 1. a library-first widget stack,
@@ -124,7 +134,18 @@ Implementation rules:
 1. the editor lives inside the shared `Leptos` UI core,
 2. editor logic must be isolated behind its own module boundary,
 3. editor behavior must integrate with OxFml edit packets rather than inventing a local second language-service truth,
-4. the custom editor path is allowed only with a heavier test burden than the rest of the UI.
+4. the custom editor path is allowed only with a heavier test burden than the rest of the UI,
+5. the concrete editor architecture should follow [APP_UX_FORMULA_EDITOR_SPEC.md](APP_UX_FORMULA_EDITOR_SPEC.md).
+
+Coupling rule:
+1. the production editor should be intentionally coupled to OxFml's immutable syntax and language-service packet model,
+2. including `FormulaEditRequest`, `FormulaEditResult`, `EditorSyntaxSnapshot`, live diagnostics, completion packets, signature-help context, green-tree keys, and reuse summaries,
+3. because OneCalc is the UX complement to OxFml rather than a generic editor platform.
+
+Input interpretation rule:
+1. the editor accepts any Excel cell-entry text, not only leading-`=` formulas,
+2. this includes direct value entry and apostrophe-forced string entry,
+3. interpretation of that entry text and its effective-display behavior remains upstream semantic responsibility rather than host-local logic.
 
 The editor substructure should be explicit:
 1. text buffer model
@@ -135,6 +156,13 @@ The editor substructure should be explicit:
 6. keyboard command map
 7. long-formula navigation and resize behavior
 8. OxFml edit-packet integration seam
+9. native-input-backed fallback path
+10. overlay and decoration planes
+
+Simplification rule:
+1. do not insert a broad generic parser or language-service abstraction between the active editor and OxFml,
+2. keep abstraction only where needed for test doubles, host isolation, and seam evolution,
+3. and let the production implementation name OxFml packet concepts directly where that removes duplication.
 
 ## 6. Target Code Layout
 The target structure under `src/dnaonecalc-host/src` should be:
@@ -209,6 +237,7 @@ Service families should include:
 5. capability service
 6. extension service
 7. scenario lifecycle service
+8. editor session service
 
 Rule:
 1. services may depend on `domain`, `state`, and adapter traits,
@@ -231,6 +260,11 @@ Rules:
 2. adapters should expose app-facing traits and result shapes,
 3. adapter seams must stay narrow and testable.
 
+For the formula editor specifically:
+1. the adapter seam should preserve OxFml packet structure closely enough that green-tree keys, syntax snapshots, text-change ranges, and reuse summaries are not lost,
+2. the adapter must not downgrade OxFml editor packets into free-text summaries too early,
+3. and test doubles should mimic OxFml packet behavior rather than a generic parse service.
+
 ### 6.6 ui
 The shared `Leptos` UI core should contain:
 1. `design_tokens/`
@@ -245,6 +279,16 @@ Interpretation:
 2. `panels/` owns the panel-level view projections aligned to [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md),
 3. `modes/` owns `Explore`, `Inspect`, and `Workbench` visible compositions,
 4. `layout/` owns shell composition such as left rail, context bar, drawer structure, and footer.
+
+The initial `ui/editor/` layout should be prepared for:
+1. `buffer/`
+2. `commands/`
+3. `selection/`
+4. `history/`
+5. `render_projection/`
+6. `overlays/`
+7. `oxfml_bridge/`
+8. `fallback/`
 
 Rules:
 1. `ui/` depends on `services`, `state`, and view models,
@@ -294,7 +338,54 @@ Responsibilities:
 5. UI event helpers
 6. assertion helpers for recurring app patterns
 
-## 7. Thin Host Wrappers
+## 7. Shared Interaction And Async Model
+The shared application core should use a typed command-and-query interaction model.
+
+The intended shape is:
+1. UI surfaces emit typed intents and commands,
+2. services interpret those commands,
+3. adapters execute upstream or platform work where needed,
+4. state slices are updated from structured results rather than panel-local ad hoc mutation,
+5. long-running operations are represented explicitly as operation state rather than hidden spinners.
+
+The command model should cover, at minimum:
+1. formula edit and re-evaluate
+2. completion request and completion application
+3. function-help request
+4. mode switch
+5. scenario-policy update
+6. open or close right-drawer detail
+7. retain run
+8. open retained artifact
+9. replay
+10. compare
+11. export capsule
+12. generate handoff packet
+
+Editor command rule:
+1. formula-edit commands should carry the raw entered cell text plus the current editing context needed to drive OxFml incremental edit packets,
+2. and edit results should return structured editor-document state rather than panel-specific fragments.
+
+The query model should cover, at minimum:
+1. active formula-space view state
+2. panel view models
+3. capability and gate summaries
+4. retained artifact summaries
+5. mode availability
+6. operation status
+
+Operation-state rules:
+1. every long-running action should carry an operation identity and explicit status,
+2. statuses should at least distinguish `ready`, `running`, `succeeded`, `failed`, `blocked`, and `lossy`,
+3. operation state should live in structured app state, not only in ephemeral UI controls,
+4. platform and capability blocking should resolve to typed blocked outcomes, not free-text errors.
+
+State-of-the-art rule:
+1. significant user operations should be modeled as replayable app intents over structured state,
+2. even when the resulting UI trace is not yet exported as a formal replay artifact,
+3. because this improves desktop/browser parity, TDD coverage, and future observability.
+
+## 8. Thin Host Wrappers
 The active implementation should reserve thin host-wrapper areas for:
 1. `tauri_host/` or equivalent desktop shell wiring
 2. `web_host/` or equivalent browser/WASM shell wiring
@@ -304,7 +395,7 @@ Rules:
 2. host wrappers must not become a second app core,
 3. shared app and UI logic stays in the main active implementation root.
 
-## 8. Layering Rules
+## 9. Layering Rules
 The following dependency rules are frozen:
 1. `domain/` is pure and deterministic.
 2. `services/` depends on `domain/`, `state/`, and adapter traits.
@@ -316,7 +407,7 @@ The following dependency rules are frozen:
 8. Windows-only Excel-observed compare must remain isolated behind `platform/` plus `adapters/oxxlplay`.
 9. richer future function guidance must enter through `adapters/oxfunc` plus app services, not through local panel-only data models.
 
-## 9. Test Layout
+## 10. Test Layout
 The test layers should be:
 1. inline unit tests for pure `domain`, `state`, and low-level editor models
 2. integration tests under the app crate for service and adapter behavior
@@ -325,7 +416,7 @@ The test layers should be:
 5. end-to-end smoke tests for the `Tauri` desktop host
 6. contract tests for Ox* adapter seams using pinned fixtures and fakes
 
-## 10. Test Directory Structure
+## 11. Test Directory Structure
 The target test structure should define:
 1. `tests/domain/`
 2. `tests/explore/`
@@ -346,7 +437,7 @@ Interpretation:
 2. editor tests should be isolated because the editor is a custom subsystem,
 3. end-to-end host tests should stay thin and focus on host wiring, gating, and smoke coverage rather than replacing service and integration tests.
 
-## 11. TDD Workflow
+## 12. TDD Workflow
 The active development posture is red/green TDD.
 
 Working rules:
@@ -357,7 +448,7 @@ Working rules:
 5. every capability-gated surface must have an explicit honesty test,
 6. every mode must have acceptance tests for default composition, primary interaction path, blocked or gated state, and transition to another mode.
 
-## 12. Editor-Specific TDD Burden
+## 13. Editor-Specific TDD Burden
 Because the formula editor is custom, it carries the highest TDD burden in the UI stack.
 
 The editor must have dedicated red/green slices for:
@@ -371,12 +462,18 @@ The editor must have dedicated red/green slices for:
 8. keyboard-first navigation
 9. paste behavior
 10. result visibility while editing
+11. OxFml green-tree-key continuity and reuse-summary handling across ordinary edits
+12. `EditorSyntaxSnapshot`-driven overlay projection
 
 Rule:
 1. editor behavior should be proven at buffer-model level, interaction-model level, and scenario-acceptance level,
 2. not only through later end-to-end smoke coverage.
 
-## 13. Acceptance Traceability
+Integration-test rule:
+1. the editor test tree should exercise real or pinned OxFml packet shapes wherever practical,
+2. because the main implementation risk is the host/editor fit to OxFml's immutable syntax model rather than a generic UI-only concern.
+
+## 14. Acceptance Traceability
 Every implementation area should trace back to:
 1. `EX-*`, `IN-*`, and `WB-*` use cases from [APP_UX_USE_CASES.md](APP_UX_USE_CASES.md),
 2. panel ids from [APP_UX_PANEL_INVENTORY.md](APP_UX_PANEL_INVENTORY.md),
@@ -389,7 +486,7 @@ Interpretation:
 3. screen anchors are the layout and visibility anchors,
 4. the active test tree should be organized so these three references are easy to map.
 
-## 14. Immediate Build Order
+## 15. Immediate Build Order
 The first implementation slices should be laid down in this order:
 1. domain artifact spine and host-state slices
 2. adapter traits and fake adapters
@@ -405,4 +502,3 @@ The first implementation slices should be laid down in this order:
 Reason:
 1. this order supports early red/green progress without locking the UI around unfinished adapters or replay/compare lanes,
 2. while still respecting the product order from the scope and UX docs.
-
