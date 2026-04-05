@@ -38,9 +38,15 @@ pub fn apply_live_editor_command(
 ) -> Result<bool, LiveEditError> {
     let formula_space_id =
         active_formula_space_id(state).ok_or(LiveEditError::NoActiveFormulaSpace)?;
-    let changed = apply_editor_command_to_active_formula_space(state, command);
+    let changed = apply_editor_command_to_active_formula_space(state, command.clone());
     if !changed {
         return Ok(false);
+    }
+    if matches!(
+        command,
+        EditorCommand::SelectPreviousCompletion | EditorCommand::SelectNextCompletion
+    ) {
+        return Ok(true);
     }
     refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id)?;
     Ok(true)
@@ -90,7 +96,7 @@ fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEdit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::oxfml::{FormulaEditRequest, FormulaEditResult};
+    use crate::adapters::oxfml::{FormulaEditRequest, FormulaEditResult, PreviewOxfmlBridge};
     use crate::state::FormulaSpaceState;
     use crate::test_support::sample_editor_document;
     use crate::ui::editor::commands::EditorInputKind;
@@ -164,5 +170,56 @@ mod tests {
         let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
         assert_eq!(active.raw_entered_cell_text, "=UM(1,2)");
         assert!(active.editor_document.is_some());
+    }
+
+    #[test]
+    fn live_completion_navigation_stays_local_without_bridge_refresh() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.editor_surface_state.completion_selected_index = Some(0);
+        state.formula_spaces.insert(formula_space);
+
+        let bridge = FakeBridge {
+            document: sample_editor_document("=SUM(1,2)"),
+        };
+
+        let changed =
+            apply_live_editor_command(&bridge, &mut state, EditorCommand::SelectNextCompletion)
+                .expect("completion navigation should stay local");
+
+        assert!(changed);
+        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(active.editor_surface_state.completion_selected_index, Some(0));
+    }
+
+    #[test]
+    fn live_caret_movement_refreshes_signature_help_argument_index() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        formula_space.editor_surface_state.caret.offset = 6;
+        formula_space.editor_surface_state.selection =
+            crate::ui::editor::state::EditorSelection::collapsed(6);
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        state.formula_spaces.insert(formula_space);
+
+        let changed =
+            apply_live_editor_command(&PreviewOxfmlBridge, &mut state, EditorCommand::MoveCaretRight)
+                .expect("caret move should refresh live signature help");
+
+        assert!(changed);
+        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(
+            active
+                .editor_document
+                .as_ref()
+                .and_then(|document| document.signature_help.as_ref())
+                .map(|help| help.active_argument_index),
+            Some(1)
+        );
     }
 }

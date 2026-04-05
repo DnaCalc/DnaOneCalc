@@ -1,6 +1,6 @@
 use crate::adapters::oxfml::{
     BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaWalkNode,
+    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode,
     FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnostic, LiveDiagnosticSnapshot,
     ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
@@ -44,6 +44,7 @@ pub fn sample_editor_document(source_text: &str) -> EditorDocument {
             proposal_id: "proposal-1".to_string(),
             display_text: "SUM".to_string(),
             insert_text: "SUM(".to_string(),
+            replacement_span: Some(FormulaTextSpan { start: 1, len: 3 }),
         }],
         formula_walk: vec![FormulaWalkNode {
             node_id: "node-1".to_string(),

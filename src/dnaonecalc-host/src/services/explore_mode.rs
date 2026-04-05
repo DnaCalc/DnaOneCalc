@@ -210,6 +210,7 @@ mod tests {
                 proposal_id: "proposal-1".to_string(),
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
+                replacement_span: None,
             }],
             formula_walk: vec![],
             parse_summary: None,

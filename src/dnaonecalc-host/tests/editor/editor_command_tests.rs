@@ -19,6 +19,7 @@ fn ex_12_indent_command_inserts_spaces_for_multiline_selection() {
             visible_line_count: 6,
         },
         completion_anchor_offset: None,
+        completion_selected_index: None,
         signature_help_anchor_offset: None,
     };
 
@@ -42,6 +43,7 @@ fn ex_13_outdent_command_removes_spaces_for_multiline_selection() {
             visible_line_count: 6,
         },
         completion_anchor_offset: None,
+        completion_selected_index: None,
         signature_help_anchor_offset: None,
     };
 
@@ -77,6 +79,7 @@ fn ex_17_shift_arrow_commands_expand_and_contract_selection() {
             visible_line_count: 6,
         },
         completion_anchor_offset: None,
+        completion_selected_index: None,
         signature_help_anchor_offset: None,
     };
 
@@ -102,6 +105,7 @@ fn ex_21_insert_text_replaces_non_collapsed_selection() {
             visible_line_count: 6,
         },
         completion_anchor_offset: Some(4),
+        completion_selected_index: Some(0),
         signature_help_anchor_offset: Some(4),
     };
 
@@ -122,6 +126,7 @@ fn ex_22_backspace_and_delete_respect_selection_and_caret() {
             visible_line_count: 6,
         },
         completion_anchor_offset: None,
+        completion_selected_index: None,
         signature_help_anchor_offset: None,
     };
 
@@ -137,6 +142,7 @@ fn ex_22_backspace_and_delete_respect_selection_and_caret() {
             visible_line_count: 6,
         },
         completion_anchor_offset: None,
+        completion_selected_index: None,
         signature_help_anchor_offset: None,
     };
 

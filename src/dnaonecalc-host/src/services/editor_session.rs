@@ -59,6 +59,8 @@ fn update_formula_space_from_editor_document(
     editor_surface_state.scroll_window = formula_space.editor_surface_state.scroll_window.clone();
     editor_surface_state.completion_anchor_offset =
         (!document.completion_proposals.is_empty()).then_some(editor_surface_state.caret.offset);
+    editor_surface_state.completion_selected_index =
+        (!document.completion_proposals.is_empty()).then_some(0);
     editor_surface_state.signature_help_anchor_offset =
         document.signature_help.as_ref().map(|_| editor_surface_state.caret.offset);
 
@@ -110,6 +112,7 @@ mod tests {
                 proposal_id: "proposal-1".to_string(),
                 display_text: "SUM".to_string(),
                 insert_text: "SUM(".to_string(),
+                replacement_span: None,
             }],
             formula_walk: vec![],
             parse_summary: None,
@@ -140,6 +143,7 @@ mod tests {
         assert_eq!(updated.completion_help.completion_count, 1);
         assert!(updated.completion_help.has_signature_help);
         assert_eq!(updated.editor_surface_state.completion_anchor_offset, Some(4));
+        assert_eq!(updated.editor_surface_state.completion_selected_index, Some(0));
         assert_eq!(updated.editor_surface_state.signature_help_anchor_offset, Some(4));
         assert_eq!(
             updated

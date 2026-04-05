@@ -1,6 +1,6 @@
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::ui::editor::commands::{
-    apply_editor_command, EditorCommand, EditorInputEvent,
+    apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -36,6 +36,10 @@ pub fn apply_editor_command_to_active_formula_space(
         return false;
     };
 
+    if apply_completion_command(formula_space, &command) {
+        return true;
+    }
+
     let result = apply_editor_command(
         &formula_space.raw_entered_cell_text,
         &formula_space.editor_surface_state,
@@ -65,6 +69,84 @@ fn apply_local_editor_text_change(
     formula_space.completion_help = CompletionHelpState::default();
     formula_space.latest_evaluation_summary = None;
     formula_space.effective_display_summary = None;
+}
+
+fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &EditorCommand) -> bool {
+    match command {
+        EditorCommand::SelectPreviousCompletion => {
+            let proposal_count = formula_space
+                .editor_document
+                .as_ref()
+                .map(|document| document.completion_proposals.len())
+                .unwrap_or(0);
+            if proposal_count == 0 {
+                return false;
+            }
+            formula_space.editor_surface_state.completion_selected_index = cycle_completion_selection(
+                formula_space.editor_surface_state.completion_selected_index,
+                proposal_count,
+                -1,
+            );
+            true
+        }
+        EditorCommand::SelectNextCompletion => {
+            let proposal_count = formula_space
+                .editor_document
+                .as_ref()
+                .map(|document| document.completion_proposals.len())
+                .unwrap_or(0);
+            if proposal_count == 0 {
+                return false;
+            }
+            formula_space.editor_surface_state.completion_selected_index = cycle_completion_selection(
+                formula_space.editor_surface_state.completion_selected_index,
+                proposal_count,
+                1,
+            );
+            true
+        }
+        EditorCommand::AcceptSelectedCompletion => {
+            let Some(document) = formula_space.editor_document.as_ref() else {
+                return false;
+            };
+            let proposal_count = document.completion_proposals.len();
+            if proposal_count == 0 {
+                return false;
+            }
+            let selected_index = formula_space
+                .editor_surface_state
+                .completion_selected_index
+                .unwrap_or(0)
+                .min(proposal_count.saturating_sub(1));
+            let proposal = &document.completion_proposals[selected_index];
+            let (selection_start, selection_end) = proposal
+                .replacement_span
+                .map(|span| (span.start, span.start + span.len))
+                .unwrap_or((
+                    formula_space.editor_surface_state.selection.start(),
+                    formula_space.editor_surface_state.selection.end(),
+                ));
+            let replacement_state = EditorSurfaceState {
+                selection: crate::ui::editor::state::EditorSelection {
+                    anchor: selection_start,
+                    focus: selection_end,
+                },
+                caret: crate::ui::editor::state::EditorCaret { offset: selection_end },
+                scroll_window: formula_space.editor_surface_state.scroll_window.clone(),
+                completion_anchor_offset: formula_space.editor_surface_state.completion_anchor_offset,
+                completion_selected_index: formula_space.editor_surface_state.completion_selected_index,
+                signature_help_anchor_offset: formula_space.editor_surface_state.signature_help_anchor_offset,
+            };
+            let result = apply_editor_command(
+                &formula_space.raw_entered_cell_text,
+                &replacement_state,
+                EditorCommand::InsertText(proposal.insert_text.clone()),
+            );
+            apply_local_editor_text_change(formula_space, result.text, result.state);
+            true
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

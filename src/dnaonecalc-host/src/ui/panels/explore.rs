@@ -12,6 +12,7 @@ pub struct ExploreEditorClusterViewModel {
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
     pub completion_items: Vec<ExploreCompletionItemView>,
+    pub selected_completion_proposal_id: Option<String>,
     pub has_signature_help: bool,
     pub signature_help: Option<ExploreSignatureHelpView>,
     pub function_help_lookup_key: Option<String>,
@@ -35,6 +36,11 @@ pub fn build_explore_editor_cluster(
         diagnostics: view_model.diagnostics.clone(),
         completion_count: view_model.completion_count,
         completion_items: view_model.completion_items.clone(),
+        selected_completion_proposal_id: view_model
+            .editor_surface_state
+            .completion_selected_index
+            .and_then(|index| view_model.completion_items.get(index))
+            .map(|item| item.proposal_id.clone()),
         has_signature_help: view_model.has_signature_help,
         signature_help: view_model.signature_help.clone(),
         function_help_lookup_key: view_model.function_help_lookup_key.clone(),
@@ -62,7 +68,10 @@ mod tests {
     fn explore_editor_cluster_keeps_editing_surface_fields() {
         let view_model = ExploreViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
-            editor_surface_state: EditorSurfaceState::for_text("=SUM(1,2)"),
+            editor_surface_state: EditorSurfaceState {
+                completion_selected_index: Some(0),
+                ..EditorSurfaceState::for_text("=SUM(1,2)")
+            },
             syntax_runs: vec![SyntaxRun {
                 text: "SUM".to_string(),
                 span_start: 1,
@@ -99,6 +108,7 @@ mod tests {
         assert_eq!(cluster.syntax_runs.len(), 1);
         assert_eq!(cluster.diagnostics.len(), 1);
         assert_eq!(cluster.completion_items.len(), 1);
+        assert_eq!(cluster.selected_completion_proposal_id.as_deref(), Some("proposal-1"));
         assert_eq!(
             cluster.signature_help.as_ref().map(|help| help.active_argument_index),
             Some(1)

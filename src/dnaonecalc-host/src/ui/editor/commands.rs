@@ -7,6 +7,9 @@ pub enum EditorCommand {
     MoveCaretRight,
     ExtendSelectionLeft,
     ExtendSelectionRight,
+    SelectPreviousCompletion,
+    SelectNextCompletion,
+    AcceptSelectedCompletion,
     Backspace,
     Delete,
     IndentWithSpaces,
@@ -44,29 +47,18 @@ pub fn apply_editor_command(
 ) -> EditorCommandResult {
     match command {
         EditorCommand::InsertText(inserted_text) => insert_text(text, state, &inserted_text),
-        EditorCommand::MoveCaretLeft => EditorCommandResult {
-            text: text.to_string(),
-            state: EditorSurfaceState {
-                caret: EditorCaret {
-                    offset: state.caret.offset.saturating_sub(1),
-                },
-                selection: EditorSelection::collapsed(state.caret.offset.saturating_sub(1)),
-                scroll_window: state.scroll_window.clone(),
-                completion_anchor_offset: None,
-                signature_help_anchor_offset: None,
-            },
-        },
+        EditorCommand::MoveCaretLeft => {
+            let next = state.caret.offset.saturating_sub(1);
+            EditorCommandResult {
+                text: text.to_string(),
+                state: state_with_selection(state, next, next),
+            }
+        }
         EditorCommand::MoveCaretRight => {
             let next = (state.caret.offset + 1).min(text.chars().count());
             EditorCommandResult {
                 text: text.to_string(),
-                state: EditorSurfaceState {
-                    caret: EditorCaret { offset: next },
-                    selection: EditorSelection::collapsed(next),
-                    scroll_window: state.scroll_window.clone(),
-                    completion_anchor_offset: None,
-                    signature_help_anchor_offset: None,
-                },
+                state: state_with_selection(state, next, next),
             }
         }
         EditorCommand::ExtendSelectionLeft => {
@@ -81,6 +73,7 @@ pub fn apply_editor_command(
                     },
                     scroll_window: state.scroll_window.clone(),
                     completion_anchor_offset: None,
+                    completion_selected_index: None,
                     signature_help_anchor_offset: None,
                 },
             }
@@ -97,10 +90,17 @@ pub fn apply_editor_command(
                     },
                     scroll_window: state.scroll_window.clone(),
                     completion_anchor_offset: None,
+                    completion_selected_index: None,
                     signature_help_anchor_offset: None,
                 },
             }
         }
+        EditorCommand::SelectPreviousCompletion
+        | EditorCommand::SelectNextCompletion
+        | EditorCommand::AcceptSelectedCompletion => EditorCommandResult {
+            text: text.to_string(),
+            state: state.clone(),
+        },
         EditorCommand::Backspace => backspace(text, state),
         EditorCommand::Delete => delete(text, state),
         EditorCommand::IndentWithSpaces => indent_with_spaces(text, state),
@@ -110,6 +110,9 @@ pub fn apply_editor_command(
 
 pub fn keydown_to_command(key: &str, shift_key: bool) -> Option<EditorCommand> {
     match (key, shift_key) {
+        ("ArrowUp", false) => Some(EditorCommand::SelectPreviousCompletion),
+        ("ArrowDown", false) => Some(EditorCommand::SelectNextCompletion),
+        ("Enter", false) => Some(EditorCommand::AcceptSelectedCompletion),
         ("ArrowLeft", false) => Some(EditorCommand::MoveCaretLeft),
         ("ArrowRight", false) => Some(EditorCommand::MoveCaretRight),
         ("ArrowLeft", true) => Some(EditorCommand::ExtendSelectionLeft),
@@ -132,6 +135,20 @@ pub fn classify_dom_input(input_type: &str) -> EditorInputKind {
     }
 }
 
+pub fn cycle_completion_selection(
+    current: Option<usize>,
+    proposal_count: usize,
+    delta: isize,
+) -> Option<usize> {
+    if proposal_count == 0 {
+        return None;
+    }
+
+    let current = current.unwrap_or(0) as isize;
+    let proposal_count = proposal_count as isize;
+    Some((current + delta).rem_euclid(proposal_count) as usize)
+}
+
 fn insert_text(text: &str, state: &EditorSurfaceState, inserted_text: &str) -> EditorCommandResult {
     let selection_start = state.selection.start();
     let selection_end = state.selection.end();
@@ -146,13 +163,7 @@ fn insert_text(text: &str, state: &EditorSurfaceState, inserted_text: &str) -> E
     let next_offset = selection_start + inserted_text.chars().count();
     EditorCommandResult {
         text: result,
-        state: EditorSurfaceState {
-            caret: EditorCaret { offset: next_offset },
-            selection: EditorSelection::collapsed(next_offset),
-            scroll_window: state.scroll_window.clone(),
-            completion_anchor_offset: None,
-            signature_help_anchor_offset: None,
-        },
+        state: state_with_selection(state, next_offset, next_offset),
     }
 }
 
@@ -175,13 +186,7 @@ fn backspace(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
     result.replace_range(start_idx..end_idx, "");
     EditorCommandResult {
         text: result,
-        state: EditorSurfaceState {
-            caret: EditorCaret { offset: start },
-            selection: EditorSelection::collapsed(start),
-            scroll_window: state.scroll_window.clone(),
-            completion_anchor_offset: None,
-            signature_help_anchor_offset: None,
-        },
+        state: state_with_selection(state, start, start),
     }
 }
 
@@ -203,13 +208,7 @@ fn delete(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
     result.replace_range(start_idx..end_idx, "");
     EditorCommandResult {
         text: result,
-        state: EditorSurfaceState {
-            caret: state.caret.clone(),
-            selection: EditorSelection::collapsed(state.caret.offset),
-            scroll_window: state.scroll_window.clone(),
-            completion_anchor_offset: None,
-            signature_help_anchor_offset: None,
-        },
+        state: state_with_selection(state, state.caret.offset, state.caret.offset),
     }
 }
 
@@ -246,6 +245,7 @@ fn indent_with_spaces(text: &str, state: &EditorSurfaceState) -> EditorCommandRe
             },
             scroll_window: state.scroll_window.clone(),
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         },
     }
@@ -290,8 +290,20 @@ fn outdent_with_spaces(text: &str, state: &EditorSurfaceState) -> EditorCommandR
             },
             scroll_window: state.scroll_window.clone(),
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         },
+    }
+}
+
+fn state_with_selection(state: &EditorSurfaceState, anchor: usize, focus: usize) -> EditorSurfaceState {
+    EditorSurfaceState {
+        caret: EditorCaret { offset: focus },
+        selection: EditorSelection { anchor, focus },
+        scroll_window: state.scroll_window.clone(),
+        completion_anchor_offset: None,
+        completion_selected_index: None,
+        signature_help_anchor_offset: None,
     }
 }
 
@@ -360,6 +372,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
 
@@ -381,6 +394,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
 
@@ -413,6 +427,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
 
@@ -433,6 +448,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
 
@@ -444,6 +460,9 @@ mod tests {
 
     #[test]
     fn keydown_mapping_recognizes_tab_and_arrow_commands() {
+        assert_eq!(keydown_to_command("ArrowUp", false), Some(EditorCommand::SelectPreviousCompletion));
+        assert_eq!(keydown_to_command("ArrowDown", false), Some(EditorCommand::SelectNextCompletion));
+        assert_eq!(keydown_to_command("Enter", false), Some(EditorCommand::AcceptSelectedCompletion));
         assert_eq!(keydown_to_command("ArrowLeft", false), Some(EditorCommand::MoveCaretLeft));
         assert_eq!(keydown_to_command("ArrowRight", false), Some(EditorCommand::MoveCaretRight));
         assert_eq!(keydown_to_command("ArrowLeft", true), Some(EditorCommand::ExtendSelectionLeft));
@@ -483,6 +502,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: Some(4),
+            completion_selected_index: Some(0),
             signature_help_anchor_offset: Some(4),
         };
 
@@ -495,6 +515,7 @@ mod tests {
         assert_eq!(result.state.caret.offset, 4);
         assert!(result.state.selection.is_collapsed());
         assert!(result.state.completion_anchor_offset.is_none());
+        assert!(result.state.completion_selected_index.is_none());
         assert!(result.state.signature_help_anchor_offset.is_none());
     }
 
@@ -509,6 +530,7 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
 
@@ -525,10 +547,20 @@ mod tests {
                 visible_line_count: 4,
             },
             completion_anchor_offset: None,
+            completion_selected_index: None,
             signature_help_anchor_offset: None,
         };
         let delete = apply_editor_command(text, &collapsed, EditorCommand::Delete);
         assert_eq!(delete.text, "=UM(1,2)");
         assert_eq!(delete.state.caret.offset, 1);
+    }
+
+    #[test]
+    fn completion_selection_cycles_through_visible_proposals() {
+        assert_eq!(cycle_completion_selection(None, 3, 1), Some(1));
+        assert_eq!(cycle_completion_selection(Some(0), 3, 1), Some(1));
+        assert_eq!(cycle_completion_selection(Some(0), 3, -1), Some(2));
+        assert_eq!(cycle_completion_selection(Some(2), 3, 1), Some(0));
+        assert_eq!(cycle_completion_selection(Some(0), 0, 1), None);
     }
 }

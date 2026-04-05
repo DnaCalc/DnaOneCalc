@@ -3,7 +3,7 @@ use super::bridge::{
 };
 use super::types::{
     BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
-    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaWalkNode,
+    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode,
     FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnosticSnapshot, ParseSummary,
     ProvenanceSummary, SignatureHelpContext,
 };
@@ -24,6 +24,9 @@ impl OxfmlEditorBridge for PreviewOxfmlBridge {
 
 fn preview_document(request: &FormulaEditRequest) -> EditorDocument {
     let function_name = inferred_function_name(&request.entered_text);
+    let replacement_span = function_name
+        .as_ref()
+        .and_then(|_| inferred_function_replacement_span(&request.entered_text, request.cursor_offset));
     let completion_proposals = function_name
         .clone()
         .map(|name| {
@@ -31,6 +34,7 @@ fn preview_document(request: &FormulaEditRequest) -> EditorDocument {
                 proposal_id: format!("completion-{name}"),
                 display_text: name.clone(),
                 insert_text: format!("{name}("),
+                replacement_span,
             }]
         })
         .unwrap_or_default();
@@ -149,6 +153,21 @@ fn active_argument_index(text: &str, cursor_offset: usize) -> usize {
         .count()
 }
 
+fn inferred_function_replacement_span(text: &str, cursor_offset: usize) -> Option<FormulaTextSpan> {
+    let chars: Vec<char> = text.chars().collect();
+    let bounded_offset = cursor_offset.min(chars.len());
+    let start = usize::from(chars.first() == Some(&'='));
+    let mut end = start;
+    while end < bounded_offset && (chars[end].is_ascii_alphabetic() || chars[end] == '_') {
+        end += 1;
+    }
+
+    (end > start).then_some(FormulaTextSpan {
+        start,
+        len: end - start,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +187,14 @@ mod tests {
             .expect("preview bridge should always succeed");
 
         assert_eq!(result.document.completion_proposals.len(), 1);
+        assert_eq!(
+            result
+                .document
+                .completion_proposals
+                .first()
+                .and_then(|proposal| proposal.replacement_span),
+            Some(FormulaTextSpan { start: 1, len: 3 })
+        );
         assert_eq!(
             result
                 .document

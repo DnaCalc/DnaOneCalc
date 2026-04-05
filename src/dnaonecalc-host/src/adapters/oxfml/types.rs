@@ -5,6 +5,12 @@ pub struct FormulaTextChangeRange {
     pub new_len: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormulaTextSpan {
+    pub start: usize,
+    pub len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorToken {
     pub text: String,
@@ -44,6 +50,7 @@ pub struct CompletionProposal {
     pub proposal_id: String,
     pub display_text: String,
     pub insert_text: String,
+    pub replacement_span: Option<FormulaTextSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -32,6 +32,7 @@ pub fn FormulaEditorSurface(
     } else {
         "range"
     };
+    let selected_completion_proposal_id = editor.selected_completion_proposal_id.clone();
 
     view! {
         <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
@@ -105,6 +106,29 @@ pub fn FormulaEditorSurface(
                             })
                             .collect_view()}
                     </div>
+                    <div class="onecalc-formula-editor-surface__inline-diagnostic-spans" data-role="inline-diagnostic-spans">
+                        {editor
+                            .diagnostics
+                            .iter()
+                            .map(|diagnostic| {
+                                view! {
+                                    <span
+                                        class="onecalc-formula-editor-surface__inline-diagnostic"
+                                        data-role="inline-diagnostic"
+                                        data-diagnostic-id=diagnostic.diagnostic_id.clone()
+                                        data-span-start=diagnostic.span_start
+                                        data-span-len=diagnostic.span_len
+                                    >
+                                        {inline_diagnostic_excerpt(
+                                            &editor.raw_entered_cell_text,
+                                            diagnostic.span_start,
+                                            diagnostic.span_len,
+                                        )}
+                                    </span>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
                     <div
                         class="onecalc-formula-editor-surface__selection-indicator"
                         data-role="selection-indicator"
@@ -152,10 +176,14 @@ pub fn FormulaEditorSurface(
                                             .completion_items
                                             .iter()
                                             .map(|item| {
+                                                let is_selected = selected_completion_proposal_id
+                                                    .as_ref()
+                                                    .is_some_and(|proposal_id| proposal_id == &item.proposal_id);
                                                 view! {
                                                     <div
                                                         class="onecalc-formula-editor-surface__completion-item"
                                                         data-completion-id=item.proposal_id.clone()
+                                                        data-selected=if is_selected { "true" } else { "false" }
                                                     >
                                                         {item.display_text.clone()}
                                                     </div>
@@ -228,6 +256,10 @@ fn render_syntax_run(run: &SyntaxRun) -> AnyView {
     .into_any()
 }
 
+fn inline_diagnostic_excerpt(text: &str, span_start: usize, span_len: usize) -> String {
+    text.chars().skip(span_start).take(span_len).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +300,7 @@ mod tests {
                         display_text: "SUM".to_string(),
                         insert_text: "SUM(".to_string(),
                     }],
+                    selected_completion_proposal_id: Some("proposal-1".to_string()),
                     has_signature_help: true,
                     signature_help: Some(crate::services::explore_mode::ExploreSignatureHelpView {
                         callee_text: "SUM".to_string(),
@@ -284,6 +317,7 @@ mod tests {
                             visible_line_count: 6,
                         },
                         completion_anchor_offset: Some(4),
+                        completion_selected_index: Some(0),
                         signature_help_anchor_offset: Some(4),
                     },
                 }
@@ -297,6 +331,8 @@ mod tests {
         assert!(html.contains("data-role=\"overlay-layer\""));
         assert!(html.contains("data-role=\"syntax-layer\""));
         assert!(html.contains("data-role=\"diagnostic-markers\""));
+        assert!(html.contains("data-role=\"inline-diagnostic-spans\""));
+        assert!(html.contains("data-role=\"inline-diagnostic\""));
         assert!(html.contains("data-diagnostic-id=\"diag-1\""));
         assert!(html.contains("data-token-role=\"function\""));
         assert!(html.contains("data-role=\"caret-indicator\""));
@@ -307,5 +343,6 @@ mod tests {
         assert!(html.contains("data-role=\"completion-popup\""));
         assert!(html.contains("data-role=\"signature-help-popup\""));
         assert!(html.contains("data-completion-id=\"proposal-1\""));
+        assert!(html.contains("data-selected=\"true\""));
     }
 }
