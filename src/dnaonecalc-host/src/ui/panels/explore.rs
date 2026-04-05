@@ -1,9 +1,11 @@
 use crate::services::explore_mode::{ExploreDiagnosticView, ExploreViewModel};
 use crate::ui::editor::render_projection::SyntaxRun;
+use crate::ui::editor::state::EditorSurfaceState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreEditorClusterViewModel {
     pub raw_entered_cell_text: String,
+    pub editor_surface_state: EditorSurfaceState,
     pub syntax_runs: Vec<SyntaxRun>,
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
@@ -24,6 +26,7 @@ pub fn build_explore_editor_cluster(
 ) -> ExploreEditorClusterViewModel {
     ExploreEditorClusterViewModel {
         raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
+        editor_surface_state: view_model.editor_surface_state.clone(),
         syntax_runs: view_model.syntax_runs.clone(),
         diagnostics: view_model.diagnostics.clone(),
         completion_count: view_model.completion_count,
@@ -53,6 +56,7 @@ mod tests {
     fn explore_editor_cluster_keeps_editing_surface_fields() {
         let view_model = ExploreViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            editor_surface_state: EditorSurfaceState::for_text("=SUM(1,2)"),
             syntax_runs: vec![SyntaxRun {
                 text: "SUM".to_string(),
                 span_start: 1,
@@ -76,6 +80,7 @@ mod tests {
 
         let cluster = build_explore_editor_cluster(&view_model);
         assert_eq!(cluster.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(cluster.editor_surface_state.caret.offset, 9);
         assert_eq!(cluster.syntax_runs.len(), 1);
         assert_eq!(cluster.diagnostics.len(), 1);
         assert_eq!(cluster.function_help_lookup_key.as_deref(), Some("SUM"));
@@ -86,6 +91,7 @@ mod tests {
     fn explore_result_cluster_keeps_result_surface_fields() {
         let view_model = ExploreViewModel {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
+            editor_surface_state: EditorSurfaceState::for_text("=SUM(1,2)"),
             syntax_runs: vec![],
             diagnostics: vec![],
             completion_count: 0,

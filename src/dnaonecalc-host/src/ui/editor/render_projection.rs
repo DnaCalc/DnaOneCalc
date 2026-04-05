@@ -31,6 +31,60 @@ pub fn syntax_runs_from_snapshot(snapshot: &EditorSyntaxSnapshot) -> Vec<SyntaxR
         .collect()
 }
 
+pub fn syntax_runs_from_text(text: &str) -> Vec<SyntaxRun> {
+    let mut runs = Vec::new();
+    let mut current = String::new();
+    let mut current_start = 0usize;
+    let mut chars = text.chars().enumerate().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if ch.is_whitespace() {
+            flush_token(&mut runs, &mut current, current_start);
+            continue;
+        }
+
+        if ch == '=' || matches!(ch, '(' | ')' | ',') {
+            flush_token(&mut runs, &mut current, current_start);
+            runs.push(SyntaxRun {
+                text: ch.to_string(),
+                span_start: idx,
+                span_len: 1,
+                role: classify_token_role(&ch.to_string()),
+            });
+            continue;
+        }
+
+        if current.is_empty() {
+            current_start = idx;
+        }
+        current.push(ch);
+
+        if chars
+            .peek()
+            .map(|(_, next)| next.is_whitespace() || matches!(next, '=' | '(' | ')' | ','))
+            .unwrap_or(true)
+        {
+            flush_token(&mut runs, &mut current, current_start);
+        }
+    }
+
+    runs
+}
+
+fn flush_token(runs: &mut Vec<SyntaxRun>, current: &mut String, current_start: usize) {
+    if current.is_empty() {
+        return;
+    }
+
+    let text = std::mem::take(current);
+    runs.push(SyntaxRun {
+        span_len: text.chars().count(),
+        span_start: current_start,
+        role: classify_token_role(&text),
+        text,
+    });
+}
+
 fn classify_token_role(text: &str) -> SyntaxTokenRole {
     if text == "=" {
         SyntaxTokenRole::Operator
@@ -81,5 +135,14 @@ mod tests {
         assert_eq!(runs[1].span_start, 1);
         assert_eq!(runs[0].role, SyntaxTokenRole::Operator);
         assert_eq!(runs[1].role, SyntaxTokenRole::Function);
+    }
+
+    #[test]
+    fn syntax_runs_from_text_splits_formula_like_input() {
+        let runs = syntax_runs_from_text("=LET(x,1,x)");
+        assert_eq!(runs.len(), 9);
+        assert_eq!(runs[1].text, "LET");
+        assert_eq!(runs[1].role, SyntaxTokenRole::Function);
+        assert_eq!(runs[3].role, SyntaxTokenRole::Identifier);
     }
 }

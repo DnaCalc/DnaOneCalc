@@ -1,9 +1,13 @@
 use crate::state::FormulaSpaceState;
-use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
+use crate::ui::editor::render_projection::{
+    syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
+};
+use crate::ui::editor::state::EditorSurfaceState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreViewModel {
     pub raw_entered_cell_text: String,
+    pub editor_surface_state: EditorSurfaceState,
     pub syntax_runs: Vec<SyntaxRun>,
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
@@ -31,7 +35,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         reused_green_tree,
         document_function_help_lookup_key,
     ) = match &formula_space.editor_document {
-        Some(document) => (
+        Some(document) if document.source_text == formula_space.raw_entered_cell_text => (
             syntax_runs_from_snapshot(&document.editor_syntax_snapshot),
             document
                 .live_diagnostics
@@ -52,12 +56,14 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
                 .map(|packet| packet.lookup_key.clone()),
         ),
         None => (
-            vec![SyntaxRun {
-                text: formula_space.raw_entered_cell_text.clone(),
-                span_start: 0,
-                span_len: formula_space.raw_entered_cell_text.chars().count(),
-                role: SyntaxTokenRole::Text,
-            }],
+            syntax_runs_from_text(&formula_space.raw_entered_cell_text),
+            Vec::new(),
+            None,
+            false,
+            None,
+        ),
+        Some(_) => (
+            syntax_runs_from_text(&formula_space.raw_entered_cell_text),
             Vec::new(),
             None,
             false,
@@ -67,6 +73,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
 
     ExploreViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
+        editor_surface_state: formula_space.editor_surface_state.clone(),
         syntax_runs,
         diagnostics,
         completion_count: formula_space.completion_help.completion_count,
@@ -147,11 +154,45 @@ mod tests {
 
         let view_model = build_explore_view_model(&formula_space);
         assert_eq!(view_model.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(view_model.editor_surface_state.caret.offset, 9);
         assert_eq!(view_model.syntax_runs.len(), 2);
         assert_eq!(view_model.diagnostics.len(), 1);
         assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
         assert_eq!(view_model.effective_display_summary.as_deref(), Some("3"));
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
         assert!(view_model.reused_green_tree);
+    }
+
+    #[test]
+    fn explore_view_model_falls_back_to_local_tokenization_when_document_is_stale() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
+        formula_space.editor_document = Some(EditorDocument {
+            source_text: "=SUM(1,2)".to_string(),
+            text_change_range: None,
+            editor_syntax_snapshot: EditorSyntaxSnapshot {
+                formula_stable_id: "formula-1".to_string(),
+                green_tree_key: "green-1".to_string(),
+                tokens: vec![],
+            },
+            live_diagnostics: LiveDiagnosticSnapshot::default(),
+            reuse_summary: FormulaEditReuseSummary {
+                reused_green_tree: true,
+                reused_red_projection: false,
+                reused_bound_formula: false,
+            },
+            signature_help: None,
+            function_help: None,
+            completion_proposals: vec![],
+            formula_walk: vec![],
+            parse_summary: None,
+            bind_summary: None,
+            eval_summary: None,
+            provenance_summary: None,
+        });
+
+        let view_model = build_explore_view_model(&formula_space);
+        assert_eq!(view_model.syntax_runs.len(), 9);
+        assert!(view_model.diagnostics.is_empty());
+        assert!(view_model.green_tree_key.is_none());
     }
 }

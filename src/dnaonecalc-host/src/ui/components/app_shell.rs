@@ -1,5 +1,8 @@
 use leptos::prelude::*;
 
+use crate::app::reducer::{
+    apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
+};
 use crate::services::shell_composition::{
     build_active_mode_projection, build_shell_frame_view_model, switch_active_mode,
     ActiveModeProjection,
@@ -10,6 +13,7 @@ use crate::ui::components::inspect_shell::InspectShell;
 use crate::ui::components::shell_frame::ShellFrame;
 use crate::ui::components::workbench_shell::WorkbenchShell;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
+use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
 use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 use crate::ui::panels::workbench::{
@@ -23,6 +27,16 @@ pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
 
     let on_mode_select = Callback::new(move |next_mode| {
         state.update(|state| switch_active_mode(state, next_mode));
+    });
+    let on_editor_input = Callback::new(move |event: EditorInputEvent| {
+        state.update(|state| {
+            let _ = apply_editor_input_to_active_formula_space(state, event);
+        });
+    });
+    let on_editor_command = Callback::new(move |command: EditorCommand| {
+        state.update(|state| {
+            let _ = apply_editor_command_to_active_formula_space(state, command);
+        });
     });
 
     view! {
@@ -40,6 +54,8 @@ pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
                                 <ExploreShell
                                     editor=build_explore_editor_cluster(&view_model)
                                     result=build_explore_result_cluster(&view_model)
+                                    on_input_event=Some(on_editor_input)
+                                    on_command=Some(on_editor_command)
                                 />
                             </ShellFrame>
                         }

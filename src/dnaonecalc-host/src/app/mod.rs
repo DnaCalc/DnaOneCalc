@@ -2,6 +2,7 @@ use crate::state::OneCalcHostState;
 
 pub mod host_mount;
 pub mod intents;
+pub mod reducer;
 
 #[derive(Debug, Default)]
 pub struct OneCalcHostApp {
