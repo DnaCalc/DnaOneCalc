@@ -102,7 +102,10 @@ pub fn ExploreShell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::explore_mode::{ExploreDiagnosticView, ExploreViewModel};
+    use crate::services::explore_mode::{
+        ExploreCompletionItemView, ExploreDiagnosticView, ExploreSignatureHelpView,
+        ExploreViewModel,
+    };
     use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
     use crate::ui::panels::explore::{
         build_explore_editor_cluster, build_explore_result_cluster,
@@ -128,7 +131,16 @@ mod tests {
                 span_len: 3,
             }],
             completion_count: 2,
+            completion_items: vec![ExploreCompletionItemView {
+                proposal_id: "proposal-1".to_string(),
+                display_text: "SUM".to_string(),
+                insert_text: "SUM(".to_string(),
+            }],
             has_signature_help: true,
+            signature_help: Some(ExploreSignatureHelpView {
+                callee_text: "SUM".to_string(),
+                active_argument_index: 1,
+            }),
             function_help_lookup_key: Some("SUM".to_string()),
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),
@@ -153,5 +165,6 @@ mod tests {
         assert!(html.contains(">3<"));
         assert!(html.contains("Function target: "));
         assert!(html.contains("SUM"));
+        assert!(html.contains("Completion entries: "));
     }
 }

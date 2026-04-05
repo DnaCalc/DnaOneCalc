@@ -1,7 +1,10 @@
 use leptos::prelude::*;
-use web_sys::HtmlTextAreaElement;
+use wasm_bindgen::JsCast;
+use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
 
-use crate::ui::editor::commands::{keydown_to_command, EditorCommand, EditorInputEvent};
+use crate::ui::editor::commands::{
+    classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
+};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
@@ -47,6 +50,7 @@ pub fn FormulaEditorSurface(
                         on:input=move |ev| {
                             if let Some(callback) = on_input_event.as_ref() {
                                 let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                                let web_input_event = ev.dyn_ref::<WebInputEvent>();
                                 callback.run(EditorInputEvent {
                                     text: event_target_value(&ev),
                                     selection_start: textarea
@@ -59,10 +63,14 @@ pub fn FormulaEditorSurface(
                                         .ok()
                                         .flatten()
                                         .map(|offset| offset as usize),
+                                    input_kind: web_input_event
+                                        .map(|input_event| classify_dom_input(&input_event.input_type()))
+                                        .unwrap_or(crate::ui::editor::commands::EditorInputKind::Other),
+                                    inserted_text: web_input_event.and_then(|input_event| input_event.data()),
                                 });
                             }
                         }
-                        on:keydown=move |ev| {
+                        on:keydown=move |ev: KeyboardEvent| {
                             if let Some(command) = keydown_to_command(&ev.key(), ev.shift_key()) {
                                 if let Some(command_callback) = on_command.as_ref() {
                                     command_callback.run(command);
@@ -139,6 +147,22 @@ pub fn FormulaEditorSurface(
                                 >
                                     "Completion anchor: "
                                     {offset}
+                                    <div class="onecalc-formula-editor-surface__completion-popup" data-role="completion-popup">
+                                        {editor
+                                            .completion_items
+                                            .iter()
+                                            .map(|item| {
+                                                view! {
+                                                    <div
+                                                        class="onecalc-formula-editor-surface__completion-item"
+                                                        data-completion-id=item.proposal_id.clone()
+                                                    >
+                                                        {item.display_text.clone()}
+                                                    </div>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
                                 </div>
                             }
                         })}
@@ -153,6 +177,20 @@ pub fn FormulaEditorSurface(
                                 >
                                     "Signature help anchor: "
                                     {offset}
+                                    <div
+                                        class="onecalc-formula-editor-surface__signature-help-popup"
+                                        data-role="signature-help-popup"
+                                    >
+                                        {editor
+                                            .signature_help
+                                            .as_ref()
+                                            .map(|help| format!(
+                                                "{} arg {}",
+                                                help.callee_text,
+                                                help.active_argument_index
+                                            ))
+                                            .unwrap_or_else(|| "Unavailable".to_string())}
+                                    </div>
                                 </div>
                             }
                         })}
@@ -225,7 +263,16 @@ mod tests {
                         span_len: 3,
                     }],
                     completion_count: 2,
+                    completion_items: vec![crate::services::explore_mode::ExploreCompletionItemView {
+                        proposal_id: "proposal-1".to_string(),
+                        display_text: "SUM".to_string(),
+                        insert_text: "SUM(".to_string(),
+                    }],
                     has_signature_help: true,
+                    signature_help: Some(crate::services::explore_mode::ExploreSignatureHelpView {
+                        callee_text: "SUM".to_string(),
+                        active_argument_index: 1,
+                    }),
                     function_help_lookup_key: Some("SUM".to_string()),
                     green_tree_key: Some("green-1".to_string()),
                     reused_green_tree: false,
@@ -257,5 +304,8 @@ mod tests {
         assert!(html.contains("data-selection-kind=\"range\""));
         assert!(html.contains("data-role=\"completion-anchor-indicator\""));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
+        assert!(html.contains("data-role=\"completion-popup\""));
+        assert!(html.contains("data-role=\"signature-help-popup\""));
+        assert!(html.contains("data-completion-id=\"proposal-1\""));
     }
 }

@@ -1,0 +1,188 @@
+use super::bridge::{
+    FormulaEditRequest, FormulaEditResult, OxfmlEditorBridge, OxfmlEditorBridgeError,
+};
+use super::types::{
+    BindSummary, CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
+    EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaWalkNode,
+    FormulaWalkNodeState, FunctionHelpPacket, LiveDiagnosticSnapshot, ParseSummary,
+    ProvenanceSummary, SignatureHelpContext,
+};
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PreviewOxfmlBridge;
+
+impl OxfmlEditorBridge for PreviewOxfmlBridge {
+    fn apply_formula_edit(
+        &self,
+        request: FormulaEditRequest,
+    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+        Ok(FormulaEditResult {
+            document: preview_document(&request),
+        })
+    }
+}
+
+fn preview_document(request: &FormulaEditRequest) -> EditorDocument {
+    let function_name = inferred_function_name(&request.entered_text);
+    let completion_proposals = function_name
+        .clone()
+        .map(|name| {
+            vec![CompletionProposal {
+                proposal_id: format!("completion-{name}"),
+                display_text: name.clone(),
+                insert_text: format!("{name}("),
+            }]
+        })
+        .unwrap_or_default();
+    let signature_help = function_name.clone().map(|callee_text| SignatureHelpContext {
+        callee_text,
+        active_argument_index: active_argument_index(&request.entered_text, request.cursor_offset),
+    });
+    let function_help = function_name
+        .as_ref()
+        .map(|lookup_key| FunctionHelpPacket {
+            lookup_key: lookup_key.clone(),
+        });
+    let token_count = request.entered_text.chars().count();
+
+    EditorDocument {
+        source_text: request.entered_text.clone(),
+        text_change_range: Some(FormulaTextChangeRange {
+            start: 0,
+            old_len: request.previous_green_tree_key.as_ref().map(|_| token_count).unwrap_or(0),
+            new_len: token_count,
+        }),
+        editor_syntax_snapshot: EditorSyntaxSnapshot {
+            formula_stable_id: request.formula_stable_id.clone(),
+            green_tree_key: format!("preview-green-{}", token_count),
+            tokens: preview_tokens(&request.entered_text),
+        },
+        live_diagnostics: LiveDiagnosticSnapshot::default(),
+        reuse_summary: FormulaEditReuseSummary {
+            reused_green_tree: request.previous_green_tree_key.is_some(),
+            reused_red_projection: request.previous_green_tree_key.is_some(),
+            reused_bound_formula: false,
+        },
+        signature_help,
+        function_help,
+        completion_proposals,
+        formula_walk: vec![FormulaWalkNode {
+            node_id: "preview-root".to_string(),
+            label: function_name.unwrap_or_else(|| "CellEntry".to_string()),
+            value_preview: Some(request.entered_text.clone()),
+            state: FormulaWalkNodeState::Evaluated,
+            children: vec![],
+        }],
+        parse_summary: Some(ParseSummary {
+            status: "Preview".to_string(),
+            token_count,
+        }),
+        bind_summary: Some(BindSummary {
+            variable_count: 0,
+            reference_count: 0,
+        }),
+        eval_summary: Some(EvalSummary {
+            step_count: 1,
+            duration_text: "preview".to_string(),
+        }),
+        provenance_summary: Some(ProvenanceSummary {
+            profile_summary: "PreviewBridge".to_string(),
+            blocked_reason: None,
+        }),
+    }
+}
+
+fn preview_tokens(text: &str) -> Vec<EditorToken> {
+    if text.is_empty() {
+        return vec![];
+    }
+
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut idx = 0usize;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if ch.is_ascii_alphabetic() {
+            let start = idx;
+            while idx < chars.len() && (chars[idx].is_ascii_alphabetic() || chars[idx] == '_') {
+                idx += 1;
+            }
+            let token_text: String = chars[start..idx].iter().collect();
+            tokens.push(EditorToken {
+                text: token_text,
+                span_start: start,
+                span_len: idx - start,
+            });
+            continue;
+        }
+
+        tokens.push(EditorToken {
+            text: ch.to_string(),
+            span_start: idx,
+            span_len: 1,
+        });
+        idx += 1;
+    }
+
+    tokens
+}
+
+fn inferred_function_name(text: &str) -> Option<String> {
+    let after_equals = text.strip_prefix('=').unwrap_or(text);
+    let name: String = after_equals
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
+        .collect();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_ascii_uppercase())
+    }
+}
+
+fn active_argument_index(text: &str, cursor_offset: usize) -> usize {
+    let bounded_offset = cursor_offset.min(text.chars().count());
+    text.chars()
+        .take(bounded_offset)
+        .filter(|ch| *ch == ',')
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::oxfml::EditorAnalysisStage;
+
+    #[test]
+    fn preview_bridge_generates_completion_and_signature_help_for_formula_like_input() {
+        let bridge = PreviewOxfmlBridge;
+        let result = bridge
+            .apply_formula_edit(FormulaEditRequest {
+                formula_stable_id: "formula-1".to_string(),
+                entered_text: "=SUM(1,2)".to_string(),
+                cursor_offset: 8,
+                previous_green_tree_key: Some("green-0".to_string()),
+                analysis_stage: EditorAnalysisStage::SyntaxAndBind,
+            })
+            .expect("preview bridge should always succeed");
+
+        assert_eq!(result.document.completion_proposals.len(), 1);
+        assert_eq!(
+            result
+                .document
+                .signature_help
+                .as_ref()
+                .map(|help| help.active_argument_index),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .document
+                .function_help
+                .as_ref()
+                .map(|packet| packet.lookup_key.as_str()),
+            Some("SUM")
+        );
+    }
+}

@@ -1,5 +1,7 @@
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
-use crate::ui::editor::commands::{apply_editor_command, EditorCommand, EditorInputEvent};
+use crate::ui::editor::commands::{
+    apply_editor_command, EditorCommand, EditorInputEvent,
+};
 use crate::ui::editor::state::EditorSurfaceState;
 
 pub fn apply_editor_input_to_active_formula_space(
@@ -70,6 +72,7 @@ mod tests {
     use super::*;
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::FormulaSpaceState;
+    use crate::ui::editor::commands::EditorInputKind;
     use crate::ui::editor::state::EditorSelection;
 
     #[test]
@@ -87,6 +90,8 @@ mod tests {
                 text: "=SUM(1,2,3)".to_string(),
                 selection_start: None,
                 selection_end: None,
+                input_kind: EditorInputKind::Other,
+                inserted_text: None,
             },
         );
 
@@ -114,6 +119,8 @@ mod tests {
                 text: "=SUM(1,2)".to_string(),
                 selection_start: Some(2),
                 selection_end: Some(5),
+                input_kind: EditorInputKind::InsertText,
+                inserted_text: Some("M".to_string()),
             },
         );
 

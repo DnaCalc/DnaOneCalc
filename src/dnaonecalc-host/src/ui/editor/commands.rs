@@ -13,11 +13,22 @@ pub enum EditorCommand {
     OutdentWithSpaces,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorInputKind {
+    InsertText,
+    DeleteBackward,
+    DeleteForward,
+    InsertFromPaste,
+    Other,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorInputEvent {
     pub text: String,
     pub selection_start: Option<usize>,
     pub selection_end: Option<usize>,
+    pub input_kind: EditorInputKind,
+    pub inserted_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +119,16 @@ pub fn keydown_to_command(key: &str, shift_key: bool) -> Option<EditorCommand> {
         ("Tab", false) => Some(EditorCommand::IndentWithSpaces),
         ("Tab", true) => Some(EditorCommand::OutdentWithSpaces),
         _ => None,
+    }
+}
+
+pub fn classify_dom_input(input_type: &str) -> EditorInputKind {
+    match input_type {
+        "insertText" => EditorInputKind::InsertText,
+        "deleteContentBackward" => EditorInputKind::DeleteBackward,
+        "deleteContentForward" => EditorInputKind::DeleteForward,
+        "insertFromPaste" => EditorInputKind::InsertFromPaste,
+        _ => EditorInputKind::Other,
     }
 }
 
@@ -434,6 +455,21 @@ mod tests {
         assert_eq!(keydown_to_command("Delete", false), Some(EditorCommand::Delete));
         assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
         assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
+    }
+
+    #[test]
+    fn dom_input_types_map_to_editor_input_kinds() {
+        assert_eq!(classify_dom_input("insertText"), EditorInputKind::InsertText);
+        assert_eq!(
+            classify_dom_input("deleteContentBackward"),
+            EditorInputKind::DeleteBackward
+        );
+        assert_eq!(
+            classify_dom_input("deleteContentForward"),
+            EditorInputKind::DeleteForward
+        );
+        assert_eq!(classify_dom_input("insertFromPaste"), EditorInputKind::InsertFromPaste);
+        assert_eq!(classify_dom_input("historyUndo"), EditorInputKind::Other);
     }
 
     #[test]

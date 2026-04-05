@@ -3,7 +3,7 @@ use dnaonecalc_host::app::reducer::{
 };
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::state::{FormulaSpaceState, OneCalcHostState};
-use dnaonecalc_host::ui::editor::commands::{EditorCommand, EditorInputEvent};
+use dnaonecalc_host::ui::editor::commands::{EditorCommand, EditorInputEvent, EditorInputKind};
 use dnaonecalc_host::ui::editor::state::EditorSelection;
 
 #[test]
@@ -21,6 +21,8 @@ fn ex_15_editor_input_event_updates_active_formula_space_in_host_state() {
             text: "=SUM(1,2,3)".to_string(),
             selection_start: None,
             selection_end: None,
+            input_kind: EditorInputKind::Other,
+            inserted_text: None,
         },
     );
 
@@ -46,6 +48,8 @@ fn ex_20_editor_input_event_preserves_selection_offsets_in_host_state() {
             text: "=SUM(1,2)".to_string(),
             selection_start: Some(2),
             selection_end: Some(5),
+            input_kind: EditorInputKind::InsertText,
+            inserted_text: Some("M".to_string()),
         },
     );
 

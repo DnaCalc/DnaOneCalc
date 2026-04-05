@@ -1,3 +1,4 @@
+use crate::adapters::oxfml::{CompletionProposal, SignatureHelpContext};
 use crate::state::FormulaSpaceState;
 use crate::ui::editor::render_projection::{
     syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
@@ -11,7 +12,9 @@ pub struct ExploreViewModel {
     pub syntax_runs: Vec<SyntaxRun>,
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
+    pub completion_items: Vec<ExploreCompletionItemView>,
     pub has_signature_help: bool,
+    pub signature_help: Option<ExploreSignatureHelpView>,
     pub function_help_lookup_key: Option<String>,
     pub effective_display_summary: Option<String>,
     pub latest_evaluation_summary: Option<String>,
@@ -27,12 +30,27 @@ pub struct ExploreDiagnosticView {
     pub span_len: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreCompletionItemView {
+    pub proposal_id: String,
+    pub display_text: String,
+    pub insert_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExploreSignatureHelpView {
+    pub callee_text: String,
+    pub active_argument_index: usize,
+}
+
 pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreViewModel {
     let (
         syntax_runs,
         diagnostics,
         green_tree_key,
         reused_green_tree,
+        completion_items,
+        signature_help,
         document_function_help_lookup_key,
     ) = match &formula_space.editor_document {
         Some(document) if document.source_text == formula_space.raw_entered_cell_text => (
@@ -51,33 +69,37 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
             Some(document.green_tree_key().to_string()),
             document.reuse_summary.reused_green_tree,
             document
+                .completion_proposals
+                .iter()
+                .map(completion_item_view)
+                .collect(),
+            document.signature_help.as_ref().map(signature_help_view),
+            document
                 .function_help
                 .as_ref()
                 .map(|packet| packet.lookup_key.clone()),
         ),
-        None => (
-            syntax_runs_from_text(&formula_space.raw_entered_cell_text),
-            Vec::new(),
-            None,
-            false,
-            None,
-        ),
-        Some(_) => (
-            syntax_runs_from_text(&formula_space.raw_entered_cell_text),
-            Vec::new(),
-            None,
-            false,
-            None,
-        ),
+        None => fallback_projection(&formula_space.raw_entered_cell_text),
+        Some(_) => fallback_projection(&formula_space.raw_entered_cell_text),
     };
+
+    let mut editor_surface_state = formula_space.editor_surface_state.clone();
+    if !completion_items.is_empty() && editor_surface_state.completion_anchor_offset.is_none() {
+        editor_surface_state.completion_anchor_offset = Some(editor_surface_state.caret.offset);
+    }
+    if signature_help.is_some() && editor_surface_state.signature_help_anchor_offset.is_none() {
+        editor_surface_state.signature_help_anchor_offset = Some(editor_surface_state.caret.offset);
+    }
 
     ExploreViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
-        editor_surface_state: formula_space.editor_surface_state.clone(),
+        editor_surface_state,
         syntax_runs,
         diagnostics,
         completion_count: formula_space.completion_help.completion_count,
+        completion_items,
         has_signature_help: formula_space.completion_help.has_signature_help,
+        signature_help,
         function_help_lookup_key: formula_space
             .completion_help
             .function_help_lookup_key
@@ -90,12 +112,49 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
     }
 }
 
+fn fallback_projection(
+    text: &str,
+) -> (
+    Vec<SyntaxRun>,
+    Vec<ExploreDiagnosticView>,
+    Option<String>,
+    bool,
+    Vec<ExploreCompletionItemView>,
+    Option<ExploreSignatureHelpView>,
+    Option<String>,
+) {
+    (
+        syntax_runs_from_text(text),
+        Vec::new(),
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+    )
+}
+
+fn completion_item_view(proposal: &CompletionProposal) -> ExploreCompletionItemView {
+    ExploreCompletionItemView {
+        proposal_id: proposal.proposal_id.clone(),
+        display_text: proposal.display_text.clone(),
+        insert_text: proposal.insert_text.clone(),
+    }
+}
+
+fn signature_help_view(context: &SignatureHelpContext) -> ExploreSignatureHelpView {
+    ExploreSignatureHelpView {
+        callee_text: context.callee_text.clone(),
+        active_argument_index: context.active_argument_index,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{
-        EditorDocument, EditorSyntaxSnapshot, EditorToken, FormulaEditReuseSummary,
-        LiveDiagnostic, LiveDiagnosticSnapshot,
+        CompletionProposal, EditorDocument, EditorSyntaxSnapshot, EditorToken,
+        FormulaEditReuseSummary, LiveDiagnostic, LiveDiagnosticSnapshot, SignatureHelpContext,
     };
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::{CompletionHelpState, FormulaSpaceState};
@@ -142,9 +201,16 @@ mod tests {
                 reused_red_projection: false,
                 reused_bound_formula: false,
             },
-            signature_help: None,
+            signature_help: Some(SignatureHelpContext {
+                callee_text: "SUM".to_string(),
+                active_argument_index: 1,
+            }),
             function_help: None,
-            completion_proposals: vec![],
+            completion_proposals: vec![CompletionProposal {
+                proposal_id: "proposal-1".to_string(),
+                display_text: "SUM".to_string(),
+                insert_text: "SUM(".to_string(),
+            }],
             formula_walk: vec![],
             parse_summary: None,
             bind_summary: None,
@@ -157,6 +223,11 @@ mod tests {
         assert_eq!(view_model.editor_surface_state.caret.offset, 9);
         assert_eq!(view_model.syntax_runs.len(), 2);
         assert_eq!(view_model.diagnostics.len(), 1);
+        assert_eq!(view_model.completion_items.len(), 1);
+        assert_eq!(
+            view_model.signature_help.as_ref().map(|help| help.active_argument_index),
+            Some(1)
+        );
         assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
         assert_eq!(view_model.effective_display_summary.as_deref(), Some("3"));
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
@@ -193,6 +264,8 @@ mod tests {
         let view_model = build_explore_view_model(&formula_space);
         assert_eq!(view_model.syntax_runs.len(), 9);
         assert!(view_model.diagnostics.is_empty());
+        assert!(view_model.completion_items.is_empty());
+        assert!(view_model.signature_help.is_none());
         assert!(view_model.green_tree_key.is_none());
     }
 }

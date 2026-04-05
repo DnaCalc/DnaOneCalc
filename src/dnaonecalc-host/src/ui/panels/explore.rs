@@ -1,4 +1,6 @@
-use crate::services::explore_mode::{ExploreDiagnosticView, ExploreViewModel};
+use crate::services::explore_mode::{
+    ExploreCompletionItemView, ExploreDiagnosticView, ExploreSignatureHelpView, ExploreViewModel,
+};
 use crate::ui::editor::render_projection::SyntaxRun;
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -9,7 +11,9 @@ pub struct ExploreEditorClusterViewModel {
     pub syntax_runs: Vec<SyntaxRun>,
     pub diagnostics: Vec<ExploreDiagnosticView>,
     pub completion_count: usize,
+    pub completion_items: Vec<ExploreCompletionItemView>,
     pub has_signature_help: bool,
+    pub signature_help: Option<ExploreSignatureHelpView>,
     pub function_help_lookup_key: Option<String>,
     pub green_tree_key: Option<String>,
     pub reused_green_tree: bool,
@@ -30,7 +34,9 @@ pub fn build_explore_editor_cluster(
         syntax_runs: view_model.syntax_runs.clone(),
         diagnostics: view_model.diagnostics.clone(),
         completion_count: view_model.completion_count,
+        completion_items: view_model.completion_items.clone(),
         has_signature_help: view_model.has_signature_help,
+        signature_help: view_model.signature_help.clone(),
         function_help_lookup_key: view_model.function_help_lookup_key.clone(),
         green_tree_key: view_model.green_tree_key.clone(),
         reused_green_tree: view_model.reused_green_tree,
@@ -70,7 +76,16 @@ mod tests {
                 span_len: 3,
             }],
             completion_count: 2,
+            completion_items: vec![ExploreCompletionItemView {
+                proposal_id: "proposal-1".to_string(),
+                display_text: "SUM".to_string(),
+                insert_text: "SUM(".to_string(),
+            }],
             has_signature_help: true,
+            signature_help: Some(ExploreSignatureHelpView {
+                callee_text: "SUM".to_string(),
+                active_argument_index: 1,
+            }),
             function_help_lookup_key: Some("SUM".to_string()),
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),
@@ -83,6 +98,11 @@ mod tests {
         assert_eq!(cluster.editor_surface_state.caret.offset, 9);
         assert_eq!(cluster.syntax_runs.len(), 1);
         assert_eq!(cluster.diagnostics.len(), 1);
+        assert_eq!(cluster.completion_items.len(), 1);
+        assert_eq!(
+            cluster.signature_help.as_ref().map(|help| help.active_argument_index),
+            Some(1)
+        );
         assert_eq!(cluster.function_help_lookup_key.as_deref(), Some("SUM"));
         assert!(cluster.reused_green_tree);
     }
@@ -95,7 +115,9 @@ mod tests {
             syntax_runs: vec![],
             diagnostics: vec![],
             completion_count: 0,
+            completion_items: vec![],
             has_signature_help: false,
+            signature_help: None,
             function_help_lookup_key: None,
             effective_display_summary: Some("3".to_string()),
             latest_evaluation_summary: Some("Number".to_string()),

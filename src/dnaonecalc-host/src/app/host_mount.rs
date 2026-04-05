@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::adapters::oxfml::{OxfmlEditorBridge, PreviewOxfmlBridge};
 use leptos::prelude::*;
 
 use crate::state::OneCalcHostState;
@@ -24,6 +27,12 @@ pub fn bootstrap_spec(target: HostMountTarget) -> HostBootstrapSpec {
     }
 }
 
+pub fn bootstrap_editor_bridge(
+    _target: HostMountTarget,
+) -> Arc<dyn OxfmlEditorBridge + Send + Sync> {
+    Arc::new(PreviewOxfmlBridge)
+}
+
 pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostState) -> String {
     let host_label = match target {
         HostMountTarget::DesktopTauri => "desktop-tauri",
@@ -31,7 +40,9 @@ pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostStat
     };
     let spec = bootstrap_spec(target);
 
-    let body = view! { <OneCalcShellApp initial_state=initial_state /> }.to_html();
+    let editor_bridge = bootstrap_editor_bridge(target);
+    let body = view! { <OneCalcShellApp initial_state=initial_state editor_bridge=Some(editor_bridge) /> }
+        .to_html();
     format!(
         "<div id=\"{}\" data-host-target=\"{host_label}\" data-shell-root=\"onecalc\">{body}</div>",
         spec.mount_element_id
@@ -89,5 +100,30 @@ mod tests {
         assert_eq!(web.mount_element_id, "onecalc-root");
         assert_eq!(desktop.document_title, "DNA OneCalc");
         assert_eq!(web.document_title, "DNA OneCalc");
+    }
+
+    #[test]
+    fn bootstrap_editor_bridge_is_available_for_desktop_and_web() {
+        let desktop = bootstrap_editor_bridge(HostMountTarget::DesktopTauri);
+        let web = bootstrap_editor_bridge(HostMountTarget::WebBrowser);
+
+        assert!(desktop
+            .apply_formula_edit(crate::adapters::oxfml::FormulaEditRequest {
+                formula_stable_id: "formula-1".to_string(),
+                entered_text: "=SUM(1,2)".to_string(),
+                cursor_offset: 8,
+                previous_green_tree_key: None,
+                analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
+            })
+            .is_ok());
+        assert!(web
+            .apply_formula_edit(crate::adapters::oxfml::FormulaEditRequest {
+                formula_stable_id: "formula-1".to_string(),
+                entered_text: "=SUM(1,2)".to_string(),
+                cursor_offset: 8,
+                previous_green_tree_key: None,
+                analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
+            })
+            .is_ok());
     }
 }

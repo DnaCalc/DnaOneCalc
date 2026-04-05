@@ -93,6 +93,7 @@ mod tests {
     use crate::adapters::oxfml::{FormulaEditRequest, FormulaEditResult};
     use crate::state::FormulaSpaceState;
     use crate::test_support::sample_editor_document;
+    use crate::ui::editor::commands::EditorInputKind;
 
     struct FakeBridge {
         document: crate::adapters::oxfml::EditorDocument,
@@ -130,6 +131,8 @@ mod tests {
                 text: "=SUM(1,2,3)".to_string(),
                 selection_start: Some(11),
                 selection_end: Some(11),
+                input_kind: EditorInputKind::InsertText,
+                inserted_text: Some("3".to_string()),
             },
         )
         .expect("live edit should refresh active formula space");
