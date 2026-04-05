@@ -1,4 +1,5 @@
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
+use crate::services::retained_artifacts::open_retained_artifact_by_id;
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
@@ -60,6 +61,13 @@ pub fn apply_editor_overlay_measurement_to_active_formula_space(
 
     formula_space.editor_overlay_geometry = Some(measurement_event.snapshot);
     true
+}
+
+pub fn open_retained_artifact_from_catalog(
+    state: &mut OneCalcHostState,
+    artifact_id: &str,
+) -> bool {
+    open_retained_artifact_by_id(state, artifact_id).is_ok()
 }
 
 fn active_formula_space_mut(state: &mut OneCalcHostState) -> Option<&mut FormulaSpaceState> {
@@ -192,13 +200,22 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ids::FormulaSpaceId;
     use crate::state::FormulaSpaceState;
     use crate::ui::editor::commands::EditorInputKind;
     use crate::ui::editor::geometry::{
         EditorMeasuredOverlayBox, EditorOverlayGeometrySnapshot, EditorOverlayMeasurementEvent,
     };
     use crate::ui::editor::state::EditorSelection;
+    use crate::{
+        domain::ids::FormulaSpaceId,
+        services::{
+            programmatic_testing::{
+                ProgrammaticArtifactCatalogEntry, ProgrammaticComparisonStatus,
+                ProgrammaticOpenModeHint,
+            },
+            retained_artifacts::RetainedArtifactImportRequest,
+        },
+    };
 
     #[test]
     fn input_event_updates_raw_text_and_editor_state_for_active_formula_space() {
@@ -328,6 +345,45 @@ mod tests {
                 .and_then(|geometry| geometry.caret_box.as_ref())
                 .map(|box_geometry| box_geometry.left_px),
             Some(64)
+        );
+    }
+
+    #[test]
+    fn open_retained_artifact_routes_shell_to_workbench_context() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+        crate::services::retained_artifacts::import_programmatic_artifact(
+            &mut state,
+            RetainedArtifactImportRequest {
+                formula_space_id: formula_space_id.clone(),
+                catalog_entry: ProgrammaticArtifactCatalogEntry {
+                    artifact_id: "artifact-1".to_string(),
+                    case_id: "case-1".to_string(),
+                    comparison_status: ProgrammaticComparisonStatus::Mismatched,
+                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                },
+                discrepancy_summary: Some("dna=3 excel=4".to_string()),
+            },
+        );
+
+        let opened = open_retained_artifact_from_catalog(&mut state, "artifact-1");
+
+        assert!(opened);
+        assert_eq!(
+            state.retained_artifacts.open_artifact_id.as_deref(),
+            Some("artifact-1")
+        );
+        assert_eq!(
+            state.workspace_shell.active_formula_space_id.as_ref(),
+            Some(&formula_space_id)
+        );
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            crate::state::AppMode::Workbench
         );
     }
 }

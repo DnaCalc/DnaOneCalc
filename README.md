@@ -34,6 +34,7 @@ Verification entrypoints:
 - `powershell -File .\scripts\run-host-acceptance-fast.ps1` runs the dev-velocity smoke family.
 - `powershell -File .\scripts\run-host-integration.ps1` runs the deeper retained/document/workspace integration family.
 - `powershell -File .\scripts\run-host-acceptance-full.ps1` runs the full `dnaonecalc-host` acceptance suite.
+- `powershell -File .\scripts\run-browser-tests.ps1` runs the wasm/browser-host suite using a repo-local `wasm-bindgen-test-runner` bootstrap.
 
 Cross-repo rule:
 - This repo may read sibling repos under `C:\Work\DnaCalc` for upstream contracts, evidence, and alignment.

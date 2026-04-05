@@ -13,6 +13,7 @@ pub fn WorkbenchShell(
     lineage: WorkbenchLineageClusterViewModel,
     actions: WorkbenchActionsClusterViewModel,
     catalog: WorkbenchCatalogClusterViewModel,
+    #[prop(default = None)] on_open_retained_artifact: Option<Callback<String>>,
 ) -> impl IntoView {
     let outcome_summary = outcome
         .outcome_summary
@@ -96,22 +97,37 @@ pub fn WorkbenchShell(
                         {catalog
                             .retained_catalog_items
                             .into_iter()
-                            .map(|item| view! {
-                                <li
-                                    data-role="retained-catalog-item"
-                                    data-artifact-id=item.artifact_id.clone()
-                                    data-comparison-status=item.comparison_status.clone()
-                                    data-open=if item.is_open { "true" } else { "false" }
-                                >
-                                    <span data-role="retained-catalog-label">{item.artifact_id.clone()}</span>
-                                    <span data-role="retained-catalog-status">{item.comparison_status.clone()}</span>
-                                    {item
-                                        .discrepancy_summary
-                                        .as_ref()
-                                        .map(|summary| view! {
-                                            <span data-role="retained-catalog-summary">{summary.clone()}</span>
-                                        })}
-                                </li>
+                            .map(|item| {
+                                let on_open_retained_artifact = on_open_retained_artifact.clone();
+                                let artifact_id = item.artifact_id.clone();
+                                view! {
+                                    <li
+                                        data-role="retained-catalog-item"
+                                        data-artifact-id=item.artifact_id.clone()
+                                        data-comparison-status=item.comparison_status.clone()
+                                        data-open=if item.is_open { "true" } else { "false" }
+                                    >
+                                        <span data-role="retained-catalog-label">{item.artifact_id.clone()}</span>
+                                        <span data-role="retained-catalog-status">{item.comparison_status.clone()}</span>
+                                        {item
+                                            .discrepancy_summary
+                                            .as_ref()
+                                            .map(|summary| view! {
+                                                <span data-role="retained-catalog-summary">{summary.clone()}</span>
+                                            })}
+                                        <button
+                                            type="button"
+                                            data-role="retained-catalog-open"
+                                            on:click=move |_| {
+                                                if let Some(callback) = on_open_retained_artifact.as_ref() {
+                                                    callback.run(artifact_id.clone());
+                                                }
+                                            }
+                                        >
+                                            "Open"
+                                        </button>
+                                    </li>
+                                }
                             })
                             .collect_view()}
                     </ul>
@@ -166,6 +182,7 @@ mod tests {
                         is_open: true,
                     }],
                 }
+                on_open_retained_artifact=None
             />
         }
         .to_html();
@@ -179,6 +196,7 @@ mod tests {
         assert!(html.contains("dna=1 excel=2"));
         assert!(html.contains("data-panel=\"workbench-catalog\""));
         assert!(html.contains("data-role=\"retained-catalog-item\""));
+        assert!(html.contains("data-role=\"retained-catalog-open\""));
         assert!(html.contains("data-open=\"true\""));
         assert!(html.contains("data-panel=\"workbench-lineage\""));
         assert!(html.contains("data-panel=\"workbench-compare\""));

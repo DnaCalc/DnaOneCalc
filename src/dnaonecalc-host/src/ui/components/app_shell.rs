@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
     apply_editor_overlay_measurement_to_active_formula_space,
+    open_retained_artifact_from_catalog,
 };
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
@@ -63,6 +64,11 @@ pub fn OneCalcShellApp(
             let _ = apply_editor_overlay_measurement_to_active_formula_space(state, measurement_event);
         });
     });
+    let on_open_retained_artifact = Callback::new(move |artifact_id: String| {
+        state.update(|state| {
+            let _ = open_retained_artifact_from_catalog(state, &artifact_id);
+        });
+    });
 
     view! {
         <div class="onecalc-app" data-host-app="onecalc">
@@ -107,6 +113,7 @@ pub fn OneCalcShellApp(
                                     lineage=build_workbench_lineage_cluster(&view_model)
                                     actions=build_workbench_actions_cluster(&view_model)
                                     catalog=build_workbench_catalog_cluster(&view_model)
+                                    on_open_retained_artifact=Some(on_open_retained_artifact)
                                 />
                             </ShellFrame>
                         }
