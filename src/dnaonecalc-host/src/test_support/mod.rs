@@ -6,6 +6,8 @@ use crate::adapters::oxfml::{
 };
 
 pub fn sample_editor_document(source_text: &str) -> EditorDocument {
+    let tokens = sample_editor_tokens(source_text);
+
     EditorDocument {
         source_text: source_text.to_string(),
         text_change_range: Some(FormulaTextChangeRange {
@@ -16,11 +18,7 @@ pub fn sample_editor_document(source_text: &str) -> EditorDocument {
         editor_syntax_snapshot: EditorSyntaxSnapshot {
             formula_stable_id: "formula-1".to_string(),
             green_tree_key: "green-1".to_string(),
-            tokens: vec![EditorToken {
-                text: source_text.to_string(),
-                span_start: 0,
-                span_len: source_text.chars().count(),
-            }],
+            tokens,
         },
         live_diagnostics: LiveDiagnosticSnapshot {
             diagnostics: vec![LiveDiagnostic {
@@ -70,5 +68,41 @@ pub fn sample_editor_document(source_text: &str) -> EditorDocument {
             profile_summary: "OC-H0".to_string(),
             blocked_reason: None,
         }),
+    }
+}
+
+fn sample_editor_tokens(source_text: &str) -> Vec<EditorToken> {
+    if source_text == "=SUM(1,2)" {
+        vec![
+            token("=", 0),
+            token("SUM", 1),
+            token("(", 4),
+            token("1", 5),
+            token(",", 6),
+            token("2", 7),
+            token(")", 8),
+        ]
+    } else if source_text == "=LET(x,1,x)" {
+        vec![
+            token("=", 0),
+            token("LET", 1),
+            token("(", 4),
+            token("x", 5),
+            token(",", 6),
+            token("1", 7),
+            token(",", 8),
+            token("x", 9),
+            token(")", 10),
+        ]
+    } else {
+        vec![token(source_text, 0)]
+    }
+}
+
+fn token(text: &str, span_start: usize) -> EditorToken {
+    EditorToken {
+        text: text.to_string(),
+        span_start,
+        span_len: text.chars().count(),
     }
 }

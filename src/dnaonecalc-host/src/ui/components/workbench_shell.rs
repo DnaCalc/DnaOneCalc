@@ -1,13 +1,16 @@
 use leptos::prelude::*;
 
 use crate::ui::panels::workbench::{
-    WorkbenchEvidenceClusterViewModel, WorkbenchOutcomeClusterViewModel,
+    WorkbenchActionsClusterViewModel, WorkbenchEvidenceClusterViewModel,
+    WorkbenchLineageClusterViewModel, WorkbenchOutcomeClusterViewModel,
 };
 
 #[component]
 pub fn WorkbenchShell(
     outcome: WorkbenchOutcomeClusterViewModel,
     evidence: WorkbenchEvidenceClusterViewModel,
+    lineage: WorkbenchLineageClusterViewModel,
+    actions: WorkbenchActionsClusterViewModel,
 ) -> impl IntoView {
     let outcome_summary = outcome
         .outcome_summary
@@ -36,8 +39,31 @@ pub fn WorkbenchShell(
 
                 <section class="onecalc-workbench-shell__evidence-card" data-panel="workbench-evidence">
                     <h2>"Evidence"</h2>
-                    <pre>{evidence.raw_entered_cell_text}</pre>
+                    <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
                     <div>{evidence_summary}</div>
+                </section>
+
+                <section class="onecalc-workbench-shell__lineage-card" data-panel="workbench-lineage">
+                    <h2>"Lineage"</h2>
+                    <ul>
+                        {lineage
+                            .lineage_items
+                            .into_iter()
+                            .map(|item| view! { <li>{item}</li> })
+                            .collect_view()}
+                    </ul>
+                </section>
+
+                <section class="onecalc-workbench-shell__actions-card" data-panel="workbench-actions">
+                    <h2>"Actions"</h2>
+                    <div>{actions.recommended_action}</div>
+                    <ul>
+                        {actions
+                            .action_items
+                            .into_iter()
+                            .map(|item| view! { <li>{item}</li> })
+                            .collect_view()}
+                    </ul>
                 </section>
             </div>
         </section>
@@ -60,6 +86,13 @@ mod tests {
                     raw_entered_cell_text: "=SUM(1,2)".to_string(),
                     evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
                 }
+                lineage=WorkbenchLineageClusterViewModel {
+                    lineage_items: vec!["Scenario opened".to_string(), "Evaluation captured".to_string()],
+                }
+                actions=WorkbenchActionsClusterViewModel {
+                    action_items: vec!["Retain snapshot".to_string(), "Prepare handoff".to_string()],
+                    recommended_action: "Retain and compare".to_string(),
+                }
             />
         }
         .to_html();
@@ -67,5 +100,7 @@ mod tests {
         assert!(html.contains("Twin Oracle Workbench"));
         assert!(html.contains("Retain and compare"));
         assert!(html.contains("green=green-1"));
+        assert!(html.contains("data-panel=\"workbench-lineage\""));
+        assert!(html.contains("Prepare handoff"));
     }
 }

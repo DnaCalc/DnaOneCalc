@@ -119,7 +119,7 @@ pub fn ExploreShell(
 mod tests {
     use super::*;
     use crate::services::explore_mode::{ExploreDiagnosticView, ExploreViewModel};
-    use crate::ui::editor::render_projection::SyntaxRun;
+    use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
     use crate::ui::panels::explore::{
         build_explore_editor_cluster, build_explore_result_cluster,
     };
@@ -132,6 +132,7 @@ mod tests {
                 text: "SUM".to_string(),
                 span_start: 1,
                 span_len: 3,
+                role: SyntaxTokenRole::Function,
             }],
             diagnostics: vec![ExploreDiagnosticView {
                 diagnostic_id: "diag-1".to_string(),

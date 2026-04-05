@@ -47,6 +47,7 @@ pub fn build_explore_result_cluster(
 mod tests {
     use super::*;
     use crate::services::explore_mode::ExploreViewModel;
+    use crate::ui::editor::render_projection::SyntaxTokenRole;
 
     #[test]
     fn explore_editor_cluster_keeps_editing_surface_fields() {
@@ -56,6 +57,7 @@ mod tests {
                 text: "SUM".to_string(),
                 span_start: 1,
                 span_len: 3,
+                role: SyntaxTokenRole::Function,
             }],
             diagnostics: vec![ExploreDiagnosticView {
                 diagnostic_id: "diag-1".to_string(),

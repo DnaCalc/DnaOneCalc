@@ -1,10 +1,21 @@
 use crate::adapters::oxfml::EditorSyntaxSnapshot;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxTokenRole {
+    Operator,
+    Function,
+    Number,
+    Delimiter,
+    Identifier,
+    Text,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxRun {
     pub text: String,
     pub span_start: usize,
     pub span_len: usize,
+    pub role: SyntaxTokenRole,
 }
 
 pub fn syntax_runs_from_snapshot(snapshot: &EditorSyntaxSnapshot) -> Vec<SyntaxRun> {
@@ -15,8 +26,29 @@ pub fn syntax_runs_from_snapshot(snapshot: &EditorSyntaxSnapshot) -> Vec<SyntaxR
             text: token.text.clone(),
             span_start: token.span_start,
             span_len: token.span_len,
+            role: classify_token_role(&token.text),
         })
         .collect()
+}
+
+fn classify_token_role(text: &str) -> SyntaxTokenRole {
+    if text == "=" {
+        SyntaxTokenRole::Operator
+    } else if matches!(text, "(" | ")" | ",") {
+        SyntaxTokenRole::Delimiter
+    } else if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        SyntaxTokenRole::Number
+    } else if !text.is_empty() && text.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
+        SyntaxTokenRole::Function
+    } else if !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        SyntaxTokenRole::Identifier
+    } else {
+        SyntaxTokenRole::Text
+    }
 }
 
 #[cfg(test)]
@@ -47,5 +79,7 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[1].text, "SUM");
         assert_eq!(runs[1].span_start, 1);
+        assert_eq!(runs[0].role, SyntaxTokenRole::Operator);
+        assert_eq!(runs[1].role, SyntaxTokenRole::Function);
     }
 }

@@ -14,7 +14,8 @@ fn ex_04_explore_view_model_uses_oxfml_editor_document_for_surface_projection() 
 
     assert_eq!(view_model.raw_entered_cell_text, "=LET(x,1,x)");
     assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
-    assert_eq!(view_model.syntax_runs.len(), 1);
+    assert_eq!(view_model.syntax_runs.len(), 9);
+    assert_eq!(view_model.syntax_runs[1].text, "LET");
     assert_eq!(view_model.diagnostics.len(), 1);
     assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
 }

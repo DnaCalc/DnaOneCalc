@@ -1,5 +1,6 @@
 use crate::state::OneCalcHostState;
 
+pub mod host_mount;
 pub mod intents;
 
 #[derive(Debug, Default)]

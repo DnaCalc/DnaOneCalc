@@ -12,6 +12,17 @@ pub struct WorkbenchEvidenceClusterViewModel {
     pub evidence_summary: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchLineageClusterViewModel {
+    pub lineage_items: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchActionsClusterViewModel {
+    pub action_items: Vec<String>,
+    pub recommended_action: String,
+}
+
 pub fn build_workbench_outcome_cluster(
     view_model: &WorkbenchViewModel,
 ) -> WorkbenchOutcomeClusterViewModel {
@@ -30,6 +41,23 @@ pub fn build_workbench_evidence_cluster(
     }
 }
 
+pub fn build_workbench_lineage_cluster(
+    view_model: &WorkbenchViewModel,
+) -> WorkbenchLineageClusterViewModel {
+    WorkbenchLineageClusterViewModel {
+        lineage_items: view_model.lineage_items.clone(),
+    }
+}
+
+pub fn build_workbench_actions_cluster(
+    view_model: &WorkbenchViewModel,
+) -> WorkbenchActionsClusterViewModel {
+    WorkbenchActionsClusterViewModel {
+        action_items: view_model.action_items.clone(),
+        recommended_action: view_model.recommended_action.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,15 +69,21 @@ mod tests {
             raw_entered_cell_text: "=SUM(1,2)".to_string(),
             outcome_summary: Some("Number".to_string()),
             evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
+            lineage_items: vec!["Scenario opened".to_string()],
+            action_items: vec!["Retain snapshot".to_string()],
             recommended_action: "Retain and compare".to_string(),
         };
 
         let outcome = build_workbench_outcome_cluster(&view_model);
         let evidence = build_workbench_evidence_cluster(&view_model);
+        let lineage = build_workbench_lineage_cluster(&view_model);
+        let actions = build_workbench_actions_cluster(&view_model);
 
         assert_eq!(outcome.outcome_summary.as_deref(), Some("Number"));
         assert_eq!(outcome.recommended_action, "Retain and compare");
         assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(lineage.lineage_items.len(), 1);
+        assert_eq!(actions.action_items.len(), 1);
         assert!(evidence
             .evidence_summary
             .as_deref()

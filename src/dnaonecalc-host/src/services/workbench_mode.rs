@@ -5,6 +5,8 @@ pub struct WorkbenchViewModel {
     pub raw_entered_cell_text: String,
     pub outcome_summary: Option<String>,
     pub evidence_summary: Option<String>,
+    pub lineage_items: Vec<String>,
+    pub action_items: Vec<String>,
     pub recommended_action: String,
 }
 
@@ -21,6 +23,20 @@ pub fn build_workbench_view_model(formula_space: &FormulaSpaceState) -> Workbenc
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         outcome_summary: formula_space.latest_evaluation_summary.clone(),
         evidence_summary,
+        lineage_items: vec![
+            "Scenario opened".to_string(),
+            "Editor document projected".to_string(),
+            if formula_space.latest_evaluation_summary.is_some() {
+                "Evaluation captured".to_string()
+            } else {
+                "Evaluation pending".to_string()
+            },
+        ],
+        action_items: vec![
+            "Retain snapshot".to_string(),
+            "Open compare".to_string(),
+            "Prepare handoff".to_string(),
+        ],
         recommended_action: if formula_space.latest_evaluation_summary.is_some() {
             "Retain and compare".to_string()
         } else {
@@ -48,6 +64,8 @@ mod tests {
             .evidence_summary
             .as_deref()
             .is_some_and(|value| value.contains("green=green-1")));
+        assert_eq!(view_model.lineage_items.len(), 3);
+        assert_eq!(view_model.action_items.len(), 3);
         assert_eq!(view_model.recommended_action, "Retain and compare");
     }
 }

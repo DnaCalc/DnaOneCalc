@@ -9,10 +9,12 @@ use crate::ui::components::explore_shell::ExploreShell;
 use crate::ui::components::inspect_shell::InspectShell;
 use crate::ui::components::shell_frame::ShellFrame;
 use crate::ui::components::workbench_shell::WorkbenchShell;
+use crate::ui::design_tokens::theme::ThemeStyleTag;
 use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 use crate::ui::panels::workbench::{
-    build_workbench_evidence_cluster, build_workbench_outcome_cluster,
+    build_workbench_actions_cluster, build_workbench_evidence_cluster,
+    build_workbench_lineage_cluster, build_workbench_outcome_cluster,
 };
 
 #[component]
@@ -24,54 +26,59 @@ pub fn OneCalcShellApp(initial_state: OneCalcHostState) -> impl IntoView {
     });
 
     view! {
-        {move || {
-            let current_state = state.get();
-            match (
-                build_shell_frame_view_model(&current_state),
-                build_active_mode_projection(&current_state),
-            ) {
-                (Some(frame), Some(ActiveModeProjection::Explore(view_model))) => {
-                    view! {
-                        <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
-                            <ExploreShell
-                                editor=build_explore_editor_cluster(&view_model)
-                                result=build_explore_result_cluster(&view_model)
-                            />
-                        </ShellFrame>
+        <div class="onecalc-app" data-host-app="onecalc">
+            <ThemeStyleTag />
+            {move || {
+                let current_state = state.get();
+                match (
+                    build_shell_frame_view_model(&current_state),
+                    build_active_mode_projection(&current_state),
+                ) {
+                    (Some(frame), Some(ActiveModeProjection::Explore(view_model))) => {
+                        view! {
+                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                                <ExploreShell
+                                    editor=build_explore_editor_cluster(&view_model)
+                                    result=build_explore_result_cluster(&view_model)
+                                />
+                            </ShellFrame>
+                        }
+                        .into_any()
                     }
-                    .into_any()
-                }
-                (Some(frame), Some(ActiveModeProjection::Inspect(view_model))) => {
-                    view! {
-                        <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
-                            <InspectShell
-                                walk=build_inspect_walk_cluster(&view_model)
-                                summary=build_inspect_summary_cluster(&view_model)
-                            />
-                        </ShellFrame>
+                    (Some(frame), Some(ActiveModeProjection::Inspect(view_model))) => {
+                        view! {
+                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                                <InspectShell
+                                    walk=build_inspect_walk_cluster(&view_model)
+                                    summary=build_inspect_summary_cluster(&view_model)
+                                />
+                            </ShellFrame>
+                        }
+                        .into_any()
                     }
-                    .into_any()
-                }
-                (Some(frame), Some(ActiveModeProjection::Workbench(view_model))) => {
-                    view! {
-                        <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
-                            <WorkbenchShell
-                                outcome=build_workbench_outcome_cluster(&view_model)
-                                evidence=build_workbench_evidence_cluster(&view_model)
-                            />
-                        </ShellFrame>
+                    (Some(frame), Some(ActiveModeProjection::Workbench(view_model))) => {
+                        view! {
+                            <ShellFrame frame=frame on_mode_select=Some(on_mode_select)>
+                                <WorkbenchShell
+                                    outcome=build_workbench_outcome_cluster(&view_model)
+                                    evidence=build_workbench_evidence_cluster(&view_model)
+                                    lineage=build_workbench_lineage_cluster(&view_model)
+                                    actions=build_workbench_actions_cluster(&view_model)
+                                />
+                            </ShellFrame>
+                        }
+                        .into_any()
                     }
-                    .into_any()
+                    _ => view! {
+                        <section class="onecalc-shell-frame__empty">
+                            <h1>"DNA OneCalc"</h1>
+                            <div>"No active formula space"</div>
+                        </section>
+                    }
+                    .into_any(),
                 }
-                _ => view! {
-                    <section class="onecalc-shell-frame__empty">
-                        <h1>"DNA OneCalc"</h1>
-                        <div>"No active formula space"</div>
-                    </section>
-                }
-                .into_any(),
-            }
-        }}
+            }}
+        </div>
     }
 }
 
@@ -98,6 +105,7 @@ mod tests {
 
         let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+        assert!(html.contains("data-theme=\"onecalc-theme\""));
         assert!(html.contains("DNA OneCalc"));
         assert!(html.contains("Formula Explorer"));
         assert!(html.contains("data-mode=\"Explore\""));
@@ -120,6 +128,7 @@ mod tests {
 
         let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+        assert!(html.contains("data-theme=\"onecalc-theme\""));
         assert!(html.contains("DNA OneCalc"));
         assert!(html.contains("Semantic Inspect"));
         assert!(html.contains("data-mode=\"Inspect\""));
@@ -142,6 +151,7 @@ mod tests {
 
         let html = view! { <OneCalcShellApp initial_state=state /> }.to_html();
 
+        assert!(html.contains("data-theme=\"onecalc-theme\""));
         assert!(html.contains("DNA OneCalc"));
         assert!(html.contains("Twin Oracle Workbench"));
         assert!(html.contains("data-mode=\"Workbench\""));

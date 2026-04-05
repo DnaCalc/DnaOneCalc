@@ -1,5 +1,5 @@
 use crate::state::FormulaSpaceState;
-use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun};
+use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreViewModel {
@@ -56,6 +56,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
                 text: formula_space.raw_entered_cell_text.clone(),
                 span_start: 0,
                 span_len: formula_space.raw_entered_cell_text.chars().count(),
+                role: SyntaxTokenRole::Text,
             }],
             Vec::new(),
             None,
