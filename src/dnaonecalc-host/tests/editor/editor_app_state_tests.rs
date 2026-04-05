@@ -44,3 +44,23 @@ fn ex_16_editor_command_updates_caret_and_selection_in_host_state() {
     assert_eq!(active.editor_surface_state.caret.offset, 8);
     assert!(active.editor_surface_state.selection.is_collapsed());
 }
+
+#[test]
+fn ex_18_shift_arrow_command_expands_selection_in_host_state() {
+    let formula_space_id = FormulaSpaceId::new("space-1");
+    let mut state = OneCalcHostState::default();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .formula_spaces
+        .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+    let changed =
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::ExtendSelectionLeft);
+
+    assert!(changed);
+    let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+    assert_eq!(active.editor_surface_state.caret.offset, 8);
+    assert_eq!(active.editor_surface_state.selection.anchor, 9);
+    assert_eq!(active.editor_surface_state.selection.focus, 8);
+    assert!(!active.editor_surface_state.selection.is_collapsed());
+}

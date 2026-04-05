@@ -4,6 +4,8 @@ use crate::ui::editor::state::{EditorCaret, EditorSelection, EditorSurfaceState}
 pub enum EditorCommand {
     MoveCaretLeft,
     MoveCaretRight,
+    ExtendSelectionLeft,
+    ExtendSelectionRight,
     IndentWithSpaces,
     OutdentWithSpaces,
 }
@@ -46,6 +48,34 @@ pub fn apply_editor_command(
                 },
             }
         }
+        EditorCommand::ExtendSelectionLeft => {
+            let next = state.caret.offset.saturating_sub(1);
+            EditorCommandResult {
+                text: text.to_string(),
+                state: EditorSurfaceState {
+                    caret: EditorCaret { offset: next },
+                    selection: EditorSelection {
+                        anchor: state.selection.anchor,
+                        focus: next,
+                    },
+                    scroll_window: state.scroll_window.clone(),
+                },
+            }
+        }
+        EditorCommand::ExtendSelectionRight => {
+            let next = (state.caret.offset + 1).min(text.chars().count());
+            EditorCommandResult {
+                text: text.to_string(),
+                state: EditorSurfaceState {
+                    caret: EditorCaret { offset: next },
+                    selection: EditorSelection {
+                        anchor: state.selection.anchor,
+                        focus: next,
+                    },
+                    scroll_window: state.scroll_window.clone(),
+                },
+            }
+        }
         EditorCommand::IndentWithSpaces => indent_with_spaces(text, state),
         EditorCommand::OutdentWithSpaces => outdent_with_spaces(text, state),
     }
@@ -55,6 +85,8 @@ pub fn keydown_to_command(key: &str, shift_key: bool) -> Option<EditorCommand> {
     match (key, shift_key) {
         ("ArrowLeft", false) => Some(EditorCommand::MoveCaretLeft),
         ("ArrowRight", false) => Some(EditorCommand::MoveCaretRight),
+        ("ArrowLeft", true) => Some(EditorCommand::ExtendSelectionLeft),
+        ("ArrowRight", true) => Some(EditorCommand::ExtendSelectionRight),
         ("Tab", false) => Some(EditorCommand::IndentWithSpaces),
         ("Tab", true) => Some(EditorCommand::OutdentWithSpaces),
         _ => None,
@@ -213,6 +245,36 @@ mod tests {
     }
 
     #[test]
+    fn extend_selection_commands_grow_selection_from_current_anchor() {
+        let text = "=SUM(1,2)";
+        let state = EditorSurfaceState {
+            caret: EditorCaret { offset: 4 },
+            selection: EditorSelection::collapsed(4),
+            scroll_window: EditorScrollWindow {
+                first_visible_line: 0,
+                visible_line_count: 4,
+            },
+        };
+
+        let extended_left =
+            apply_editor_command(text, &state, EditorCommand::ExtendSelectionLeft);
+        assert_eq!(extended_left.state.caret.offset, 3);
+        assert_eq!(extended_left.state.selection.anchor, 4);
+        assert_eq!(extended_left.state.selection.focus, 3);
+        assert!(!extended_left.state.selection.is_collapsed());
+
+        let extended_right = apply_editor_command(
+            text,
+            &extended_left.state,
+            EditorCommand::ExtendSelectionRight,
+        );
+        assert_eq!(extended_right.state.caret.offset, 4);
+        assert_eq!(extended_right.state.selection.anchor, 4);
+        assert_eq!(extended_right.state.selection.focus, 4);
+        assert!(extended_right.state.selection.is_collapsed());
+    }
+
+    #[test]
     fn indent_with_spaces_inserts_four_spaces_on_selected_lines() {
         let text = "SUM(\n1,\n2)";
         let state = EditorSurfaceState {
@@ -252,6 +314,11 @@ mod tests {
     fn keydown_mapping_recognizes_tab_and_arrow_commands() {
         assert_eq!(keydown_to_command("ArrowLeft", false), Some(EditorCommand::MoveCaretLeft));
         assert_eq!(keydown_to_command("ArrowRight", false), Some(EditorCommand::MoveCaretRight));
+        assert_eq!(keydown_to_command("ArrowLeft", true), Some(EditorCommand::ExtendSelectionLeft));
+        assert_eq!(
+            keydown_to_command("ArrowRight", true),
+            Some(EditorCommand::ExtendSelectionRight)
+        );
         assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
         assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
     }
