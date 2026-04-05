@@ -29,6 +29,8 @@ fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     assert!(html.contains("data-role=\"editor-input\""));
     assert!(html.contains("data-role=\"syntax-layer\""));
     assert!(html.contains("data-token-role=\"function\""));
+    assert!(html.contains("data-role=\"caret-indicator\""));
+    assert!(html.contains("data-role=\"selection-indicator\""));
     assert!(html.contains("Evaluation summary: "));
     assert!(html.contains("Number"));
 }

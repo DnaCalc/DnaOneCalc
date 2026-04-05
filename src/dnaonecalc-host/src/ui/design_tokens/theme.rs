@@ -156,6 +156,37 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-family: var(--oc-font-mono);
 }
 
+.onecalc-formula-editor-surface__body {
+  position: relative;
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-formula-editor-surface__textarea {
+  min-height: 10rem;
+  width: 100%;
+  padding: var(--oc-space-3);
+  border-radius: 10px;
+  border: 1px solid var(--oc-color-border);
+  background: #fffdf8;
+  color: var(--oc-color-ink);
+  font-family: var(--oc-font-mono);
+}
+
+.onecalc-formula-editor-surface__syntax-layer,
+.onecalc-formula-editor-surface__selection-indicator,
+.onecalc-formula-editor-surface__caret-indicator,
+.onecalc-formula-editor-surface__scroll-indicator {
+  font-family: var(--oc-font-mono);
+  font-size: 0.9rem;
+}
+
+.onecalc-formula-editor-surface__selection-indicator,
+.onecalc-formula-editor-surface__caret-indicator,
+.onecalc-formula-editor-surface__scroll-indicator {
+  color: var(--oc-color-muted);
+}
+
 .onecalc-token[data-token-role=\"operator\"] { color: var(--oc-color-warm); }
 .onecalc-token[data-token-role=\"function\"] { color: var(--oc-color-accent); font-weight: 600; }
 .onecalc-token[data-token-role=\"number\"] { color: var(--oc-color-warning); }

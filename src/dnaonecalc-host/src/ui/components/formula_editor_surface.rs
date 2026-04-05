@@ -1,10 +1,17 @@
 use leptos::prelude::*;
 
+use crate::ui::editor::commands::{keydown_to_command, EditorCommand, EditorInputEvent};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
+use crate::ui::editor::state::EditorSurfaceState;
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
 #[component]
-pub fn FormulaEditorSurface(editor: ExploreEditorClusterViewModel) -> impl IntoView {
+pub fn FormulaEditorSurface(
+    editor: ExploreEditorClusterViewModel,
+    #[prop(optional)] editor_state: Option<EditorSurfaceState>,
+    #[prop(optional)] on_input_event: Option<Callback<EditorInputEvent>>,
+    #[prop(optional)] on_command: Option<Callback<EditorCommand>>,
+) -> impl IntoView {
     let diagnostics_text = if editor.diagnostics.is_empty() {
         "No diagnostics".to_string()
     } else {
@@ -14,6 +21,14 @@ pub fn FormulaEditorSurface(editor: ExploreEditorClusterViewModel) -> impl IntoV
             .map(|diagnostic| format!("{}: {}", diagnostic.diagnostic_id, diagnostic.message))
             .collect::<Vec<_>>()
             .join(" | ")
+    };
+    let editor_state = editor_state.unwrap_or_else(|| EditorSurfaceState::for_text(&editor.raw_entered_cell_text));
+    let selection_start = editor_state.selection.start();
+    let selection_end = editor_state.selection.end();
+    let selection_label = if editor_state.selection.is_collapsed() {
+        "collapsed"
+    } else {
+        "range"
     };
 
     view! {
@@ -29,6 +44,20 @@ pub fn FormulaEditorSurface(editor: ExploreEditorClusterViewModel) -> impl IntoV
                     class="onecalc-formula-editor-surface__textarea"
                     data-role="editor-input"
                     prop:value=editor.raw_entered_cell_text.clone()
+                    on:input=move |ev| {
+                        if let Some(callback) = on_input_event.as_ref() {
+                            callback.run(EditorInputEvent {
+                                text: event_target_value(&ev),
+                            });
+                        }
+                    }
+                    on:keydown=move |ev| {
+                        if let Some(command_callback) = on_command.as_ref() {
+                            if let Some(command) = keydown_to_command(&ev.key(), ev.shift_key()) {
+                                command_callback.run(command);
+                            }
+                        }
+                    }
                 />
                 <div class="onecalc-formula-editor-surface__syntax-layer" data-role="syntax-layer">
                     {editor
@@ -36,6 +65,37 @@ pub fn FormulaEditorSurface(editor: ExploreEditorClusterViewModel) -> impl IntoV
                         .iter()
                         .map(render_syntax_run)
                         .collect_view()}
+                </div>
+                <div
+                    class="onecalc-formula-editor-surface__selection-indicator"
+                    data-role="selection-indicator"
+                    data-selection-start=selection_start
+                    data-selection-end=selection_end
+                    data-selection-kind=selection_label
+                >
+                    "Selection: "
+                    {selection_start}
+                    ".."
+                    {selection_end}
+                </div>
+                <div
+                    class="onecalc-formula-editor-surface__caret-indicator"
+                    data-role="caret-indicator"
+                    data-caret-offset=editor_state.caret.offset
+                >
+                    "Caret: "
+                    {editor_state.caret.offset}
+                </div>
+                <div
+                    class="onecalc-formula-editor-surface__scroll-indicator"
+                    data-role="scroll-indicator"
+                    data-first-visible-line=editor_state.scroll_window.first_visible_line
+                    data-visible-lines=editor_state.scroll_window.visible_line_count
+                >
+                    "Scroll: "
+                    {editor_state.scroll_window.first_visible_line}
+                    "/"
+                    {editor_state.scroll_window.visible_line_count}
                 </div>
             </div>
 
@@ -74,6 +134,7 @@ fn render_syntax_run(run: &SyntaxRun) -> AnyView {
 mod tests {
     use super::*;
     use crate::services::explore_mode::ExploreDiagnosticView;
+    use crate::ui::editor::state::{EditorCaret, EditorScrollWindow, EditorSelection};
 
     #[test]
     fn formula_editor_surface_renders_textarea_and_token_layer() {
@@ -107,6 +168,14 @@ mod tests {
                     green_tree_key: Some("green-1".to_string()),
                     reused_green_tree: false,
                 }
+                editor_state=EditorSurfaceState {
+                    caret: EditorCaret { offset: 4 },
+                    selection: EditorSelection { anchor: 1, focus: 4 },
+                    scroll_window: EditorScrollWindow {
+                        first_visible_line: 0,
+                        visible_line_count: 6,
+                    },
+                }
             />
         }
         .to_html();
@@ -115,5 +184,8 @@ mod tests {
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-role=\"syntax-layer\""));
         assert!(html.contains("data-token-role=\"function\""));
+        assert!(html.contains("data-role=\"caret-indicator\""));
+        assert!(html.contains("data-role=\"selection-indicator\""));
+        assert!(html.contains("data-selection-kind=\"range\""));
     }
 }

@@ -9,15 +9,32 @@ pub enum HostMountTarget {
     WebBrowser,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostBootstrapSpec {
+    pub target: HostMountTarget,
+    pub mount_element_id: &'static str,
+    pub document_title: &'static str,
+}
+
+pub fn bootstrap_spec(target: HostMountTarget) -> HostBootstrapSpec {
+    HostBootstrapSpec {
+        target,
+        mount_element_id: "onecalc-root",
+        document_title: "DNA OneCalc",
+    }
+}
+
 pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostState) -> String {
     let host_label = match target {
         HostMountTarget::DesktopTauri => "desktop-tauri",
         HostMountTarget::WebBrowser => "web-browser",
     };
+    let spec = bootstrap_spec(target);
 
     let body = view! { <OneCalcShellApp initial_state=initial_state /> }.to_html();
     format!(
-        "<div data-host-target=\"{host_label}\" data-shell-root=\"onecalc\">{body}</div>"
+        "<div id=\"{}\" data-host-target=\"{host_label}\" data-shell-root=\"onecalc\">{body}</div>",
+        spec.mount_element_id
     )
 }
 
@@ -26,10 +43,12 @@ pub fn render_shell_document(target: HostMountTarget, initial_state: OneCalcHost
         HostMountTarget::DesktopTauri => "desktop-tauri",
         HostMountTarget::WebBrowser => "web-browser",
     };
+    let spec = bootstrap_spec(target);
     let body = render_shell_html(target, initial_state);
 
     format!(
-        "<!doctype html><html data-host-target=\"{host_label}\"><head><meta charset=\"utf-8\"><title>DNA OneCalc</title></head><body>{body}</body></html>"
+        "<!doctype html><html data-host-target=\"{host_label}\"><head><meta charset=\"utf-8\"><title>{}</title></head><body>{body}</body></html>",
+        spec.document_title
     )
 }
 
@@ -57,6 +76,18 @@ mod tests {
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("<title>DNA OneCalc</title>"));
         assert!(html.contains("data-shell-root=\"onecalc\""));
+        assert!(html.contains("id=\"onecalc-root\""));
         assert!(html.contains("data-host-target=\"desktop-tauri\""));
+    }
+
+    #[test]
+    fn bootstrap_spec_is_shared_between_desktop_and_web() {
+        let desktop = bootstrap_spec(HostMountTarget::DesktopTauri);
+        let web = bootstrap_spec(HostMountTarget::WebBrowser);
+
+        assert_eq!(desktop.mount_element_id, "onecalc-root");
+        assert_eq!(web.mount_element_id, "onecalc-root");
+        assert_eq!(desktop.document_title, "DNA OneCalc");
+        assert_eq!(web.document_title, "DNA OneCalc");
     }
 }
