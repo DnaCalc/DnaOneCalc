@@ -1,5 +1,7 @@
 use crate::state::OneCalcHostState;
 
+pub mod intents;
+
 #[derive(Debug, Default)]
 pub struct OneCalcHostApp {
     state: OneCalcHostState,

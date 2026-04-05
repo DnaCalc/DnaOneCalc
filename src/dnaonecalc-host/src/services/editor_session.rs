@@ -1,4 +1,7 @@
-use crate::adapters::oxfml::EditorDocument;
+use crate::adapters::oxfml::{
+    EditorDocument, FormulaEditRequest, OxfmlEditorBridge, OxfmlEditorBridgeError,
+};
+use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
 use crate::state::{CompletionHelpState, FormulaSpaceCollectionState, FormulaSpaceState};
 
@@ -6,6 +9,30 @@ use crate::state::{CompletionHelpState, FormulaSpaceCollectionState, FormulaSpac
 pub struct EditorSessionService;
 
 impl EditorSessionService {
+    pub fn handle_formula_edit_intent(
+        bridge: &dyn OxfmlEditorBridge,
+        formula_spaces: &mut FormulaSpaceCollectionState,
+        intent: ApplyFormulaEditIntent,
+    ) -> Result<(), EditorSessionError> {
+        let formula_space = formula_spaces
+            .get(&intent.formula_space_id)
+            .ok_or_else(|| EditorSessionError::UnknownFormulaSpace(intent.formula_space_id.clone()))?;
+        let request = FormulaEditRequest {
+            formula_stable_id: intent.formula_stable_id,
+            entered_text: intent.entered_text,
+            cursor_offset: intent.cursor_offset,
+            previous_green_tree_key: formula_space
+                .editor_document
+                .as_ref()
+                .map(|document| document.green_tree_key().to_string()),
+            analysis_stage: intent.analysis_stage,
+        };
+        let result = bridge
+            .apply_formula_edit(request)
+            .map_err(EditorSessionError::Bridge)?;
+        Self::apply_editor_document(formula_spaces, &intent.formula_space_id, result.document)
+    }
+
     pub fn apply_editor_document(
         formula_spaces: &mut FormulaSpaceCollectionState,
         formula_space_id: &FormulaSpaceId,
@@ -35,14 +62,15 @@ fn update_formula_space_from_editor_document(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorSessionError {
     UnknownFormulaSpace(FormulaSpaceId),
+    Bridge(OxfmlEditorBridgeError),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{
-        CompletionProposal, EditorSyntaxSnapshot, FormulaEditReuseSummary,
-        LiveDiagnosticSnapshot, SignatureHelpContext,
+        CompletionProposal, EditorAnalysisStage, EditorSyntaxSnapshot, FormulaEditResult,
+        FormulaEditReuseSummary, LiveDiagnosticSnapshot, SignatureHelpContext,
     };
 
     fn sample_document(source_text: &str) -> EditorDocument {
@@ -98,8 +126,57 @@ mod tests {
                 .editor_document
                 .as_ref()
                 .expect("editor document retained")
-                .green_tree_key(),
+            .green_tree_key(),
             "green-1"
         );
+    }
+
+    struct FakeBridge {
+        document: EditorDocument,
+    }
+
+    impl OxfmlEditorBridge for FakeBridge {
+        fn apply_formula_edit(
+            &self,
+            request: FormulaEditRequest,
+        ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+            assert_eq!(request.formula_stable_id, "formula-1");
+            assert_eq!(request.entered_text, "=SUM(1,2,3)");
+            assert_eq!(request.cursor_offset, 4);
+            assert_eq!(request.analysis_stage, EditorAnalysisStage::SyntaxAndBind);
+            assert!(request.previous_green_tree_key.is_none());
+            Ok(FormulaEditResult {
+                document: self.document.clone(),
+            })
+        }
+    }
+
+    #[test]
+    fn handle_formula_edit_intent_routes_through_bridge_and_updates_space() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut formula_spaces = FormulaSpaceCollectionState::default();
+        formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=1+1",
+        ));
+        let bridge = FakeBridge {
+            document: sample_document("=SUM(1,2,3)"),
+        };
+
+        EditorSessionService::handle_formula_edit_intent(
+            &bridge,
+            &mut formula_spaces,
+            ApplyFormulaEditIntent {
+                formula_space_id: formula_space_id.clone(),
+                formula_stable_id: "formula-1".to_string(),
+                entered_text: "=SUM(1,2,3)".to_string(),
+                cursor_offset: 4,
+                analysis_stage: EditorAnalysisStage::SyntaxAndBind,
+            },
+        )
+        .expect("edit intent should update via bridge");
+
+        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(updated.raw_entered_cell_text, "=SUM(1,2,3)");
     }
 }
