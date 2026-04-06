@@ -21,7 +21,9 @@ fn ex_28_browser_measurement_path_surfaces_dom_measured_overlay_geometry() {
     formula_space.editor_document = Some(sample_editor_document("=LET(x,1,x)"));
     formula_space.editor_surface_state.completion_anchor_offset = Some(4);
     formula_space.editor_surface_state.completion_selected_index = Some(0);
-    formula_space.editor_surface_state.signature_help_anchor_offset = Some(4);
+    formula_space
+        .editor_surface_state
+        .signature_help_anchor_offset = Some(4);
     formula_space.editor_overlay_geometry = Some(EditorOverlayGeometrySnapshot {
         caret_box: Some(EditorMeasuredOverlayBox {
             top_px: 48,
@@ -154,7 +156,9 @@ fn multiline_signature_popup_uses_measured_box_position() {
     let multiline = "=SUM(\n  1,\n  2)";
     let mut formula_space = FormulaSpaceState::new(formula_space_id, multiline);
     formula_space.editor_document = Some(sample_editor_document(multiline));
-    formula_space.editor_surface_state.signature_help_anchor_offset = Some(5);
+    formula_space
+        .editor_surface_state
+        .signature_help_anchor_offset = Some(5);
     formula_space.editor_overlay_geometry = Some(EditorOverlayGeometrySnapshot {
         caret_box: None,
         selection_box: None,

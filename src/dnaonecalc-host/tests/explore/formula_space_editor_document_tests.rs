@@ -61,10 +61,7 @@ impl OxfmlEditorBridge for ExploreBridge {
 fn ex_03_formula_edit_intent_preserves_raw_cell_entry_path_for_direct_values() {
     let formula_space_id = FormulaSpaceId::new("space-2");
     let mut formula_spaces = FormulaSpaceCollectionState::default();
-    formula_spaces.insert(FormulaSpaceState::new(
-        formula_space_id.clone(),
-        "1",
-    ));
+    formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "1"));
     let bridge = ExploreBridge {
         document: sample_editor_document("123.4"),
     };

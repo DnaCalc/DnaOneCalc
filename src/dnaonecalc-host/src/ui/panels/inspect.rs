@@ -28,9 +28,7 @@ pub struct InspectSummaryClusterViewModel {
     pub retained_artifact_context: Option<InspectRetainedArtifactContextView>,
 }
 
-pub fn build_inspect_walk_cluster(
-    view_model: &InspectViewModel,
-) -> InspectWalkClusterViewModel {
+pub fn build_inspect_walk_cluster(view_model: &InspectViewModel) -> InspectWalkClusterViewModel {
     InspectWalkClusterViewModel {
         scenario_label: view_model.scenario_label.clone(),
         truth_source_label: view_model.truth_source_label.clone(),
@@ -139,13 +137,23 @@ mod tests {
                 case_id: "case-1".to_string(),
                 comparison_status: "blocked".to_string(),
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
+                bundle_report_path: Some("target/onecalc-verification/example".to_string()),
+                xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
+                display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
+                upstream_gap_summary: vec!["OxXlPlay missing: effective_display_text".to_string()],
             }),
         };
 
         let cluster = build_inspect_summary_cluster(&view_model);
         assert_eq!(cluster.packet_kind_summary, "preview edit packet");
-        assert_eq!(cluster.parse_summary.as_ref().map(|x| x.token_count), Some(7));
-        assert_eq!(cluster.bind_summary.as_ref().map(|x| x.variable_count), Some(1));
+        assert_eq!(
+            cluster.parse_summary.as_ref().map(|x| x.token_count),
+            Some(7)
+        );
+        assert_eq!(
+            cluster.bind_summary.as_ref().map(|x| x.variable_count),
+            Some(1)
+        );
         assert_eq!(cluster.eval_summary.as_ref().map(|x| x.step_count), Some(2));
         assert_eq!(
             cluster

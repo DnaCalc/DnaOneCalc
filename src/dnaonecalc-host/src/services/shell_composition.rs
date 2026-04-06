@@ -40,7 +40,10 @@ pub fn active_formula_space(state: &OneCalcHostState) -> Option<&FormulaSpaceSta
         .workspace_shell
         .active_formula_space_id
         .as_ref()
-        .or(state.active_formula_space_view.selected_formula_space_id.as_ref())?;
+        .or(state
+            .active_formula_space_view
+            .selected_formula_space_id
+            .as_ref())?;
     state.formula_spaces.get(formula_space_id)
 }
 
@@ -86,8 +89,10 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         .open_formula_space_order
         .iter()
         .filter_map(|formula_space_id| {
-            state.formula_spaces.get(formula_space_id).map(|formula_space| {
-                ShellFormulaSpaceListItemViewModel {
+            state
+                .formula_spaces
+                .get(formula_space_id)
+                .map(|formula_space| ShellFormulaSpaceListItemViewModel {
                     formula_space_id: formula_space.formula_space_id.as_str().to_string(),
                     label: formula_space.context.scenario_label.clone(),
                     is_active: &formula_space.formula_space_id == active_formula_space_id,
@@ -95,8 +100,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                         .workspace_shell
                         .pinned_formula_space_ids
                         .contains(&formula_space.formula_space_id),
-                }
-            })
+                })
         })
         .collect();
 
@@ -130,7 +134,9 @@ pub fn select_active_formula_space(state: &mut OneCalcHostState, formula_space_i
 mod tests {
     use super::*;
     use crate::domain::ids::FormulaSpaceId;
-    use crate::services::programmatic_testing::{ProgrammaticComparisonStatus, ProgrammaticOpenModeHint};
+    use crate::services::programmatic_testing::{
+        ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
+    };
     use crate::services::retained_artifacts::import_programmatic_artifact;
     use crate::services::retained_artifacts::RetainedArtifactImportRequest;
     use crate::state::{FormulaSpaceCollectionState, FormulaSpaceState, OneCalcHostState};
@@ -218,17 +224,26 @@ mod tests {
         assert_eq!(frame.formula_spaces.len(), 1);
         assert!(frame.formula_spaces[0].is_active);
         assert!(!frame.formula_spaces[0].is_pinned);
-        assert!(frame.mode_tabs.iter().any(|tab| tab.mode == AppMode::Inspect && tab.is_active));
+        assert!(frame
+            .mode_tabs
+            .iter()
+            .any(|tab| tab.mode == AppMode::Inspect && tab.is_active));
     }
 
     #[test]
     fn switch_active_mode_updates_state() {
         let mut state = OneCalcHostState::default();
-        assert_eq!(state.active_formula_space_view.active_mode, AppMode::Explore);
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            AppMode::Explore
+        );
 
         switch_active_mode(&mut state, AppMode::Inspect);
 
-        assert_eq!(state.active_formula_space_view.active_mode, AppMode::Inspect);
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            AppMode::Inspect
+        );
     }
 
     #[test]
@@ -252,7 +267,10 @@ mod tests {
             Some(&second_id)
         );
         assert_eq!(
-            state.active_formula_space_view.selected_formula_space_id.as_ref(),
+            state
+                .active_formula_space_view
+                .selected_formula_space_id
+                .as_ref(),
             Some(&second_id)
         );
     }
@@ -292,12 +310,13 @@ mod tests {
             &mut state,
             RetainedArtifactImportRequest {
                 formula_space_id,
-                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
-                    artifact_id: "artifact-1".to_string(),
-                    case_id: "case-1".to_string(),
-                    comparison_status: ProgrammaticComparisonStatus::Blocked,
-                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
-                },
+                catalog_entry:
+                    crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-1".to_string(),
+                        case_id: "case-1".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Blocked,
+                        open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                    },
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
             },
         );
@@ -332,12 +351,13 @@ mod tests {
             &mut state,
             RetainedArtifactImportRequest {
                 formula_space_id: formula_space_id.clone(),
-                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
-                    artifact_id: "artifact-1".to_string(),
-                    case_id: "case-1".to_string(),
-                    comparison_status: ProgrammaticComparisonStatus::Mismatched,
-                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
-                },
+                catalog_entry:
+                    crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-1".to_string(),
+                        case_id: "case-1".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Mismatched,
+                        open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                    },
                 discrepancy_summary: Some("dna=1 excel=2".to_string()),
             },
         );
@@ -345,12 +365,13 @@ mod tests {
             &mut state,
             RetainedArtifactImportRequest {
                 formula_space_id,
-                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
-                    artifact_id: "artifact-2".to_string(),
-                    case_id: "case-2".to_string(),
-                    comparison_status: ProgrammaticComparisonStatus::Blocked,
-                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
-                },
+                catalog_entry:
+                    crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-2".to_string(),
+                        case_id: "case-2".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Blocked,
+                        open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                    },
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
             },
         );
@@ -361,7 +382,10 @@ mod tests {
 
         match first_projection {
             ActiveModeProjection::Workbench(view_model) => {
-                assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-1"));
+                assert_eq!(
+                    view_model.retained_artifact_id.as_deref(),
+                    Some("artifact-1")
+                );
                 let first_item = view_model
                     .retained_catalog_items
                     .iter()
@@ -388,7 +412,10 @@ mod tests {
 
         match second_projection {
             ActiveModeProjection::Workbench(view_model) => {
-                assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-2"));
+                assert_eq!(
+                    view_model.retained_artifact_id.as_deref(),
+                    Some("artifact-2")
+                );
                 let first_item = view_model
                     .retained_catalog_items
                     .iter()
@@ -425,12 +452,13 @@ mod tests {
             &mut state,
             RetainedArtifactImportRequest {
                 formula_space_id,
-                catalog_entry: crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
-                    artifact_id: "artifact-1".to_string(),
-                    case_id: "case-1".to_string(),
-                    comparison_status: ProgrammaticComparisonStatus::Blocked,
-                    open_mode_hint: ProgrammaticOpenModeHint::Workbench,
-                },
+                catalog_entry:
+                    crate::services::programmatic_testing::ProgrammaticArtifactCatalogEntry {
+                        artifact_id: "artifact-1".to_string(),
+                        case_id: "case-1".to_string(),
+                        comparison_status: ProgrammaticComparisonStatus::Blocked,
+                        open_mode_hint: ProgrammaticOpenModeHint::Workbench,
+                    },
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
             },
         );

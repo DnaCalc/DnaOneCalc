@@ -1,6 +1,9 @@
+use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::services::explore_mode::build_explore_view_model;
 use dnaonecalc_host::services::inspect_mode::build_inspect_view_model;
 use dnaonecalc_host::services::workbench_mode::build_workbench_view_model;
+use dnaonecalc_host::state::FormulaSpaceState;
+use dnaonecalc_host::test_support::sample_editor_document;
 use dnaonecalc_host::ui::panels::explore::{
     build_explore_editor_cluster, build_explore_result_cluster,
 };
@@ -10,9 +13,6 @@ use dnaonecalc_host::ui::panels::inspect::{
 use dnaonecalc_host::ui::panels::workbench::{
     build_workbench_evidence_cluster, build_workbench_outcome_cluster,
 };
-use dnaonecalc_host::domain::ids::FormulaSpaceId;
-use dnaonecalc_host::state::FormulaSpaceState;
-use dnaonecalc_host::test_support::sample_editor_document;
 
 #[test]
 fn ex_07_explore_panel_clusters_split_editing_and_result_fields_for_rendering() {
@@ -27,7 +27,10 @@ fn ex_07_explore_panel_clusters_split_editing_and_result_fields_for_rendering() 
 
     assert_eq!(editor_cluster.raw_entered_cell_text, "=SUM(1,2)");
     assert_eq!(editor_cluster.green_tree_key.as_deref(), Some("green-1"));
-    assert_eq!(result_cluster.effective_display_summary.as_deref(), Some("3"));
+    assert_eq!(
+        result_cluster.effective_display_summary.as_deref(),
+        Some("3")
+    );
 }
 
 #[test]
@@ -42,7 +45,13 @@ fn in_08_inspect_panel_clusters_split_walk_and_summary_fields_for_rendering() {
 
     assert_eq!(walk_cluster.green_tree_key.as_deref(), Some("green-1"));
     assert_eq!(walk_cluster.formula_walk_nodes.len(), 1);
-    assert_eq!(summary_cluster.parse_summary.as_ref().map(|x| x.status.as_str()), Some("Valid"));
+    assert_eq!(
+        summary_cluster
+            .parse_summary
+            .as_ref()
+            .map(|x| x.status.as_str()),
+        Some("Valid")
+    );
 }
 
 #[test]

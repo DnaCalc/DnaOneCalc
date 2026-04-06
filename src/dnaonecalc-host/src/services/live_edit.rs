@@ -59,7 +59,10 @@ fn active_formula_space_id(state: &OneCalcHostState) -> Option<FormulaSpaceId> {
         .workspace_shell
         .active_formula_space_id
         .clone()
-        .or(state.active_formula_space_view.selected_formula_space_id.clone())
+        .or(state
+            .active_formula_space_view
+            .selected_formula_space_id
+            .clone())
 }
 
 fn refresh_active_formula_space_from_bridge(
@@ -124,9 +127,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         let bridge = FakeBridge {
             document: sample_editor_document("=SUM(1,2,3)"),
@@ -146,7 +150,10 @@ mod tests {
         .expect("live edit should refresh active formula space");
 
         assert!(changed);
-        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
         assert_eq!(active.raw_entered_cell_text, "=SUM(1,2,3)");
         assert!(active.editor_document.is_some());
         assert_eq!(active.completion_help.completion_count, 1);
@@ -157,9 +164,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         let bridge = FakeBridge {
             document: sample_editor_document("=UM(1,2)"),
@@ -169,7 +177,10 @@ mod tests {
             .expect("live command should refresh active formula space");
 
         assert!(changed);
-        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
         assert_eq!(active.raw_entered_cell_text, "=UM(1,2)");
         assert!(active.editor_document.is_some());
     }
@@ -193,8 +204,14 @@ mod tests {
                 .expect("completion navigation should stay local");
 
         assert!(changed);
-        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
-        assert_eq!(active.editor_surface_state.completion_selected_index, Some(0));
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
+        assert_eq!(
+            active.editor_surface_state.completion_selected_index,
+            Some(0)
+        );
     }
 
     #[test]
@@ -209,12 +226,18 @@ mod tests {
         formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
         state.formula_spaces.insert(formula_space);
 
-        let changed =
-            apply_live_editor_command(&PreviewOxfmlBridge, &mut state, EditorCommand::MoveCaretRight)
-                .expect("caret move should refresh live signature help");
+        let changed = apply_live_editor_command(
+            &PreviewOxfmlBridge,
+            &mut state,
+            EditorCommand::MoveCaretRight,
+        )
+        .expect("caret move should refresh live signature help");
 
         assert!(changed);
-        let active = state.formula_spaces.get(&formula_space_id).expect("space exists");
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
         assert_eq!(
             active
                 .editor_document

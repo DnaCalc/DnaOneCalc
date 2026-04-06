@@ -40,6 +40,10 @@ pub struct InspectRetainedArtifactContextView {
     pub case_id: String,
     pub comparison_status: String,
     pub discrepancy_summary: Option<String>,
+    pub bundle_report_path: Option<String>,
+    pub xml_source_summary: Option<String>,
+    pub display_comparison_summary: Option<String>,
+    pub upstream_gap_summary: Vec<String>,
 }
 
 pub fn build_inspect_view_model(
@@ -69,22 +73,61 @@ pub fn build_inspect_view_model(
         None => (None, Vec::new(), None, None, None, None),
     };
 
-    let retained_artifact_context = retained_artifact.map(|artifact| InspectRetainedArtifactContextView {
-        artifact_id: artifact.artifact_id.clone(),
-        case_id: artifact.case_id.clone(),
-        comparison_status: match artifact.comparison_status {
-            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => {
-                "matched".to_string()
-            }
-            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => {
-                "mismatched".to_string()
-            }
-            crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => {
-                "blocked".to_string()
-            }
-        },
-        discrepancy_summary: artifact.discrepancy_summary.clone(),
-    });
+    let retained_artifact_context =
+        retained_artifact.map(|artifact| InspectRetainedArtifactContextView {
+            artifact_id: artifact.artifact_id.clone(),
+            case_id: artifact.case_id.clone(),
+            comparison_status: match artifact.comparison_status {
+                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => {
+                    "matched".to_string()
+                }
+                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => {
+                    "mismatched".to_string()
+                }
+                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => {
+                    "blocked".to_string()
+                }
+            },
+            discrepancy_summary: artifact.discrepancy_summary.clone(),
+            bundle_report_path: artifact.bundle_report_path.clone(),
+            xml_source_summary: artifact.xml_extraction.as_ref().map(|xml| {
+                format!(
+                    "{} @ {} | format {}",
+                    xml.workbook_path,
+                    xml.locator,
+                    xml.number_format_code
+                        .clone()
+                        .unwrap_or_else(|| "<none>".to_string())
+                )
+            }),
+            display_comparison_summary: match (
+                artifact.oxfml_effective_display_summary.as_deref(),
+                artifact.excel_observed_value_repr.as_deref(),
+            ) {
+                (Some(oxfml), Some(excel)) => Some(format!("OxFml {oxfml} vs Excel {excel}")),
+                _ => None,
+            },
+            upstream_gap_summary: artifact
+                .upstream_gap_report
+                .as_ref()
+                .map(|gap| {
+                    let mut items = Vec::new();
+                    if !gap.oxxlplay_missing_surfaces.is_empty() {
+                        items.push(format!(
+                            "OxXlPlay missing: {}",
+                            gap.oxxlplay_missing_surfaces.join(", ")
+                        ));
+                    }
+                    if !gap.oxreplay_missing_views.is_empty() {
+                        items.push(format!(
+                            "OxReplay missing: {}",
+                            gap.oxreplay_missing_views.join(", ")
+                        ));
+                    }
+                    items
+                })
+                .unwrap_or_default(),
+        });
 
     InspectViewModel {
         scenario_label: formula_space.context.scenario_label.clone(),
@@ -94,11 +137,11 @@ pub fn build_inspect_view_model(
         capability_floor_summary: formula_space.context.capability_floor.clone(),
         mode_availability_summary: formula_space.context.mode_availability.clone(),
         trace_summary: formula_space.context.trace_summary.clone(),
-        blocked_reason: formula_space
-            .context
-            .blocked_reason
-            .clone()
-            .or_else(|| provenance_summary.as_ref().and_then(|summary| summary.blocked_reason.clone())),
+        blocked_reason: formula_space.context.blocked_reason.clone().or_else(|| {
+            provenance_summary
+                .as_ref()
+                .and_then(|summary| summary.blocked_reason.clone())
+        }),
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         inspect_result_summary: formula_space.latest_evaluation_summary.clone(),
         green_tree_key,
@@ -117,7 +160,11 @@ fn project_formula_walk_node(node: &FormulaWalkNode) -> InspectFormulaWalkNodeVi
         label: node.label.clone(),
         value_preview: node.value_preview.clone(),
         state: node.state,
-        children: node.children.iter().map(project_formula_walk_node).collect(),
+        children: node
+            .children
+            .iter()
+            .map(project_formula_walk_node)
+            .collect(),
     }
 }
 
@@ -133,7 +180,8 @@ mod tests {
 
     #[test]
     fn inspect_view_model_projects_walk_and_summary_state() {
-        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
         formula_space.latest_evaluation_summary = Some("Number".to_string());
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=LET(x,1,x)".to_string(),
@@ -186,9 +234,18 @@ mod tests {
         assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
         assert_eq!(view_model.formula_walk_nodes.len(), 1);
         assert_eq!(view_model.formula_walk_nodes[0].children.len(), 1);
-        assert_eq!(view_model.parse_summary.as_ref().map(|x| x.token_count), Some(7));
-        assert_eq!(view_model.bind_summary.as_ref().map(|x| x.variable_count), Some(1));
-        assert_eq!(view_model.eval_summary.as_ref().map(|x| x.step_count), Some(2));
+        assert_eq!(
+            view_model.parse_summary.as_ref().map(|x| x.token_count),
+            Some(7)
+        );
+        assert_eq!(
+            view_model.bind_summary.as_ref().map(|x| x.variable_count),
+            Some(1)
+        );
+        assert_eq!(
+            view_model.eval_summary.as_ref().map(|x| x.step_count),
+            Some(2)
+        );
         assert_eq!(
             view_model
                 .provenance_summary
@@ -207,9 +264,47 @@ mod tests {
             artifact_id: "artifact-1".to_string(),
             case_id: "case-1".to_string(),
             formula_space_id,
-            comparison_status: crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked,
-            open_mode_hint: crate::services::programmatic_testing::ProgrammaticOpenModeHint::Workbench,
+            comparison_status:
+                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked,
+            open_mode_hint:
+                crate::services::programmatic_testing::ProgrammaticOpenModeHint::Workbench,
             discrepancy_summary: Some("excel lane unavailable".to_string()),
+            bundle_report_path: Some("target/onecalc-verification/example".to_string()),
+            case_output_dir: Some("target/onecalc-verification/example/cases/case-1".to_string()),
+            xml_extraction: Some(crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction {
+                workbook_path: "C:/tmp/workbook.xml".to_string(),
+                locator: "Input!A1".to_string(),
+                worksheet_name: "Input".to_string(),
+                workbook_format_profile_hint: "excel-spreadsheetml-2003-default".to_string(),
+                formula_text: Some("=SUM(1,2)".to_string()),
+                entered_cell_text: "=SUM(1,2)".to_string(),
+                data_type: Some("Number".to_string()),
+                style_id: Some("calc".to_string()),
+                number_format_code: Some("$#,##0.00".to_string()),
+                font_color: Some("#112233".to_string()),
+                fill_color: Some("#445566".to_string()),
+                conditional_formats: vec![],
+                date1904: Some(false),
+                observation_scope: crate::services::spreadsheet_xml::VerificationObservationScope {
+                    oxfml_required_scope: vec!["format_profile".to_string()],
+                    oxxlplay_required_surfaces: vec!["effective_display_text".to_string()],
+                    oxreplay_required_views: vec!["formatting_view".to_string()],
+                },
+            }),
+            upstream_gap_report: Some(
+                crate::services::verification_bundle::VerificationObservationGapReport {
+                    oxfml_scope_required: vec!["format_profile".to_string()],
+                    oxxlplay_supported_surfaces: vec!["cell_value".to_string()],
+                    oxxlplay_missing_surfaces: vec!["effective_display_text".to_string()],
+                    oxreplay_required_views: vec!["formatting_view".to_string()],
+                    oxreplay_current_bundle_views: vec!["visible_value".to_string()],
+                    oxreplay_missing_views: vec!["formatting_view".to_string()],
+                },
+            ),
+            visible_output_match: Some(false),
+            replay_equivalent: Some(false),
+            oxfml_effective_display_summary: Some("6".to_string()),
+            excel_observed_value_repr: Some("$6.00".to_string()),
         };
 
         let view_model = build_inspect_view_model(&formula_space, Some(&retained_artifact));
@@ -224,5 +319,18 @@ mod tests {
             context.discrepancy_summary.as_deref(),
             Some("excel lane unavailable")
         );
+        assert_eq!(
+            context.bundle_report_path.as_deref(),
+            Some("target/onecalc-verification/example")
+        );
+        assert!(context
+            .xml_source_summary
+            .as_deref()
+            .is_some_and(|value| value.contains("Input!A1")));
+        assert_eq!(
+            context.display_comparison_summary.as_deref(),
+            Some("OxFml 6 vs Excel $6.00")
+        );
+        assert_eq!(context.upstream_gap_summary.len(), 2);
     }
 }

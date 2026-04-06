@@ -154,17 +154,13 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         capability_floor_summary: formula_space.context.capability_floor.clone(),
         mode_availability_summary: formula_space.context.mode_availability.clone(),
         trace_summary: formula_space.context.trace_summary.clone(),
-        blocked_reason: formula_space
-            .context
-            .blocked_reason
-            .clone()
-            .or_else(|| {
-                formula_space
-                    .editor_document
-                    .as_ref()
-                    .and_then(|document| document.provenance_summary.as_ref())
-                    .and_then(|summary| summary.blocked_reason.clone())
-            }),
+        blocked_reason: formula_space.context.blocked_reason.clone().or_else(|| {
+            formula_space
+                .editor_document
+                .as_ref()
+                .and_then(|document| document.provenance_summary.as_ref())
+                .and_then(|summary| summary.blocked_reason.clone())
+        }),
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state,
         overlay_geometry: formula_space.editor_overlay_geometry.clone(),
@@ -183,10 +179,7 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         result_value_summary: formula_space.latest_evaluation_summary.clone(),
         effective_display_summary: formula_space.effective_display_summary.clone(),
         latest_evaluation_summary: formula_space.latest_evaluation_summary.clone(),
-        array_preview: formula_space
-            .array_preview
-            .as_ref()
-            .map(array_preview_view),
+        array_preview: formula_space.array_preview.as_ref().map(array_preview_view),
         green_tree_key,
         reused_green_tree,
     }
@@ -390,15 +383,24 @@ mod tests {
             Some(FormulaTextSpan { start: 1, len: 3 })
         );
         assert_eq!(
-            view_model.signature_help.as_ref().map(|help| help.active_argument_index),
+            view_model
+                .signature_help
+                .as_ref()
+                .map(|help| help.active_argument_index),
             Some(1)
         );
         assert_eq!(
-            view_model.signature_help.as_ref().map(|help| help.call_span),
+            view_model
+                .signature_help
+                .as_ref()
+                .map(|help| help.call_span),
             Some(FormulaTextSpan { start: 0, len: 9 })
         );
         assert_eq!(
-            view_model.function_help.as_ref().map(|help| help.display_name.as_str()),
+            view_model
+                .function_help
+                .as_ref()
+                .map(|help| help.display_name.as_str()),
             Some("SUM")
         );
         assert_eq!(view_model.function_help_lookup_key.as_deref(), Some("SUM"));
@@ -410,7 +412,8 @@ mod tests {
 
     #[test]
     fn explore_view_model_falls_back_to_local_tokenization_when_document_is_stale() {
-        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=LET(x,1,x)");
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=SUM(1,2)".to_string(),
             text_change_range: None,

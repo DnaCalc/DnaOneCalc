@@ -3,6 +3,7 @@ use crate::ui::editor::state::{EditorCaret, EditorSelection, EditorSurfaceState}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
     InsertText(String),
+    CutSelection,
     MoveCaretLeft,
     MoveCaretRight,
     ExtendSelectionLeft,
@@ -49,6 +50,7 @@ pub fn apply_editor_command(
 ) -> EditorCommandResult {
     match command {
         EditorCommand::InsertText(inserted_text) => insert_text(text, state, &inserted_text),
+        EditorCommand::CutSelection => cut_selection(text, state),
         EditorCommand::MoveCaretLeft => {
             let next = state.caret.offset.saturating_sub(1);
             EditorCommandResult {
@@ -112,19 +114,20 @@ pub fn apply_editor_command(
     }
 }
 
-pub fn keydown_to_command(key: &str, shift_key: bool) -> Option<EditorCommand> {
-    match (key, shift_key) {
-        ("ArrowUp", false) => Some(EditorCommand::SelectPreviousCompletion),
-        ("ArrowDown", false) => Some(EditorCommand::SelectNextCompletion),
-        ("Enter", false) => Some(EditorCommand::AcceptSelectedCompletion),
-        ("ArrowLeft", false) => Some(EditorCommand::MoveCaretLeft),
-        ("ArrowRight", false) => Some(EditorCommand::MoveCaretRight),
-        ("ArrowLeft", true) => Some(EditorCommand::ExtendSelectionLeft),
-        ("ArrowRight", true) => Some(EditorCommand::ExtendSelectionRight),
-        ("Backspace", false) => Some(EditorCommand::Backspace),
-        ("Delete", false) => Some(EditorCommand::Delete),
-        ("Tab", false) => Some(EditorCommand::IndentWithSpaces),
-        ("Tab", true) => Some(EditorCommand::OutdentWithSpaces),
+pub fn keydown_to_command(key: &str, shift_key: bool, shortcut_key: bool) -> Option<EditorCommand> {
+    match (key, shift_key, shortcut_key) {
+        ("x" | "X", _, true) => Some(EditorCommand::CutSelection),
+        ("ArrowUp", false, false) => Some(EditorCommand::SelectPreviousCompletion),
+        ("ArrowDown", false, false) => Some(EditorCommand::SelectNextCompletion),
+        ("Enter", false, false) => Some(EditorCommand::AcceptSelectedCompletion),
+        ("ArrowLeft", false, false) => Some(EditorCommand::MoveCaretLeft),
+        ("ArrowRight", false, false) => Some(EditorCommand::MoveCaretRight),
+        ("ArrowLeft", true, false) => Some(EditorCommand::ExtendSelectionLeft),
+        ("ArrowRight", true, false) => Some(EditorCommand::ExtendSelectionRight),
+        ("Backspace", false, false) => Some(EditorCommand::Backspace),
+        ("Delete", false, false) => Some(EditorCommand::Delete),
+        ("Tab", false, false) => Some(EditorCommand::IndentWithSpaces),
+        ("Tab", true, false) => Some(EditorCommand::OutdentWithSpaces),
         _ => None,
     }
 }
@@ -169,6 +172,17 @@ fn insert_text(text: &str, state: &EditorSurfaceState, inserted_text: &str) -> E
         text: result,
         state: state_with_selection(state, next_offset, next_offset),
     }
+}
+
+fn cut_selection(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
+    if state.selection.is_collapsed() {
+        return EditorCommandResult {
+            text: text.to_string(),
+            state: state.clone(),
+        };
+    }
+
+    insert_text(text, state, "")
 }
 
 fn backspace(text: &str, state: &EditorSurfaceState) -> EditorCommandResult {
@@ -300,7 +314,11 @@ fn outdent_with_spaces(text: &str, state: &EditorSurfaceState) -> EditorCommandR
     }
 }
 
-fn state_with_selection(state: &EditorSurfaceState, anchor: usize, focus: usize) -> EditorSurfaceState {
+fn state_with_selection(
+    state: &EditorSurfaceState,
+    anchor: usize,
+    focus: usize,
+) -> EditorSurfaceState {
     EditorSurfaceState {
         caret: EditorCaret { offset: focus },
         selection: EditorSelection { anchor, focus },
@@ -383,7 +401,8 @@ mod tests {
         let moved_left = apply_editor_command(text, &state, EditorCommand::MoveCaretLeft);
         assert_eq!(moved_left.state.caret.offset, 0);
 
-        let moved_right = apply_editor_command(text, &moved_left.state, EditorCommand::MoveCaretRight);
+        let moved_right =
+            apply_editor_command(text, &moved_left.state, EditorCommand::MoveCaretRight);
         assert_eq!(moved_right.state.caret.offset, 1);
     }
 
@@ -402,8 +421,7 @@ mod tests {
             signature_help_anchor_offset: None,
         };
 
-        let extended_left =
-            apply_editor_command(text, &state, EditorCommand::ExtendSelectionLeft);
+        let extended_left = apply_editor_command(text, &state, EditorCommand::ExtendSelectionLeft);
         assert_eq!(extended_left.state.caret.offset, 3);
         assert_eq!(extended_left.state.selection.anchor, 4);
         assert_eq!(extended_left.state.selection.focus, 3);
@@ -425,7 +443,10 @@ mod tests {
         let text = "SUM(\n1,\n2)";
         let state = EditorSurfaceState {
             caret: EditorCaret { offset: 3 },
-            selection: EditorSelection { anchor: 0, focus: text.chars().count() },
+            selection: EditorSelection {
+                anchor: 0,
+                focus: text.chars().count(),
+            },
             scroll_window: EditorScrollWindow {
                 first_visible_line: 0,
                 visible_line_count: 4,
@@ -446,7 +467,10 @@ mod tests {
         let text = "    SUM(\n    1,\n    2)";
         let state = EditorSurfaceState {
             caret: EditorCaret { offset: 4 },
-            selection: EditorSelection { anchor: 0, focus: text.chars().count() },
+            selection: EditorSelection {
+                anchor: 0,
+                focus: text.chars().count(),
+            },
             scroll_window: EditorScrollWindow {
                 first_visible_line: 0,
                 visible_line_count: 4,
@@ -464,25 +488,62 @@ mod tests {
 
     #[test]
     fn keydown_mapping_recognizes_tab_and_arrow_commands() {
-        assert_eq!(keydown_to_command("ArrowUp", false), Some(EditorCommand::SelectPreviousCompletion));
-        assert_eq!(keydown_to_command("ArrowDown", false), Some(EditorCommand::SelectNextCompletion));
-        assert_eq!(keydown_to_command("Enter", false), Some(EditorCommand::AcceptSelectedCompletion));
-        assert_eq!(keydown_to_command("ArrowLeft", false), Some(EditorCommand::MoveCaretLeft));
-        assert_eq!(keydown_to_command("ArrowRight", false), Some(EditorCommand::MoveCaretRight));
-        assert_eq!(keydown_to_command("ArrowLeft", true), Some(EditorCommand::ExtendSelectionLeft));
         assert_eq!(
-            keydown_to_command("ArrowRight", true),
+            keydown_to_command("ArrowUp", false, false),
+            Some(EditorCommand::SelectPreviousCompletion)
+        );
+        assert_eq!(
+            keydown_to_command("ArrowDown", false, false),
+            Some(EditorCommand::SelectNextCompletion)
+        );
+        assert_eq!(
+            keydown_to_command("Enter", false, false),
+            Some(EditorCommand::AcceptSelectedCompletion)
+        );
+        assert_eq!(
+            keydown_to_command("ArrowLeft", false, false),
+            Some(EditorCommand::MoveCaretLeft)
+        );
+        assert_eq!(
+            keydown_to_command("ArrowRight", false, false),
+            Some(EditorCommand::MoveCaretRight)
+        );
+        assert_eq!(
+            keydown_to_command("ArrowLeft", true, false),
+            Some(EditorCommand::ExtendSelectionLeft)
+        );
+        assert_eq!(
+            keydown_to_command("ArrowRight", true, false),
             Some(EditorCommand::ExtendSelectionRight)
         );
-        assert_eq!(keydown_to_command("Backspace", false), Some(EditorCommand::Backspace));
-        assert_eq!(keydown_to_command("Delete", false), Some(EditorCommand::Delete));
-        assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
-        assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
+        assert_eq!(
+            keydown_to_command("Backspace", false, false),
+            Some(EditorCommand::Backspace)
+        );
+        assert_eq!(
+            keydown_to_command("Delete", false, false),
+            Some(EditorCommand::Delete)
+        );
+        assert_eq!(
+            keydown_to_command("Tab", false, false),
+            Some(EditorCommand::IndentWithSpaces)
+        );
+        assert_eq!(
+            keydown_to_command("Tab", true, false),
+            Some(EditorCommand::OutdentWithSpaces)
+        );
+        assert_eq!(
+            keydown_to_command("x", false, true),
+            Some(EditorCommand::CutSelection)
+        );
     }
 
     #[test]
     fn dom_input_types_map_to_editor_input_kinds() {
-        assert_eq!(classify_dom_input("insertText"), EditorInputKind::InsertText);
+        assert_eq!(
+            classify_dom_input("insertText"),
+            EditorInputKind::InsertText
+        );
         assert_eq!(
             classify_dom_input("deleteContentBackward"),
             EditorInputKind::DeleteBackward
@@ -491,7 +552,10 @@ mod tests {
             classify_dom_input("deleteContentForward"),
             EditorInputKind::DeleteForward
         );
-        assert_eq!(classify_dom_input("insertFromPaste"), EditorInputKind::InsertFromPaste);
+        assert_eq!(
+            classify_dom_input("insertFromPaste"),
+            EditorInputKind::InsertFromPaste
+        );
         assert_eq!(classify_dom_input("historyUndo"), EditorInputKind::Other);
     }
 
@@ -500,7 +564,10 @@ mod tests {
         let text = "=SUM(1,2)";
         let state = EditorSurfaceState {
             caret: EditorCaret { offset: 5 },
-            selection: EditorSelection { anchor: 1, focus: 4 },
+            selection: EditorSelection {
+                anchor: 1,
+                focus: 4,
+            },
             scroll_window: EditorScrollWindow {
                 first_visible_line: 0,
                 visible_line_count: 4,
@@ -510,11 +577,8 @@ mod tests {
             signature_help_anchor_offset: Some(4),
         };
 
-        let result = apply_editor_command(
-            text,
-            &state,
-            EditorCommand::InsertText("AVG".to_string()),
-        );
+        let result =
+            apply_editor_command(text, &state, EditorCommand::InsertText("AVG".to_string()));
         assert_eq!(result.text, "=AVG(1,2)");
         assert_eq!(result.state.caret.offset, 4);
         assert!(result.state.selection.is_collapsed());
@@ -528,7 +592,10 @@ mod tests {
         let text = "=SUM(1,2)";
         let selected = EditorSurfaceState {
             caret: EditorCaret { offset: 5 },
-            selection: EditorSelection { anchor: 1, focus: 4 },
+            selection: EditorSelection {
+                anchor: 1,
+                focus: 4,
+            },
             scroll_window: EditorScrollWindow {
                 first_visible_line: 0,
                 visible_line_count: 4,

@@ -2,14 +2,16 @@ use leptos::prelude::*;
 
 pub const ONECALC_THEME_CSS: &str = r#"
 :root {
-  --oc-color-bg: #f5efe4;
-  --oc-color-surface: #fffaf2;
-  --oc-color-panel: #f2eadc;
+  --oc-color-bg: #f4ede2;
+  --oc-color-surface: #fffaf4;
+  --oc-color-panel: #eee4d6;
   --oc-color-ink: #1f2a2c;
   --oc-color-muted: #6b695f;
   --oc-color-border: #d9cfbe;
   --oc-color-accent: #245d5a;
   --oc-color-accent-soft: #d7ebe7;
+  --oc-color-night: #183132;
+  --oc-color-card-edge: rgba(36, 93, 90, 0.18);
   --oc-color-warm: #b76545;
   --oc-color-warning: #c58b2f;
   --oc-color-success: #4f7b57;
@@ -20,7 +22,8 @@ pub const ONECALC_THEME_CSS: &str = r#"
   --oc-space-5: 1.5rem;
   --oc-radius-panel: 14px;
   --oc-radius-pill: 999px;
-  --oc-shadow-panel: 0 6px 18px rgba(31, 42, 44, 0.08);
+  --oc-shadow-panel: 0 12px 28px rgba(31, 42, 44, 0.10);
+  --oc-shadow-strong: 0 18px 42px rgba(24, 49, 50, 0.14);
   --oc-font-ui: \"Segoe UI\", \"Inter\", sans-serif;
   --oc-font-mono: \"Cascadia Code\", \"Consolas\", monospace;
 }
@@ -33,14 +36,18 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-shell-frame {
   display: grid;
-  grid-template-columns: 16rem 1fr;
+  grid-template-columns: 18rem 1fr;
   min-height: 100vh;
-  background: linear-gradient(180deg, #f7f1e6 0%, #f2ebdd 100%);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.45), transparent 32rem),
+    linear-gradient(180deg, #f8f1e7 0%, #f0e6d7 100%);
 }
 
 .onecalc-shell-frame__rail {
   padding: var(--oc-space-5);
-  background: var(--oc-color-panel);
+  background:
+    linear-gradient(180deg, rgba(36, 93, 90, 0.06), transparent 16rem),
+    var(--oc-color-panel);
   border-right: 1px solid var(--oc-color-border);
 }
 
@@ -52,10 +59,12 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-shell-frame__context-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--oc-space-3);
   padding: var(--oc-space-4) var(--oc-space-5);
   border-bottom: 1px solid var(--oc-color-border);
-  background: rgba(255, 250, 242, 0.9);
+  background: rgba(255, 250, 242, 0.92);
+  backdrop-filter: blur(10px);
 }
 
 .onecalc-shell-frame__mode-switch {
@@ -79,6 +88,35 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-shell-frame__mode-body {
   padding: var(--oc-space-5);
+}
+
+.onecalc-shell-frame__rail h1,
+.onecalc-explore-shell__header h1,
+.onecalc-inspect-shell__header h1,
+.onecalc-workbench-shell__header h1 {
+  margin: 0;
+  font-size: 1.7rem;
+  letter-spacing: -0.03em;
+}
+
+.onecalc-explore-shell__eyebrow,
+.onecalc-inspect-shell__eyebrow,
+.onecalc-workbench-shell__eyebrow,
+.onecalc-shell-frame__eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: var(--oc-color-muted);
+  font-weight: 700;
+}
+
+.onecalc-explore-shell__lead,
+.onecalc-inspect-shell__lead,
+.onecalc-workbench-shell__lead {
+  margin: 0;
+  max-width: 54rem;
+  color: var(--oc-color-muted);
+  line-height: 1.5;
 }
 
 .onecalc-shell-frame__space-list {
@@ -124,7 +162,7 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-explore-shell__body {
-  grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 1fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(20rem, 1fr);
   align-items: start;
 }
 
@@ -153,6 +191,11 @@ pub const ONECALC_THEME_CSS: &str = r#"
   box-shadow: var(--oc-shadow-panel);
 }
 
+.onecalc-explore-shell__editor-panel,
+.onecalc-inspect-shell__walk-cluster {
+  border-color: var(--oc-color-card-edge);
+}
+
 .onecalc-explore-shell__panel-header,
 .onecalc-explore-shell__context-strip,
 .onecalc-explore-shell__result-metric,
@@ -163,6 +206,57 @@ pub const ONECALC_THEME_CSS: &str = r#"
   flex-wrap: wrap;
   gap: var(--oc-space-2);
   align-items: center;
+}
+
+.onecalc-explore-shell__header,
+.onecalc-inspect-shell__header,
+.onecalc-workbench-shell__header {
+  display: grid;
+  gap: var(--oc-space-2);
+  margin-bottom: var(--oc-space-4);
+}
+
+.onecalc-explore-shell__panel-intro {
+  display: grid;
+  gap: var(--oc-space-1);
+  margin-bottom: var(--oc-space-3);
+}
+
+.onecalc-explore-shell__panel-intro p {
+  margin: 0;
+  color: var(--oc-color-muted);
+  line-height: 1.45;
+}
+
+.onecalc-explore-shell__status-strip,
+.onecalc-explore-shell__assist-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--oc-space-2);
+  margin-bottom: var(--oc-space-3);
+}
+
+.onecalc-explore-shell__status-card,
+.onecalc-explore-shell__assist-metric,
+.onecalc-inspect-shell__source-card {
+  display: grid;
+  gap: var(--oc-space-1);
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  border: 1px solid var(--oc-color-border);
+  background: linear-gradient(180deg, #fffdf8, #fbf4e7);
+}
+
+.onecalc-explore-shell__status-label,
+.onecalc-explore-shell__metric-label,
+.onecalc-inspect-shell__source-label,
+.onecalc-inspect-shell__walk-node-value-label,
+.onecalc-explore-shell__hero-result-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--oc-color-muted);
+  font-weight: 700;
 }
 
 .onecalc-explore-shell__scenario-label,
@@ -208,6 +302,32 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border: 1px solid var(--oc-color-border);
   border-radius: 10px;
   background: #fbf6ed;
+}
+
+.onecalc-explore-shell__hero-result {
+  display: grid;
+  gap: var(--oc-space-1);
+  margin-bottom: var(--oc-space-3);
+  padding: var(--oc-space-4);
+  border-radius: 14px;
+  border: 1px solid var(--oc-color-card-edge);
+  background: linear-gradient(160deg, rgba(36, 93, 90, 0.08), rgba(255, 255, 255, 0.92));
+  box-shadow: var(--oc-shadow-panel);
+}
+
+.onecalc-explore-shell__hero-result-value {
+  font-family: var(--oc-font-mono);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  color: var(--oc-color-night);
+}
+
+.onecalc-explore-shell__result-state-chip {
+  padding: 0.35rem 0.8rem;
+  border-radius: var(--oc-radius-pill);
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  font-weight: 700;
 }
 
 .onecalc-explore-shell__array-preview {
@@ -272,9 +392,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
   padding: var(--oc-space-3);
   border-radius: 10px;
   border: 1px solid var(--oc-color-border);
-  background: #fffdf8;
+  background: linear-gradient(180deg, #fffefb, #fef8ef);
   color: var(--oc-color-ink);
   font-family: var(--oc-font-mono);
+  box-shadow: inset 0 1px 2px rgba(31, 42, 44, 0.06);
 }
 
 .onecalc-formula-editor-surface__toolbar,
@@ -382,8 +503,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: grid;
   gap: var(--oc-space-3);
   margin-top: var(--oc-space-3);
-  border-top: 1px solid var(--oc-color-border);
-  padding-top: var(--oc-space-3);
+  padding: var(--oc-space-3);
+  border-radius: 14px;
+  border: 1px solid var(--oc-color-card-edge);
+  background: linear-gradient(180deg, #fffdf9, #f8efe3);
 }
 
 .onecalc-explore-shell__function-help-header {
@@ -426,6 +549,20 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border: 1px solid var(--oc-color-border);
 }
 
+.onecalc-explore-shell__selected-proposal {
+  padding: var(--oc-space-3);
+  border-radius: 14px;
+  border: 1px solid var(--oc-color-card-edge);
+  background: linear-gradient(180deg, #fffef9, #f4ecdf);
+}
+
+.onecalc-explore-shell__selected-proposal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--oc-space-2);
+}
+
 .onecalc-explore-shell__function-help-argument--active {
   border-color: var(--oc-color-accent);
   background: var(--oc-color-accent-soft);
@@ -451,6 +588,28 @@ pub const ONECALC_THEME_CSS: &str = r#"
   gap: var(--oc-space-2);
 }
 
+.onecalc-inspect-shell__walk-node {
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  border: 1px solid var(--oc-color-border);
+  background: linear-gradient(180deg, #fffef9, #f5ede2);
+}
+
+.onecalc-inspect-shell__walk-node-state {
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--oc-radius-pill);
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.onecalc-inspect-shell__walk-node-value {
+  display: grid;
+  gap: var(--oc-space-1);
+  margin-top: var(--oc-space-2);
+}
+
 .onecalc-inspect-shell__retained-context,
 .onecalc-workbench-shell__import-field-group,
 .onecalc-workbench-shell__import-outcome-guide {
@@ -466,6 +625,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border: 1px solid var(--oc-color-border);
 }
 
+.onecalc-inspect-shell__summary-cluster {
+  align-content: start;
+}
+
 .onecalc-inspect-shell__retained-context {
   margin-bottom: var(--oc-space-3);
   padding: var(--oc-space-3);
@@ -477,6 +640,18 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-workbench-shell__import-surface {
   display: grid;
   gap: var(--oc-space-2);
+}
+
+.onecalc-workbench-shell__bundle-import-textarea {
+  min-height: 12rem;
+  width: 100%;
+  padding: var(--oc-space-3);
+  border-radius: 12px;
+  border: 1px solid rgba(46, 62, 82, 0.18);
+  background: rgba(255, 250, 243, 0.92);
+  color: var(--oc-color-text);
+  font: 0.9rem/1.45 "Consolas", "SFMono-Regular", monospace;
+  resize: vertical;
 }
 
 .onecalc-workbench-shell__import-label {
@@ -500,6 +675,15 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: flex;
   flex-wrap: wrap;
   gap: var(--oc-space-2);
+}
+
+[data-role="retained-import-upstream-gap-summary"],
+[data-role="inspect-retained-upstream-gap-summary"] {
+  display: grid;
+  gap: var(--oc-space-2);
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #8d4f2f;
 }
 
 @media (max-width: 980px) {

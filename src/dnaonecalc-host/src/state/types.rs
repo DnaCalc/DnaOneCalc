@@ -5,6 +5,8 @@ use crate::domain::ids::FormulaSpaceId;
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
+use crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction;
+use crate::services::verification_bundle::VerificationObservationGapReport;
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -67,10 +69,7 @@ impl FormulaSpaceCollectionState {
         self.spaces.get(formula_space_id)
     }
 
-    pub fn get_mut(
-        &mut self,
-        formula_space_id: &FormulaSpaceId,
-    ) -> Option<&mut FormulaSpaceState> {
+    pub fn get_mut(&mut self, formula_space_id: &FormulaSpaceId) -> Option<&mut FormulaSpaceState> {
         self.spaces.get_mut(formula_space_id)
     }
 }
@@ -198,6 +197,14 @@ pub struct RetainedArtifactRecord {
     pub comparison_status: ProgrammaticComparisonStatus,
     pub open_mode_hint: ProgrammaticOpenModeHint,
     pub discrepancy_summary: Option<String>,
+    pub bundle_report_path: Option<String>,
+    pub case_output_dir: Option<String>,
+    pub xml_extraction: Option<SpreadsheetXmlCellExtraction>,
+    pub upstream_gap_report: Option<VerificationObservationGapReport>,
+    pub visible_output_match: Option<bool>,
+    pub replay_equivalent: Option<bool>,
+    pub oxfml_effective_display_summary: Option<String>,
+    pub excel_observed_value_repr: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -233,7 +240,9 @@ pub struct OpenFormulaSpaceRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::programmatic_testing::{ProgrammaticComparisonStatus, ProgrammaticOpenModeHint};
+    use crate::services::programmatic_testing::{
+        ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
+    };
 
     #[test]
     fn formula_space_tracks_raw_entered_cell_text() {
@@ -246,7 +255,10 @@ mod tests {
     #[test]
     fn workspace_shell_defaults_to_explore_without_active_space() {
         let state = OneCalcHostState::default();
-        assert_eq!(state.active_formula_space_view.active_mode, AppMode::Explore);
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            AppMode::Explore
+        );
         assert!(state.workspace_shell.active_formula_space_id.is_none());
     }
 
@@ -266,9 +278,20 @@ mod tests {
             comparison_status: ProgrammaticComparisonStatus::Blocked,
             open_mode_hint: ProgrammaticOpenModeHint::Workbench,
             discrepancy_summary: Some("blocked by host policy".to_string()),
+            bundle_report_path: None,
+            case_output_dir: None,
+            xml_extraction: None,
+            upstream_gap_report: None,
+            visible_output_match: None,
+            replay_equivalent: None,
+            oxfml_effective_display_summary: None,
+            excel_observed_value_repr: None,
         };
 
         assert_eq!(record.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
-        assert_eq!(record.discrepancy_summary.as_deref(), Some("blocked by host policy"));
+        assert_eq!(
+            record.discrepancy_summary.as_deref(),
+            Some("blocked by host policy")
+        );
     }
 }

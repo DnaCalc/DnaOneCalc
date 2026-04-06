@@ -1,16 +1,18 @@
 use crate::adapters::oxfml::{
-    BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument,
-    EditorSyntaxSnapshot, EditorToken, EvalSummary, FormulaEditReuseSummary,
-    FormulaTextChangeRange, FormulaTextSpan, FormulaWalkNode, FormulaWalkNodeState,
-    FunctionHelpPacket, FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSnapshot,
-    ParseSummary, ProvenanceSummary, SignatureHelpContext,
+    BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
+    EditorToken, EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan,
+    FormulaWalkNode, FormulaWalkNodeState, FunctionHelpPacket, FunctionHelpSignatureForm,
+    LiveDiagnostic, LiveDiagnosticSnapshot, ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
 
 pub fn sample_editor_document(source_text: &str) -> EditorDocument {
     sample_editor_document_with_green_key(source_text, "green-1")
 }
 
-pub fn sample_editor_document_with_green_key(source_text: &str, green_tree_key: &str) -> EditorDocument {
+pub fn sample_editor_document_with_green_key(
+    source_text: &str,
+    green_tree_key: &str,
+) -> EditorDocument {
     let tokens = sample_editor_tokens(source_text);
 
     EditorDocument {

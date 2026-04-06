@@ -1,55 +1,79 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgrammaticSpreadsheetXmlSource {
+    pub workbook_path: String,
+    pub locator: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticFormulaCase {
     pub case_id: String,
     pub entered_cell_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spreadsheet_xml_source: Option<ProgrammaticSpreadsheetXmlSource>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticHostProfile {
     pub profile_id: String,
     pub requires_excel_observation: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticCapabilityProfile {
     pub host_summary: String,
     pub excel_observation_available: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgrammaticComparisonLane {
     OxfmlOnly,
     OxfmlAndExcel,
     ExcelObservationBlocked,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticBatchPlan {
     pub formula_count: usize,
     pub comparison_lane: ProgrammaticComparisonLane,
     pub discrepancy_index_required: bool,
-    pub retained_artifact_kinds: Vec<&'static str>,
+    pub retained_artifact_kinds: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgrammaticComparisonStatus {
     Matched,
     Mismatched,
     Blocked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgrammaticOpenModeHint {
     Inspect,
     Workbench,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticArtifactCatalogEntry {
     pub artifact_id: String,
     pub case_id: String,
     pub comparison_status: ProgrammaticComparisonStatus,
     pub open_mode_hint: ProgrammaticOpenModeHint,
+}
+
+pub fn default_windows_excel_host_profile() -> ProgrammaticHostProfile {
+    ProgrammaticHostProfile {
+        profile_id: "windows_excel_default".to_string(),
+        requires_excel_observation: true,
+    }
+}
+
+pub fn default_windows_excel_capability_profile() -> ProgrammaticCapabilityProfile {
+    ProgrammaticCapabilityProfile {
+        host_summary: "windows_native_excel_default".to_string(),
+        excel_observation_available: true,
+    }
 }
 
 pub fn build_programmatic_batch_plan(
@@ -67,20 +91,20 @@ pub fn build_programmatic_batch_plan(
     };
 
     let mut retained_artifact_kinds = vec![
-        "scenario_input",
-        "capability_context",
-        "run_result",
-        "replay_bundle",
+        "scenario_input".to_string(),
+        "capability_context".to_string(),
+        "run_result".to_string(),
+        "replay_bundle".to_string(),
     ];
     match comparison_lane {
         ProgrammaticComparisonLane::OxfmlOnly => {}
         ProgrammaticComparisonLane::OxfmlAndExcel => {
-            retained_artifact_kinds.push("comparison_outcome");
-            retained_artifact_kinds.push("discrepancy_index");
+            retained_artifact_kinds.push("comparison_outcome".to_string());
+            retained_artifact_kinds.push("discrepancy_index".to_string());
         }
         ProgrammaticComparisonLane::ExcelObservationBlocked => {
-            retained_artifact_kinds.push("comparison_blocked");
-            retained_artifact_kinds.push("discrepancy_index");
+            retained_artifact_kinds.push("comparison_blocked".to_string());
+            retained_artifact_kinds.push("discrepancy_index".to_string());
         }
     }
 
@@ -126,6 +150,7 @@ mod tests {
             &[ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2)".to_string(),
+                spreadsheet_xml_source: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "windows-excel".to_string(),
@@ -138,9 +163,14 @@ mod tests {
         );
 
         assert_eq!(plan.formula_count, 1);
-        assert_eq!(plan.comparison_lane, ProgrammaticComparisonLane::OxfmlAndExcel);
+        assert_eq!(
+            plan.comparison_lane,
+            ProgrammaticComparisonLane::OxfmlAndExcel
+        );
         assert!(plan.discrepancy_index_required);
-        assert!(plan.retained_artifact_kinds.contains(&"comparison_outcome"));
+        assert!(plan
+            .retained_artifact_kinds
+            .contains(&"comparison_outcome".to_string()));
     }
 
     #[test]
@@ -149,6 +179,7 @@ mod tests {
             &[ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "'123.4".to_string(),
+                spreadsheet_xml_source: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "browser".to_string(),
@@ -164,7 +195,9 @@ mod tests {
             plan.comparison_lane,
             ProgrammaticComparisonLane::ExcelObservationBlocked
         );
-        assert!(plan.retained_artifact_kinds.contains(&"comparison_blocked"));
+        assert!(plan
+            .retained_artifact_kinds
+            .contains(&"comparison_blocked".to_string()));
     }
 
     #[test]

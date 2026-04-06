@@ -15,6 +15,10 @@ pub struct WorkbenchViewModel {
     pub recommended_action: String,
     pub retained_artifact_id: Option<String>,
     pub retained_discrepancy_summary: Option<String>,
+    pub imported_bundle_summary: Option<String>,
+    pub xml_source_summary: Option<String>,
+    pub display_comparison_summary: Option<String>,
+    pub upstream_gap_summary: Vec<String>,
     pub retained_catalog_items: Vec<WorkbenchRetainedCatalogItemView>,
 }
 
@@ -24,6 +28,7 @@ pub struct WorkbenchRetainedCatalogItemView {
     pub case_id: String,
     pub comparison_status: String,
     pub discrepancy_summary: Option<String>,
+    pub xml_source_summary: Option<String>,
     pub is_open: bool,
 }
 
@@ -39,7 +44,54 @@ pub fn build_workbench_view_model(
             document.live_diagnostics.diagnostics.len()
         )
     });
-    let retained_discrepancy_summary = retained_artifact.and_then(|artifact| artifact.discrepancy_summary.clone());
+    let retained_discrepancy_summary =
+        retained_artifact.and_then(|artifact| artifact.discrepancy_summary.clone());
+    let imported_bundle_summary = retained_artifact.and_then(|artifact| {
+        artifact
+            .bundle_report_path
+            .as_ref()
+            .map(|bundle| format!("Imported bundle: {bundle}"))
+    });
+    let xml_source_summary = retained_artifact.and_then(|artifact| {
+        artifact.xml_extraction.as_ref().map(|xml| {
+            format!(
+                "{} @ {} | format {}",
+                xml.workbook_path,
+                xml.locator,
+                xml.number_format_code
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_string())
+            )
+        })
+    });
+    let display_comparison_summary = retained_artifact.and_then(|artifact| {
+        match (
+            artifact.oxfml_effective_display_summary.as_deref(),
+            artifact.excel_observed_value_repr.as_deref(),
+        ) {
+            (Some(oxfml), Some(excel)) => Some(format!("OxFml {oxfml} vs Excel {excel}")),
+            _ => None,
+        }
+    });
+    let upstream_gap_summary = retained_artifact
+        .and_then(|artifact| artifact.upstream_gap_report.as_ref())
+        .map(|gap| {
+            let mut items = Vec::new();
+            if !gap.oxxlplay_missing_surfaces.is_empty() {
+                items.push(format!(
+                    "OxXlPlay missing: {}",
+                    gap.oxxlplay_missing_surfaces.join(", ")
+                ));
+            }
+            if !gap.oxreplay_missing_views.is_empty() {
+                items.push(format!(
+                    "OxReplay missing: {}",
+                    gap.oxreplay_missing_views.join(", ")
+                ));
+            }
+            items
+        })
+        .unwrap_or_default();
 
     WorkbenchViewModel {
         scenario_label: formula_space.context.scenario_label.clone(),
@@ -102,6 +154,10 @@ pub fn build_workbench_view_model(
         },
         retained_artifact_id: retained_artifact.map(|artifact| artifact.artifact_id.clone()),
         retained_discrepancy_summary,
+        imported_bundle_summary,
+        xml_source_summary,
+        display_comparison_summary,
+        upstream_gap_summary,
         retained_catalog_items: retained_catalog
             .iter()
             .map(|artifact| WorkbenchRetainedCatalogItemView {
@@ -119,6 +175,9 @@ pub fn build_workbench_view_model(
                     }
                 },
                 discrepancy_summary: artifact.discrepancy_summary.clone(),
+                xml_source_summary: artifact.xml_extraction.as_ref().map(|xml| {
+                    format!("{} @ {}", xml.worksheet_name, xml.locator)
+                }),
                 is_open: retained_artifact
                     .is_some_and(|open_artifact| open_artifact.artifact_id == artifact.artifact_id),
             })
@@ -130,7 +189,9 @@ pub fn build_workbench_view_model(
 mod tests {
     use super::*;
     use crate::domain::ids::FormulaSpaceId;
-    use crate::services::programmatic_testing::{ProgrammaticComparisonStatus, ProgrammaticOpenModeHint};
+    use crate::services::programmatic_testing::{
+        ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
+    };
     use crate::state::FormulaSpaceState;
     use crate::test_support::sample_editor_document;
 
@@ -165,13 +226,34 @@ mod tests {
             comparison_status: ProgrammaticComparisonStatus::Mismatched,
             open_mode_hint: ProgrammaticOpenModeHint::Workbench,
             discrepancy_summary: Some("dna=1 excel=2".to_string()),
+            bundle_report_path: None,
+            case_output_dir: None,
+            xml_extraction: None,
+            upstream_gap_report: None,
+            visible_output_match: None,
+            replay_equivalent: None,
+            oxfml_effective_display_summary: None,
+            excel_observed_value_repr: None,
         };
 
-        let view_model = build_workbench_view_model(&formula_space, Some(&retained_artifact), &[&retained_artifact]);
+        let view_model = build_workbench_view_model(
+            &formula_space,
+            Some(&retained_artifact),
+            &[&retained_artifact],
+        );
         assert_eq!(view_model.outcome_summary.as_deref(), Some("Mismatched"));
-        assert_eq!(view_model.retained_artifact_id.as_deref(), Some("artifact-1"));
-        assert_eq!(view_model.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
-        assert_eq!(view_model.recommended_action, "Review discrepancy in workbench");
+        assert_eq!(
+            view_model.retained_artifact_id.as_deref(),
+            Some("artifact-1")
+        );
+        assert_eq!(
+            view_model.retained_discrepancy_summary.as_deref(),
+            Some("dna=1 excel=2")
+        );
+        assert_eq!(
+            view_model.recommended_action,
+            "Review discrepancy in workbench"
+        );
         assert_eq!(view_model.retained_catalog_items.len(), 1);
         assert!(view_model.retained_catalog_items[0].is_open);
         assert_eq!(view_model.retained_catalog_items[0].case_id, "case-1");

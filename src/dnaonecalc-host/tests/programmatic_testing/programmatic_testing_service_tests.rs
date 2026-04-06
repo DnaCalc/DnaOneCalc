@@ -11,10 +11,12 @@ fn builds_headless_batch_plan_for_excel_comparison_runs() {
             ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2)".to_string(),
+                spreadsheet_xml_source: None,
             },
             ProgrammaticFormulaCase {
                 case_id: "case-2".to_string(),
                 entered_cell_text: "'123.4".to_string(),
+                spreadsheet_xml_source: None,
             },
         ],
         &ProgrammaticHostProfile {
@@ -28,9 +30,14 @@ fn builds_headless_batch_plan_for_excel_comparison_runs() {
     );
 
     assert_eq!(plan.formula_count, 2);
-    assert_eq!(plan.comparison_lane, ProgrammaticComparisonLane::OxfmlAndExcel);
-    assert!(plan.retained_artifact_kinds.contains(&"replay_bundle"));
-    assert!(plan.retained_artifact_kinds.contains(&"comparison_outcome"));
+    assert_eq!(
+        plan.comparison_lane,
+        ProgrammaticComparisonLane::OxfmlAndExcel
+    );
+    assert!(plan.retained_artifact_kinds.contains(&"replay_bundle".to_string()));
+    assert!(plan
+        .retained_artifact_kinds
+        .contains(&"comparison_outcome".to_string()));
 }
 
 #[test]
@@ -41,6 +48,8 @@ fn blocked_excel_lane_still_produces_openable_workbench_artifacts() {
         ProgrammaticComparisonStatus::Blocked,
     );
 
-    assert_eq!(blocked_entry.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
+    assert_eq!(
+        blocked_entry.open_mode_hint,
+        ProgrammaticOpenModeHint::Workbench
+    );
 }
-

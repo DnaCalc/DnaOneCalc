@@ -105,18 +105,13 @@ $listener = [System.Net.HttpListener]::new()
 $prefix = "http://127.0.0.1:$Port/"
 $listener.Prefixes.Add($prefix)
 $listener.Start()
-$script:previewStopRequested = $false
-$script:previewListener = $listener
+$previewStopRequested = $false
+$originalTreatControlCAsInput = $null
 
-$cancelHandler = [System.ConsoleCancelEventHandler]{
-    param($sender, $eventArgs)
-    $script:previewStopRequested = $true
-    $eventArgs.Cancel = $true
-    if ($script:previewListener -and $script:previewListener.IsListening) {
-        $script:previewListener.Stop()
-    }
+if ([Console]::IsInputRedirected -eq $false) {
+    $originalTreatControlCAsInput = [Console]::TreatControlCAsInput
+    [Console]::TreatControlCAsInput = $true
 }
-[Console]::add_CancelKeyPress($cancelHandler)
 
 if (-not $NoOpen) {
     Start-Process $prefix | Out-Null
@@ -126,12 +121,35 @@ Write-Host "DNA OneCalc preview available at $prefix"
 Write-Host "Press Ctrl+C to stop the preview server."
 
 try {
-    while ((-not $script:previewStopRequested) -and $listener.IsListening) {
-        $getContextTask = $listener.GetContextAsync()
-        while ((-not $script:previewStopRequested) -and $listener.IsListening -and (-not $getContextTask.Wait(200))) {
+    while ((-not $previewStopRequested) -and $listener.IsListening) {
+        if (($originalTreatControlCAsInput -ne $null) -and [Console]::KeyAvailable) {
+            $pressedKey = [Console]::ReadKey($true)
+            if (
+                (($pressedKey.Modifiers -band [ConsoleModifiers]::Control) -ne 0) -and
+                ($pressedKey.Key -eq [ConsoleKey]::C)
+            ) {
+                $previewStopRequested = $true
+                Write-Host "Stopping preview server..."
+                break
+            }
         }
 
-        if ($script:previewStopRequested -or (-not $listener.IsListening)) {
+        $getContextTask = $listener.GetContextAsync()
+        while ((-not $previewStopRequested) -and $listener.IsListening -and (-not $getContextTask.Wait(200))) {
+            if (($originalTreatControlCAsInput -ne $null) -and [Console]::KeyAvailable) {
+                $pressedKey = [Console]::ReadKey($true)
+                if (
+                    (($pressedKey.Modifiers -band [ConsoleModifiers]::Control) -ne 0) -and
+                    ($pressedKey.Key -eq [ConsoleKey]::C)
+                ) {
+                    $previewStopRequested = $true
+                    Write-Host "Stopping preview server..."
+                    break
+                }
+            }
+        }
+
+        if ($previewStopRequested -or (-not $listener.IsListening)) {
             break
         }
 
@@ -142,7 +160,7 @@ try {
             break
         }
         catch [System.Net.HttpListenerException] {
-            if ($script:previewStopRequested) {
+            if ($previewStopRequested) {
                 break
             }
             throw
@@ -171,11 +189,11 @@ try {
     }
 }
 finally {
-    [Console]::remove_CancelKeyPress($cancelHandler)
     if ($listener.IsListening) {
         $listener.Stop()
     }
     $listener.Close()
-    $script:previewListener = $null
-    $script:previewStopRequested = $false
+    if ($originalTreatControlCAsInput -ne $null) {
+        [Console]::TreatControlCAsInput = $originalTreatControlCAsInput
+    }
 }

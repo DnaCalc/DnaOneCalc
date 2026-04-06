@@ -22,20 +22,19 @@ pub fn preview_host_state() -> OneCalcHostState {
     let array_space_id = FormulaSpaceId::new("preview-array");
 
     state.workspace_shell.active_formula_space_id = Some(success_space_id.clone());
-    state
-        .workspace_shell
-        .open_formula_space_order
-        .extend([
-            success_space_id.clone(),
-            diagnostic_space_id.clone(),
-            array_space_id.clone(),
-        ]);
+    state.workspace_shell.open_formula_space_order.extend([
+        success_space_id.clone(),
+        diagnostic_space_id.clone(),
+        array_space_id.clone(),
+    ]);
     state
         .workspace_shell
         .pinned_formula_space_ids
         .insert(success_space_id.clone());
 
-    state.formula_spaces.insert(success_formula_space(success_space_id.clone()));
+    state
+        .formula_spaces
+        .insert(success_formula_space(success_space_id.clone()));
     state
         .formula_spaces
         .insert(diagnostic_formula_space(diagnostic_space_id.clone()));
@@ -105,7 +104,8 @@ fn diagnostic_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceSta
     let mut formula_space = FormulaSpaceState::new(formula_space_id, "=SUM(1,)");
     formula_space.editor_document = Some(diagnostic_editor_document("=SUM(1,)"));
     formula_space.effective_display_summary = Some("Input incomplete".to_string());
-    formula_space.latest_evaluation_summary = Some("Diagnostic · Missing trailing argument".to_string());
+    formula_space.latest_evaluation_summary =
+        Some("Diagnostic · Missing trailing argument".to_string());
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Diagnostic · Missing argument".to_string(),
         host_profile: "Windows desktop preview".to_string(),
@@ -150,7 +150,8 @@ fn blocked_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceState 
     let mut formula_space = FormulaSpaceState::new(formula_space_id, "=XLOOKUP(A1,B1:B9,C1:C9)");
     formula_space.editor_document = Some(blocked_editor_document("=XLOOKUP(A1,B1:B9,C1:C9)"));
     formula_space.effective_display_summary = Some("Blocked on host lane".to_string());
-    formula_space.latest_evaluation_summary = Some("Blocked · comparison lane unavailable".to_string());
+    formula_space.latest_evaluation_summary =
+        Some("Blocked · comparison lane unavailable".to_string());
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Blocked · Host limitation".to_string(),
         host_profile: "Browser preview".to_string(),

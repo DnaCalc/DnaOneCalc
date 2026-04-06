@@ -1,11 +1,306 @@
-use dnaonecalc_host::app::host_mount::{render_shell_document, HostMountTarget};
-use dnaonecalc_host::app::OneCalcHostApp;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-fn main() {
-    let app = OneCalcHostApp::new();
-    println!("{}", app.launch_message());
+use dnaonecalc_host::app::OneCalcHostApp;
+use dnaonecalc_host::app::host_mount::{HostMountTarget, render_shell_document};
+use dnaonecalc_host::services::programmatic_testing::ProgrammaticComparisonStatus;
+use dnaonecalc_host::services::verification_bundle::{
+    VerificationBundleReport, default_output_root, load_verification_batch_request,
+    run_verification_batch, single_case_request, single_xml_case_request,
+};
+
+fn main() -> ExitCode {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("verify-formula") => run_verify_formula(args.collect()),
+        Some("verify-xml-cell") => run_verify_xml_cell(args.collect()),
+        Some("verify-batch") => run_verify_batch(args.collect()),
+        Some("--help") | Some("-h") | Some("help") => {
+            print_help();
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!("unknown command: {other}");
+            print_help();
+            ExitCode::from(2)
+        }
+        None => {
+            let app = OneCalcHostApp::new();
+            println!("{}", app.launch_message());
+            println!(
+                "{}",
+                render_shell_document(HostMountTarget::DesktopTauri, app.state().clone())
+            );
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_verify_formula(args: Vec<String>) -> ExitCode {
+    let mut case_id = None;
+    let mut formula = None;
+    let mut output_root = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--case-id" => {
+                case_id = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--formula" => {
+                formula = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--output-root" => {
+                output_root = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            other => {
+                eprintln!("unexpected verify-formula argument: {other}");
+                print_help();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(case_id) = case_id else {
+        eprintln!("verify-formula requires --case-id <id>");
+        return ExitCode::from(2);
+    };
+    let Some(formula) = formula else {
+        eprintln!("verify-formula requires --formula <text>");
+        return ExitCode::from(2);
+    };
+
+    let request = single_case_request(case_id, formula);
+    let output_root = match output_root {
+        Some(path) => path,
+        None => match default_output_root() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(4);
+            }
+        },
+    };
+
+    match run_verification_batch(&request, &output_root) {
+        Ok(report) => {
+            print_report(&report);
+            exit_code_for_report(&report)
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(4)
+        }
+    }
+}
+
+fn run_verify_batch(args: Vec<String>) -> ExitCode {
+    let mut input_path = None;
+    let mut output_root = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => {
+                input_path = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--output-root" => {
+                output_root = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            other => {
+                eprintln!("unexpected verify-batch argument: {other}");
+                print_help();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(input_path) = input_path else {
+        eprintln!("verify-batch requires --input <path>");
+        return ExitCode::from(2);
+    };
+
+    let request = match load_verification_batch_request(&input_path) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(4);
+        }
+    };
+    let output_root = match output_root {
+        Some(path) => path,
+        None => match default_output_root() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(4);
+            }
+        },
+    };
+
+    match run_verification_batch(&request, &output_root) {
+        Ok(report) => {
+            print_report(&report);
+            exit_code_for_report(&report)
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(4)
+        }
+    }
+}
+
+fn run_verify_xml_cell(args: Vec<String>) -> ExitCode {
+    let mut case_id = None;
+    let mut workbook_xml = None;
+    let mut locator = None;
+    let mut output_root = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--case-id" => {
+                case_id = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--workbook-xml" => {
+                workbook_xml = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--locator" => {
+                locator = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--output-root" => {
+                output_root = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            other => {
+                eprintln!("unexpected verify-xml-cell argument: {other}");
+                print_help();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(case_id) = case_id else {
+        eprintln!("verify-xml-cell requires --case-id <id>");
+        return ExitCode::from(2);
+    };
+    let Some(workbook_xml) = workbook_xml else {
+        eprintln!("verify-xml-cell requires --workbook-xml <path>");
+        return ExitCode::from(2);
+    };
+    let Some(locator) = locator else {
+        eprintln!("verify-xml-cell requires --locator <Sheet!Cell>");
+        return ExitCode::from(2);
+    };
+
+    let request = match single_xml_case_request(case_id, workbook_xml, locator) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(4);
+        }
+    };
+    let output_root = match output_root {
+        Some(path) => path,
+        None => match default_output_root() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(4);
+            }
+        },
+    };
+
+    match run_verification_batch(&request, &output_root) {
+        Ok(report) => {
+            print_report(&report);
+            exit_code_for_report(&report)
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(4)
+        }
+    }
+}
+
+fn print_report(report: &VerificationBundleReport) {
+    println!("verification bundle: {}", report.output_root);
     println!(
-        "{}",
-        render_shell_document(HostMountTarget::DesktopTauri, app.state().clone())
+        "host profile: {} | excel observation available: {}",
+        report.host_profile.profile_id, report.capabilities.excel_observation_available
+    );
+    println!("cases: {}", report.case_reports.len());
+    for case in &report.case_reports {
+        println!(
+            "- {} | {:?} | OxFml={} | Excel={} | visible_match={} | replay_equivalent={} | artifact={}",
+            case.case_id,
+            case.comparison_status,
+            case.oxfml_summary
+                .effective_display_summary
+                .as_deref()
+                .unwrap_or("<unavailable>"),
+            case.excel_summary
+                .as_ref()
+                .and_then(|summary| summary.observed_value_repr.as_deref())
+                .unwrap_or("<unavailable>"),
+            case.visible_output_match
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            case.replay_equivalent
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            case.artifact_catalog_entry.artifact_id
+        );
+        if let Some(discrepancy_summary) = &case.discrepancy_summary {
+            println!("  discrepancy: {discrepancy_summary}");
+        }
+        if let Some(extraction) = &case.spreadsheet_xml_extraction {
+            println!(
+                "  source workbook: {} @ {}",
+                extraction.workbook_path, extraction.locator
+            );
+        }
+        println!("  case output: {}", case.case_output_dir);
+    }
+}
+
+fn exit_code_for_report(report: &VerificationBundleReport) -> ExitCode {
+    if report
+        .case_reports
+        .iter()
+        .any(|case| case.comparison_status != ProgrammaticComparisonStatus::Matched)
+    {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn print_help() {
+    eprintln!(
+        "dnaonecalc-host\n\
+         \n\
+         Commands:\n\
+           verify-formula --case-id <id> --formula <text> [--output-root <path>]\n\
+           verify-xml-cell --case-id <id> --workbook-xml <path> --locator <Sheet!Cell> [--output-root <path>]\n\
+           verify-batch --input <json-path> [--output-root <path>]\n\
+         \n\
+         Batch input JSON shape:\n\
+           {{\n\
+             \"host_profile\": {{ \"profile_id\": \"windows_excel_default\", \"requires_excel_observation\": true }},\n\
+             \"capabilities\": {{ \"host_summary\": \"windows_native_excel_default\", \"excel_observation_available\": true }},\n\
+             \"cases\": [\n\
+               {{ \"case_id\": \"case-1\", \"entered_cell_text\": \"=SUM(1,2,3)\", \"spreadsheet_xml_source\": null }},\n\
+               {{ \"case_id\": \"case-2\", \"entered_cell_text\": \"\", \"spreadsheet_xml_source\": {{ \"workbook_path\": \"C:/path/workbook.xml\", \"locator\": \"Input!A1\" }} }}\n\
+             ]\n\
+           }}"
     );
 }

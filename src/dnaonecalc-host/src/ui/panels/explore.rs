@@ -71,7 +71,12 @@ pub fn build_explore_editor_cluster(
                 }
                 _ => None,
             })
-            .or_else(|| view_model.function_help.as_ref().map(|help| help.lookup_key.clone()))
+            .or_else(|| {
+                view_model
+                    .function_help
+                    .as_ref()
+                    .map(|help| help.lookup_key.clone())
+            })
             .or_else(|| view_model.function_help_lookup_key.clone()),
         completion_anchor_span: selected_completion_item
             .as_ref()
@@ -194,18 +199,36 @@ mod tests {
         assert_eq!(cluster.syntax_runs.len(), 1);
         assert_eq!(cluster.diagnostics.len(), 1);
         assert_eq!(cluster.completion_items.len(), 1);
-        assert_eq!(cluster.selected_completion_proposal_id.as_deref(), Some("proposal-1"));
         assert_eq!(
-            cluster.selected_completion_item.as_ref().map(|item| item.display_text.as_str()),
+            cluster.selected_completion_proposal_id.as_deref(),
+            Some("proposal-1")
+        );
+        assert_eq!(
+            cluster
+                .selected_completion_item
+                .as_ref()
+                .map(|item| item.display_text.as_str()),
             Some("SUM")
         );
         assert_eq!(cluster.help_sync_lookup_key.as_deref(), Some("SUM"));
-        assert_eq!(cluster.completion_anchor_span, Some(FormulaTextSpan { start: 1, len: 3 }));
         assert_eq!(
-            cluster.signature_help.as_ref().map(|help| help.active_argument_index),
+            cluster.completion_anchor_span,
+            Some(FormulaTextSpan { start: 1, len: 3 })
+        );
+        assert_eq!(
+            cluster
+                .signature_help
+                .as_ref()
+                .map(|help| help.active_argument_index),
             Some(1)
         );
-        assert_eq!(cluster.function_help.as_ref().map(|help| help.display_name.as_str()), Some("SUM"));
+        assert_eq!(
+            cluster
+                .function_help
+                .as_ref()
+                .map(|help| help.display_name.as_str()),
+            Some("SUM")
+        );
         assert_eq!(cluster.function_help_lookup_key.as_deref(), Some("SUM"));
         assert_eq!(cluster.truth_source_label, "preview-backed");
         assert!(cluster.reused_green_tree);

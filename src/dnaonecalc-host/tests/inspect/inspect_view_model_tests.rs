@@ -1,7 +1,7 @@
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
+use dnaonecalc_host::services::inspect_mode::build_inspect_view_model;
 use dnaonecalc_host::state::FormulaSpaceState;
 use dnaonecalc_host::test_support::sample_editor_document;
-use dnaonecalc_host::services::inspect_mode::build_inspect_view_model;
 
 #[test]
 fn in_04_inspect_view_model_projects_formula_walk_and_summaries() {
@@ -15,9 +15,18 @@ fn in_04_inspect_view_model_projects_formula_walk_and_summaries() {
     assert_eq!(view_model.green_tree_key.as_deref(), Some("green-1"));
     assert_eq!(view_model.formula_walk_nodes.len(), 1);
     assert_eq!(view_model.formula_walk_nodes[0].label, "SUM");
-    assert_eq!(view_model.parse_summary.as_ref().map(|x| x.status.as_str()), Some("Valid"));
-    assert_eq!(view_model.bind_summary.as_ref().map(|x| x.variable_count), Some(0));
-    assert_eq!(view_model.eval_summary.as_ref().map(|x| x.step_count), Some(1));
+    assert_eq!(
+        view_model.parse_summary.as_ref().map(|x| x.status.as_str()),
+        Some("Valid")
+    );
+    assert_eq!(
+        view_model.bind_summary.as_ref().map(|x| x.variable_count),
+        Some(0)
+    );
+    assert_eq!(
+        view_model.eval_summary.as_ref().map(|x| x.step_count),
+        Some(1)
+    );
     assert_eq!(
         view_model
             .provenance_summary

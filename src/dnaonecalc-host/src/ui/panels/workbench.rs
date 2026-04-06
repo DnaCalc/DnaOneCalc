@@ -17,6 +17,10 @@ pub struct WorkbenchEvidenceClusterViewModel {
     pub evidence_summary: Option<String>,
     pub retained_discrepancy_summary: Option<String>,
     pub trace_summary: Option<String>,
+    pub imported_bundle_summary: Option<String>,
+    pub xml_source_summary: Option<String>,
+    pub display_comparison_summary: Option<String>,
+    pub upstream_gap_summary: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +61,10 @@ pub fn build_workbench_evidence_cluster(
         evidence_summary: view_model.evidence_summary.clone(),
         retained_discrepancy_summary: view_model.retained_discrepancy_summary.clone(),
         trace_summary: view_model.trace_summary.clone(),
+        imported_bundle_summary: view_model.imported_bundle_summary.clone(),
+        xml_source_summary: view_model.xml_source_summary.clone(),
+        display_comparison_summary: view_model.display_comparison_summary.clone(),
+        upstream_gap_summary: view_model.upstream_gap_summary.clone(),
     }
 }
 
@@ -106,11 +114,16 @@ mod tests {
             retained_artifact_id: Some("artifact-1".to_string()),
             retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
             trace_summary: Some("Preview trace".to_string()),
+            imported_bundle_summary: Some("Imported bundle: target/example".to_string()),
+            xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
+            display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
+            upstream_gap_summary: vec!["OxXlPlay missing: effective_display_text".to_string()],
             retained_catalog_items: vec![WorkbenchRetainedCatalogItemView {
                 artifact_id: "artifact-1".to_string(),
                 case_id: "case-1".to_string(),
                 comparison_status: "mismatched".to_string(),
                 discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                xml_source_summary: Some("Input @ Input!A1".to_string()),
                 is_open: true,
             }],
         };
@@ -126,8 +139,16 @@ mod tests {
         assert_eq!(outcome.recommended_action, "Retain and compare");
         assert_eq!(outcome.retained_artifact_id.as_deref(), Some("artifact-1"));
         assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
-        assert_eq!(evidence.retained_discrepancy_summary.as_deref(), Some("dna=1 excel=2"));
+        assert_eq!(
+            evidence.retained_discrepancy_summary.as_deref(),
+            Some("dna=1 excel=2")
+        );
         assert_eq!(evidence.trace_summary.as_deref(), Some("Preview trace"));
+        assert_eq!(
+            evidence.display_comparison_summary.as_deref(),
+            Some("OxFml 6 vs Excel $6.00")
+        );
+        assert_eq!(evidence.upstream_gap_summary.len(), 1);
         assert_eq!(lineage.lineage_items.len(), 1);
         assert_eq!(actions.action_items.len(), 1);
         assert_eq!(catalog.retained_catalog_items.len(), 1);

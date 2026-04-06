@@ -1,11 +1,13 @@
 use leptos::prelude::*;
 
 use crate::services::programmatic_testing::ProgrammaticComparisonStatus;
-use crate::services::retained_artifacts::ManualRetainedArtifactImportRequest;
+use crate::services::retained_artifacts::{
+    ManualRetainedArtifactImportRequest, VerificationBundleImportRequest,
+};
 use crate::ui::panels::workbench::{
     WorkbenchActionsClusterViewModel, WorkbenchCatalogClusterViewModel,
-    WorkbenchEvidenceClusterViewModel,
-    WorkbenchLineageClusterViewModel, WorkbenchOutcomeClusterViewModel,
+    WorkbenchEvidenceClusterViewModel, WorkbenchLineageClusterViewModel,
+    WorkbenchOutcomeClusterViewModel,
 };
 
 #[component]
@@ -17,7 +19,12 @@ pub fn WorkbenchShell(
     catalog: WorkbenchCatalogClusterViewModel,
     #[prop(default = None)] on_open_retained_artifact: Option<Callback<String>>,
     #[prop(default = None)] on_open_retained_artifact_in_inspect: Option<Callback<String>>,
-    #[prop(default = None)] on_import_retained_artifact: Option<Callback<ManualRetainedArtifactImportRequest>>,
+    #[prop(default = None)] on_import_retained_artifact: Option<
+        Callback<ManualRetainedArtifactImportRequest>,
+    >,
+    #[prop(default = None)] on_import_verification_bundle: Option<
+        Callback<VerificationBundleImportRequest>,
+    >,
 ) -> impl IntoView {
     let outcome_summary = outcome
         .outcome_summary
@@ -42,6 +49,7 @@ pub fn WorkbenchShell(
     let (artifact_id, set_artifact_id) = signal(String::new());
     let (case_id, set_case_id) = signal(String::new());
     let (discrepancy_summary, set_discrepancy_summary) = signal(String::new());
+    let (verification_bundle_json, set_verification_bundle_json) = signal(String::new());
 
     view! {
         <section class="onecalc-workbench-shell" data-screen="workbench">
@@ -83,6 +91,15 @@ pub fn WorkbenchShell(
                     <h2>"Evidence"</h2>
                     <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
                     <div>{evidence_summary}</div>
+                    {evidence.imported_bundle_summary.as_ref().map(|summary| view! {
+                        <div data-role="workbench-imported-bundle-summary">{summary.clone()}</div>
+                    })}
+                    {evidence.xml_source_summary.as_ref().map(|summary| view! {
+                        <div data-role="workbench-xml-source-summary">{summary.clone()}</div>
+                    })}
+                    {evidence.display_comparison_summary.as_ref().map(|summary| view! {
+                        <div data-role="workbench-display-comparison-summary">{summary.clone()}</div>
+                    })}
                     {evidence.trace_summary.as_ref().map(|trace_summary| view! {
                         <div data-role="workbench-trace-summary">{trace_summary.clone()}</div>
                     })}
@@ -126,6 +143,9 @@ pub fn WorkbenchShell(
                                         <span data-role="retained-catalog-label">{item.artifact_id.clone()}</span>
                                         <span data-role="retained-catalog-case-id">{item.case_id.clone()}</span>
                                         <span data-role="retained-catalog-status">{item.comparison_status.clone()}</span>
+                                        {item.xml_source_summary.as_ref().map(|summary| view! {
+                                            <span data-role="retained-catalog-xml-source">{summary.clone()}</span>
+                                        })}
                                         {item
                                             .discrepancy_summary
                                             .as_ref()
@@ -238,6 +258,19 @@ pub fn WorkbenchShell(
                                 "Blocked: capture the host or capability limitation that prevented comparison."
                             </div>
                         </div>
+                        {if evidence.upstream_gap_summary.is_empty() {
+                            view! { <></> }.into_any()
+                        } else {
+                            view! {
+                                <ul data-role="retained-import-upstream-gap-summary">
+                                    {evidence
+                                        .upstream_gap_summary
+                                        .iter()
+                                        .map(|item| view! { <li>{item.clone()}</li> })
+                                        .collect_view()}
+                                </ul>
+                            }.into_any()
+                        }}
                         <div class="onecalc-workbench-shell__import-buttons">
                             {[
                                 ("matched", ProgrammaticComparisonStatus::Matched),
@@ -282,6 +315,34 @@ pub fn WorkbenchShell(
                                 })
                                 .collect_view()}
                         </div>
+                        <div class="onecalc-workbench-shell__bundle-import-surface" data-role="verification-bundle-import-surface">
+                            <h3>"Import Verification Bundle"</h3>
+                            <p data-role="verification-bundle-import-description">
+                                "Paste the exact verification-bundle-report.json content emitted by the CLI path. OneCalc will import the cases and preserve XML and upstream gap context."
+                            </p>
+                            <textarea
+                                class="onecalc-workbench-shell__bundle-import-textarea"
+                                data-role="verification-bundle-import-json"
+                                prop:value=verification_bundle_json
+                                on:input=move |ev| {
+                                    set_verification_bundle_json.set(event_target_value(&ev));
+                                }
+                            />
+                            <button
+                                type="button"
+                                data-role="verification-bundle-import-submit"
+                                on:click=move |_| {
+                                    if let Some(callback) = on_import_verification_bundle.as_ref() {
+                                        let report_json = verification_bundle_json.get_untracked();
+                                        if !report_json.trim().is_empty() {
+                                            callback.run(VerificationBundleImportRequest { report_json });
+                                        }
+                                    }
+                                }
+                            >
+                                "Import verification bundle"
+                            </button>
+                        </div>
                     </div>
                 </section>
             </div>
@@ -311,6 +372,10 @@ mod tests {
                     evidence_summary: Some("green=green-1, diagnostics=1".to_string()),
                     retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
                     trace_summary: Some("Preview trace captured for retained mismatch".to_string()),
+                    imported_bundle_summary: Some("Imported bundle: target/example".to_string()),
+                    xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
+                    display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
+                    upstream_gap_summary: vec!["OxXlPlay missing: effective_display_text".to_string()],
                 }
                 lineage=WorkbenchLineageClusterViewModel {
                     lineage_items: vec!["Scenario opened".to_string(), "Evaluation captured".to_string()],
@@ -325,12 +390,14 @@ mod tests {
                         case_id: "case-1".to_string(),
                         comparison_status: "mismatched".to_string(),
                         discrepancy_summary: Some("dna=1 excel=2".to_string()),
+                        xml_source_summary: Some("Input @ Input!A1".to_string()),
                         is_open: true,
                     }],
                 }
                 on_open_retained_artifact=None
                 on_open_retained_artifact_in_inspect=None
                 on_import_retained_artifact=None
+                on_import_verification_bundle=None
             />
         }
         .to_html();
@@ -354,6 +421,14 @@ mod tests {
         assert!(html.contains("data-role=\"retained-import-surface\""));
         assert!(html.contains("data-role=\"retained-import-description\""));
         assert!(html.contains("data-role=\"retained-import-outcome-guide\""));
+        assert!(html.contains("data-role=\"workbench-imported-bundle-summary\""));
+        assert!(html.contains("data-role=\"workbench-xml-source-summary\""));
+        assert!(html.contains("data-role=\"workbench-display-comparison-summary\""));
+        assert!(html.contains("data-role=\"retained-catalog-xml-source\""));
+        assert!(html.contains("data-role=\"retained-import-upstream-gap-summary\""));
+        assert!(html.contains("data-role=\"verification-bundle-import-surface\""));
+        assert!(html.contains("data-role=\"verification-bundle-import-json\""));
+        assert!(html.contains("data-role=\"verification-bundle-import-submit\""));
         assert!(html.contains("data-role=\"retained-import-artifact-id\""));
         assert!(html.contains("data-role=\"retained-import-case-id\""));
         assert!(html.contains("data-role=\"retained-import-summary\""));

@@ -1,9 +1,9 @@
-use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::services::retained_artifacts::{
     import_manual_artifact_for_active_formula_space, open_retained_artifact_by_id,
-    open_retained_artifact_in_inspect_by_id,
-    ManualRetainedArtifactImportRequest,
+    open_retained_artifact_in_inspect_by_id, import_verification_bundle_report_json,
+    ManualRetainedArtifactImportRequest, VerificationBundleImportRequest,
 };
+use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
@@ -18,18 +18,17 @@ pub fn apply_editor_input_to_active_formula_space(
         return false;
     };
 
-    let next_editor_state =
-        if let (Some(selection_start), Some(selection_end)) =
-            (input_event.selection_start, input_event.selection_end)
-        {
-            EditorSurfaceState::for_text_with_selection(
-                &input_event.text,
-                selection_start,
-                selection_end,
-            )
-        } else {
-            EditorSurfaceState::for_text(&input_event.text)
-        };
+    let next_editor_state = if let (Some(selection_start), Some(selection_end)) =
+        (input_event.selection_start, input_event.selection_end)
+    {
+        EditorSurfaceState::for_text_with_selection(
+            &input_event.text,
+            selection_start,
+            selection_end,
+        )
+    } else {
+        EditorSurfaceState::for_text(&input_event.text)
+    };
     apply_local_editor_text_change(formula_space, input_event.text, next_editor_state);
     true
 }
@@ -88,12 +87,22 @@ pub fn import_manual_retained_artifact_into_active_formula_space(
     import_manual_artifact_for_active_formula_space(state, request).is_ok()
 }
 
+pub fn import_verification_bundle_report_into_workspace(
+    state: &mut OneCalcHostState,
+    request: VerificationBundleImportRequest,
+) -> bool {
+    import_verification_bundle_report_json(state, request).is_ok()
+}
+
 fn active_formula_space_mut(state: &mut OneCalcHostState) -> Option<&mut FormulaSpaceState> {
     let formula_space_id = state
         .workspace_shell
         .active_formula_space_id
         .clone()
-        .or(state.active_formula_space_view.selected_formula_space_id.clone())?;
+        .or(state
+            .active_formula_space_view
+            .selected_formula_space_id
+            .clone())?;
     state.formula_spaces.get_mut(&formula_space_id)
 }
 
@@ -111,7 +120,10 @@ fn apply_local_editor_text_change(
     formula_space.effective_display_summary = None;
 }
 
-fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &EditorCommand) -> bool {
+fn apply_completion_command(
+    formula_space: &mut FormulaSpaceState,
+    command: &EditorCommand,
+) -> bool {
     match command {
         EditorCommand::SelectPreviousCompletion => {
             let proposal_count = formula_space
@@ -122,11 +134,12 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
             if proposal_count == 0 {
                 return false;
             }
-            formula_space.editor_surface_state.completion_selected_index = cycle_completion_selection(
-                formula_space.editor_surface_state.completion_selected_index,
-                proposal_count,
-                -1,
-            );
+            formula_space.editor_surface_state.completion_selected_index =
+                cycle_completion_selection(
+                    formula_space.editor_surface_state.completion_selected_index,
+                    proposal_count,
+                    -1,
+                );
             true
         }
         EditorCommand::SelectNextCompletion => {
@@ -138,11 +151,12 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
             if proposal_count == 0 {
                 return false;
             }
-            formula_space.editor_surface_state.completion_selected_index = cycle_completion_selection(
-                formula_space.editor_surface_state.completion_selected_index,
-                proposal_count,
-                1,
-            );
+            formula_space.editor_surface_state.completion_selected_index =
+                cycle_completion_selection(
+                    formula_space.editor_surface_state.completion_selected_index,
+                    proposal_count,
+                    1,
+                );
             true
         }
         EditorCommand::SelectCompletionByIndex(index) => {
@@ -184,11 +198,19 @@ fn apply_completion_command(formula_space: &mut FormulaSpaceState, command: &Edi
                     anchor: selection_start,
                     focus: selection_end,
                 },
-                caret: crate::ui::editor::state::EditorCaret { offset: selection_end },
+                caret: crate::ui::editor::state::EditorCaret {
+                    offset: selection_end,
+                },
                 scroll_window: formula_space.editor_surface_state.scroll_window.clone(),
-                completion_anchor_offset: formula_space.editor_surface_state.completion_anchor_offset,
-                completion_selected_index: formula_space.editor_surface_state.completion_selected_index,
-                signature_help_anchor_offset: formula_space.editor_surface_state.signature_help_anchor_offset,
+                completion_anchor_offset: formula_space
+                    .editor_surface_state
+                    .completion_anchor_offset,
+                completion_selected_index: formula_space
+                    .editor_surface_state
+                    .completion_selected_index,
+                signature_help_anchor_offset: formula_space
+                    .editor_surface_state
+                    .signature_help_anchor_offset,
             };
             let result = apply_editor_command(
                 &formula_space.raw_entered_cell_text,
@@ -308,8 +330,10 @@ mod tests {
         formula_space.effective_display_summary = Some("3".to_string());
         state.formula_spaces.insert(formula_space);
 
-        let changed =
-            apply_editor_command_to_active_formula_space(&mut state, EditorCommand::IndentWithSpaces);
+        let changed = apply_editor_command_to_active_formula_space(
+            &mut state,
+            EditorCommand::IndentWithSpaces,
+        );
 
         assert!(changed);
         let active = state
@@ -370,9 +394,10 @@ mod tests {
     fn open_retained_artifact_routes_shell_to_workbench_context() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         crate::services::retained_artifacts::import_programmatic_artifact(
             &mut state,
@@ -439,9 +464,10 @@ mod tests {
     fn open_retained_artifact_in_inspect_routes_shell_to_inspect_context() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         crate::services::retained_artifacts::import_programmatic_artifact(
             &mut state,

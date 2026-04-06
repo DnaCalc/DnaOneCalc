@@ -1,18 +1,23 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use oxfunc_core::value::{ArrayCellValue, EvalValue, WorksheetErrorCode};
 use oxfml_core::consumer::editor::{
-    CompletionResult as UpstreamCompletionResult, EditorAnalysisStage as UpstreamEditorAnalysisStage,
-    EditorDocument as UpstreamEditorDocument, EditorEditService, EditorEnvironment,
-    EditorInteractionResult as UpstreamEditorInteractionResult, FormulaEditReuseSummary as UpstreamReuseSummary,
-    FunctionHelpPacket as UpstreamFunctionHelpPacket, FunctionHelpSignatureForm as UpstreamFunctionHelpSignatureForm,
+    CompletionResult as UpstreamCompletionResult,
+    EditorAnalysisStage as UpstreamEditorAnalysisStage, EditorDocument as UpstreamEditorDocument,
+    EditorEditService, EditorEnvironment,
+    EditorInteractionResult as UpstreamEditorInteractionResult,
+    FormulaEditReuseSummary as UpstreamReuseSummary,
+    FunctionHelpPacket as UpstreamFunctionHelpPacket,
+    FunctionHelpSignatureForm as UpstreamFunctionHelpSignatureForm,
     LiveDiagnostic as UpstreamLiveDiagnostic, SignatureHelpContext as UpstreamSignatureHelpContext,
 };
-use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult};
+use oxfml_core::consumer::runtime::{
+    RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult,
+};
 use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
 use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::{BindContext, FormulaChannelKind};
+use oxfunc_core::value::{ArrayCellValue, EvalValue, WorksheetErrorCode};
 
 use super::bridge::{
     EditorAnalysisStage, FormulaEditRequest, FormulaEditResult, OxfmlEditorBridge,
@@ -52,10 +57,17 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
             None,
         );
         let runtime_result = RuntimeEnvironment::new()
-            .execute(RuntimeFormulaRequest::new(source, TypedContextQueryBundle::default()))
+            .execute(RuntimeFormulaRequest::new(
+                source,
+                TypedContextQueryBundle::default(),
+            ))
             .ok();
 
-        let document = map_editor_document(&request.formula_stable_id, &interaction, runtime_result.as_ref());
+        let document = map_editor_document(
+            &request.formula_stable_id,
+            &interaction,
+            runtime_result.as_ref(),
+        );
         self.cache_document(request.formula_stable_id, interaction.document)?;
 
         Ok(FormulaEditResult { document })
@@ -67,10 +79,9 @@ impl LiveOxfmlBridge {
         &self,
         request: &FormulaEditRequest,
     ) -> Result<Option<UpstreamEditorDocument>, OxfmlEditorBridgeError> {
-        let cached_documents = self
-            .cached_documents
-            .lock()
-            .map_err(|_| OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string()))?;
+        let cached_documents = self.cached_documents.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+        })?;
         let previous = cached_documents.get(&request.formula_stable_id).cloned();
         Ok(previous.filter(|document| {
             request.previous_green_tree_key.as_deref()
@@ -83,10 +94,9 @@ impl LiveOxfmlBridge {
         formula_stable_id: String,
         document: UpstreamEditorDocument,
     ) -> Result<(), OxfmlEditorBridgeError> {
-        let mut cached_documents = self
-            .cached_documents
-            .lock()
-            .map_err(|_| OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string()))?;
+        let mut cached_documents = self.cached_documents.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+        })?;
         cached_documents.insert(formula_stable_id, document);
         Ok(())
     }
@@ -107,8 +117,10 @@ fn map_editor_document(
 ) -> EditorDocument {
     let document = &interaction.document;
     let syntax_snapshot = &document.editor_syntax_snapshot;
-    let completion_proposals =
-        map_completion_proposals(interaction.completion_result.as_ref(), syntax_snapshot.formula_stable_id.as_str());
+    let completion_proposals = map_completion_proposals(
+        interaction.completion_result.as_ref(),
+        syntax_snapshot.formula_stable_id.as_str(),
+    );
     let parse_status = if document.live_diagnostics.diagnostics.is_empty() {
         "Valid".to_string()
     } else {
@@ -118,11 +130,13 @@ fn map_editor_document(
 
     EditorDocument {
         source_text: document.source.entered_formula_text.clone(),
-        text_change_range: document.text_change_range.map(|range| FormulaTextChangeRange {
-            start: range.start,
-            old_len: range.old_len,
-            new_len: range.new_len,
-        }),
+        text_change_range: document
+            .text_change_range
+            .map(|range| FormulaTextChangeRange {
+                start: range.start,
+                old_len: range.old_len,
+                new_len: range.new_len,
+            }),
         editor_syntax_snapshot: EditorSyntaxSnapshot {
             formula_stable_id: formula_stable_id.to_string(),
             green_tree_key: syntax_snapshot.green_tree_key.clone(),
@@ -154,9 +168,8 @@ fn map_editor_document(
             .as_ref()
             .map(map_function_help_packet),
         completion_proposals,
-        formula_walk: runtime_result
-            .map(map_formula_walk)
-            .unwrap_or_else(|| vec![FormulaWalkNode {
+        formula_walk: runtime_result.map(map_formula_walk).unwrap_or_else(|| {
+            vec![FormulaWalkNode {
                 node_id: "node:source".to_string(),
                 label: "CellEntry".to_string(),
                 value_preview: Some(document.source.entered_formula_text.clone()),
@@ -168,7 +181,8 @@ fn map_editor_document(
                     FormulaWalkNodeState::Opaque
                 },
                 children: Vec::new(),
-            }]),
+            }]
+        }),
         parse_summary: Some(ParseSummary {
             status: parse_status,
             token_count: syntax_snapshot.tokens.len(),
@@ -193,7 +207,12 @@ fn map_editor_document(
                 .map(|result| result.evaluation.trace.prepared_calls.len())
                 .unwrap_or_else(|| usize::from(document.semantic_plan.is_some())),
             duration_text: runtime_result
-                .map(|result| format!("{} prepared call(s)", result.evaluation.trace.prepared_calls.len()))
+                .map(|result| {
+                    format!(
+                        "{} prepared call(s)",
+                        result.evaluation.trace.prepared_calls.len()
+                    )
+                })
                 .unwrap_or_else(|| "edit-only".to_string()),
         }),
         provenance_summary: Some(ProvenanceSummary {
@@ -237,17 +256,18 @@ fn map_completion_proposals(
                     proposal_kind: map_completion_proposal_kind(proposal.proposal_kind),
                     display_text: proposal.display_text.clone(),
                     insert_text: proposal.insert_text.clone(),
-                    replacement_span: proposal
-                        .replacement_span
-                        .or(result.replacement_span)
-                        .map(|span| FormulaTextSpan {
+                    replacement_span: proposal.replacement_span.or(result.replacement_span).map(
+                        |span| FormulaTextSpan {
                             start: span.start,
                             len: span.len,
-                        }),
-                    documentation_ref: proposal
-                        .documentation_ref
-                        .clone()
-                        .or_else(|| Some(format!("oxfml:function:{formula_stable_id}:{}", proposal.display_text))),
+                        },
+                    ),
+                    documentation_ref: proposal.documentation_ref.clone().or_else(|| {
+                        Some(format!(
+                            "oxfml:function:{formula_stable_id}:{}",
+                            proposal.display_text
+                        ))
+                    }),
                     requires_revalidation: proposal.requires_revalidation,
                 })
                 .collect()
@@ -259,10 +279,18 @@ fn map_completion_proposal_kind(
     kind: oxfml_core::consumer::editor::CompletionProposalKind,
 ) -> CompletionProposalKind {
     match kind {
-        oxfml_core::consumer::editor::CompletionProposalKind::Function => CompletionProposalKind::Function,
-        oxfml_core::consumer::editor::CompletionProposalKind::DefinedName => CompletionProposalKind::DefinedName,
-        oxfml_core::consumer::editor::CompletionProposalKind::TableName => CompletionProposalKind::TableName,
-        oxfml_core::consumer::editor::CompletionProposalKind::TableColumn => CompletionProposalKind::TableColumn,
+        oxfml_core::consumer::editor::CompletionProposalKind::Function => {
+            CompletionProposalKind::Function
+        }
+        oxfml_core::consumer::editor::CompletionProposalKind::DefinedName => {
+            CompletionProposalKind::DefinedName
+        }
+        oxfml_core::consumer::editor::CompletionProposalKind::TableName => {
+            CompletionProposalKind::TableName
+        }
+        oxfml_core::consumer::editor::CompletionProposalKind::TableColumn => {
+            CompletionProposalKind::TableColumn
+        }
         oxfml_core::consumer::editor::CompletionProposalKind::StructuredSelector => {
             CompletionProposalKind::StructuredSelector
         }
@@ -334,8 +362,9 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                 .returned_value_surface
                 .host_provider_outcome
                 .as_ref()
-                .is_some_and(|outcome| outcome.outcome_kind == HostProviderOutcomeKind::CapabilityDenied)
-            {
+                .is_some_and(|outcome| {
+                    outcome.outcome_kind == HostProviderOutcomeKind::CapabilityDenied
+                }) {
                 FormulaWalkNodeState::Blocked
             } else {
                 FormulaWalkNodeState::Evaluated
@@ -470,7 +499,17 @@ fn format_eval_value_for_display(
         }
         EvalValue::Error(code) => worksheet_error_literal(*code).to_string(),
         EvalValue::Array(_) => array_preview
-            .map(|preview| format!("{{{}}}", preview.rows.iter().map(|row| row.join(",")).collect::<Vec<_>>().join(";")))
+            .map(|preview| {
+                format!(
+                    "{{{}}}",
+                    preview
+                        .rows
+                        .iter()
+                        .map(|row| row.join(","))
+                        .collect::<Vec<_>>()
+                        .join(";")
+                )
+            })
             .unwrap_or_else(|| "Array result".to_string()),
         EvalValue::Reference(reference) => reference.target.clone(),
         EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),

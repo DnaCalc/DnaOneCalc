@@ -16,6 +16,11 @@ fn ExploreEditorPanel(
         .function_help_lookup_key
         .clone()
         .unwrap_or_else(|| "None".to_string());
+    let diagnostics_label = if editor.diagnostics.is_empty() {
+        "Clean".to_string()
+    } else {
+        format!("{} issue(s)", editor.diagnostics.len())
+    };
 
     view! {
         <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
@@ -30,11 +35,31 @@ fn ExploreEditorPanel(
                     {editor.truth_source_label.clone()}
                 </div>
             </div>
+            <div class="onecalc-explore-shell__panel-intro" data-role="explore-panel-intro">
+                <div class="onecalc-explore-shell__eyebrow">"Formula authoring"</div>
+                <p>
+                    "Edit Excel cell-entry text directly, see continuous evaluation, and keep assist, diagnostics, and runtime context visible in one place."
+                </p>
+            </div>
             <div class="onecalc-explore-shell__context-strip" data-role="explore-context-strip">
                 <span data-role="explore-host-profile">{editor.host_profile_summary.clone()}</span>
                 <span data-role="explore-packet-kind">{editor.packet_kind_summary.clone()}</span>
                 <span data-role="explore-capability-floor">{editor.capability_floor_summary.clone()}</span>
                 <span data-role="explore-mode-availability">{editor.mode_availability_summary.clone()}</span>
+            </div>
+            <div class="onecalc-explore-shell__status-strip" data-role="explore-status-strip">
+                <div class="onecalc-explore-shell__status-card" data-role="explore-diagnostics-summary">
+                    <span class="onecalc-explore-shell__status-label">"Diagnostics"</span>
+                    <strong>{diagnostics_label}</strong>
+                </div>
+                <div class="onecalc-explore-shell__status-card" data-role="explore-completion-summary">
+                    <span class="onecalc-explore-shell__status-label">"Assist"</span>
+                    <strong>{format!("{} proposal(s)", editor.completion_count)}</strong>
+                </div>
+                <div class="onecalc-explore-shell__status-card" data-role="explore-help-target">
+                    <span class="onecalc-explore-shell__status-label">"Help target"</span>
+                    <strong>{function_help.clone()}</strong>
+                </div>
             </div>
             {editor.trace_summary.as_ref().map(|trace_summary| view! {
                 <div class="onecalc-explore-shell__trace-summary" data-role="explore-trace-summary">
@@ -52,10 +77,6 @@ fn ExploreEditorPanel(
                 on_command=on_command
                 on_overlay_measurement=on_overlay_measurement
             />
-            <div class="onecalc-explore-shell__help-hint">
-                "Function help target: "
-                {function_help}
-            </div>
         </section>
     }
 }
@@ -74,18 +95,32 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
         .latest_evaluation_summary
         .clone()
         .unwrap_or_else(|| "Unavailable".to_string());
+    let has_array_preview = result.array_preview.is_some();
 
     view! {
         <section class="onecalc-explore-shell__result-panel" data-panel="explore-result">
-            <h2>"Result"</h2>
-            <div class="onecalc-explore-shell__result-metric" data-role="explore-result-value">
-                "Value: " {result_value}
+            <div class="onecalc-explore-shell__panel-header">
+                <div>
+                    <h2>"Result"</h2>
+                    <div class="onecalc-explore-shell__eyebrow">"Runtime view"</div>
+                </div>
+                <div class="onecalc-explore-shell__result-state-chip" data-role="explore-result-state-chip">
+                    {if has_array_preview { "Array" } else { "Scalar" }}
+                </div>
             </div>
+            <section class="onecalc-explore-shell__hero-result" data-role="explore-hero-result">
+                <div class="onecalc-explore-shell__hero-result-label">"Calculated value"</div>
+                <div class="onecalc-explore-shell__hero-result-value" data-role="explore-result-value">
+                    {result_value}
+                </div>
+            </section>
             <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
-                "Effective display: " {effective_display}
+                <span class="onecalc-explore-shell__metric-label">"Effective display"</span>
+                <strong>{effective_display}</strong>
             </div>
             <div class="onecalc-explore-shell__result-metric" data-role="explore-evaluation-summary">
-                "Evaluation summary: " {evaluation_summary}
+                <span class="onecalc-explore-shell__metric-label">"Evaluation summary"</span>
+                <strong>{evaluation_summary}</strong>
             </div>
             {result.array_preview.as_ref().map(|array_preview| view! {
                 <section class="onecalc-explore-shell__array-preview" data-role="explore-array-preview">
@@ -128,19 +163,39 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
 
     view! {
         <section class="onecalc-explore-shell__help-panel" data-panel="explore-help">
-            <h2>"Help"</h2>
-            <div>"Function target: " {function_help}</div>
-            <div data-role="help-sync-lookup">"Help sync: " {help_sync_lookup}</div>
-            <div>{help_summary}</div>
-            <div>"Completion entries: " {editor.completion_count}</div>
+            <div class="onecalc-explore-shell__panel-header">
+                <div>
+                    <h2>"Assist"</h2>
+                    <div class="onecalc-explore-shell__eyebrow">"Guided entry"</div>
+                </div>
+            </div>
+            <div class="onecalc-explore-shell__assist-meta" data-role="explore-assist-meta">
+                <div class="onecalc-explore-shell__assist-metric">
+                    <span class="onecalc-explore-shell__metric-label">"Function target"</span>
+                    <strong>{function_help}</strong>
+                </div>
+                <div class="onecalc-explore-shell__assist-metric" data-role="help-sync-lookup">
+                    <span class="onecalc-explore-shell__metric-label">"Help sync"</span>
+                    <strong>{help_sync_lookup}</strong>
+                </div>
+                <div class="onecalc-explore-shell__assist-metric">
+                    <span class="onecalc-explore-shell__metric-label">"Signature help"</span>
+                    <strong>{help_summary}</strong>
+                </div>
+                <div class="onecalc-explore-shell__assist-metric">
+                    <span class="onecalc-explore-shell__metric-label">"Completion entries"</span>
+                    <strong>{editor.completion_count}</strong>
+                </div>
+            </div>
             {editor
                 .selected_completion_item
                 .as_ref()
                 .map(|item| {
                     view! {
                         <div class="onecalc-explore-shell__selected-proposal" data-role="selected-completion-summary">
-                            <span data-role="selected-completion-label">{item.display_text.clone()}</span>
-                            <span data-role="selected-completion-kind">
+                            <div class="onecalc-explore-shell__selected-proposal-header">
+                                <span class="onecalc-explore-shell__eyebrow">"Selected proposal"</span>
+                                <span data-role="selected-completion-kind">
                                 {match item.proposal_kind {
                                     crate::services::explore_mode::ExploreCompletionKindView::Function => "function",
                                     crate::services::explore_mode::ExploreCompletionKindView::DefinedName => "defined-name",
@@ -149,7 +204,9 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
                                     crate::services::explore_mode::ExploreCompletionKindView::StructuredSelector => "structured-selector",
                                     crate::services::explore_mode::ExploreCompletionKindView::SyntaxAssist => "syntax-assist",
                                 }}
-                            </span>
+                                </span>
+                            </div>
+                            <strong data-role="selected-completion-label">{item.display_text.clone()}</strong>
                             <span data-role="selected-completion-doc-ref">
                                 {item
                                     .documentation_ref
@@ -320,7 +377,13 @@ pub fn ExploreShell(
     view! {
         <section class="onecalc-explore-shell" data-screen="explore">
             <header class="onecalc-explore-shell__header">
-                <h1>"Formula Explorer"</h1>
+                <div>
+                    <div class="onecalc-explore-shell__eyebrow">"Explore"</div>
+                    <h1>"Formula Explorer"</h1>
+                </div>
+                <p class="onecalc-explore-shell__lead">
+                    "Author a formula, watch live OxFml evaluation, and keep result, display, diagnostics, and assist surfaces visible without leaving the screen."
+                </p>
             </header>
 
             <div class="onecalc-explore-shell__body">
@@ -340,16 +403,14 @@ pub fn ExploreShell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::oxfml::FormulaTextSpan;
     use crate::services::explore_mode::{
         ExploreCompletionItemView, ExploreCompletionKindView, ExploreDiagnosticView,
         ExploreFunctionHelpSignatureView, ExploreFunctionHelpView, ExploreSignatureHelpView,
         ExploreViewModel,
     };
-    use crate::adapters::oxfml::FormulaTextSpan;
     use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
-    use crate::ui::panels::explore::{
-        build_explore_editor_cluster, build_explore_result_cluster,
-    };
+    use crate::ui::panels::explore::{build_explore_editor_cluster, build_explore_result_cluster};
 
     #[test]
     fn explore_shell_renders_editor_and_result_content() {
@@ -444,7 +505,8 @@ mod tests {
         assert!(html.contains("data-token-role=\"function\""));
         assert!(html.contains("data-panel=\"explore-help\""));
         assert!(html.contains(">3<"));
-        assert!(html.contains("Function target: "));
+        assert!(html.contains("data-role=\"explore-assist-meta\""));
+        assert!(html.contains("Function target"));
         assert!(html.contains("data-role=\"help-sync-lookup\""));
         assert!(html.contains("data-role=\"selected-completion-summary\""));
         assert!(html.contains("data-role=\"selected-completion-doc-ref\""));
@@ -452,10 +514,11 @@ mod tests {
         assert!(html.contains("data-role=\"selected-completion-revalidation\""));
         assert!(html.contains("data-requires-revalidation=\"true\""));
         assert!(html.contains("SUM"));
-        assert!(html.contains("Completion entries: "));
+        assert!(html.contains("Completion entries"));
         assert!(html.contains("data-role=\"explore-array-preview\""));
         assert!(html.contains("2x2 spill preview"));
         assert!(html.contains("data-role=\"explore-result-value\""));
+        assert!(html.contains("data-role=\"explore-hero-result\""));
         assert!(html.contains("data-role=\"function-help-card\""));
         assert!(html.contains("data-role=\"function-help-signature\""));
         assert!(html.contains("data-role=\"function-help-signature-argument\""));

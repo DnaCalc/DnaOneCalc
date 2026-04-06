@@ -20,7 +20,9 @@ impl EditorSessionService {
     ) -> Result<(), EditorSessionError> {
         let formula_space = formula_spaces
             .get(&intent.formula_space_id)
-            .ok_or_else(|| EditorSessionError::UnknownFormulaSpace(intent.formula_space_id.clone()))?;
+            .ok_or_else(|| {
+                EditorSessionError::UnknownFormulaSpace(intent.formula_space_id.clone())
+            })?;
         let request = FormulaEditRequest {
             formula_stable_id: intent.formula_stable_id,
             entered_text: intent.entered_text,
@@ -70,7 +72,10 @@ fn update_formula_space_from_editor_document(
     formula_space.completion_help = CompletionHelpState {
         completion_count: document.completion_proposals.len(),
         has_signature_help: document.signature_help.is_some(),
-        function_help_lookup_key: document.function_help.as_ref().map(|packet| packet.lookup_key.clone()),
+        function_help_lookup_key: document
+            .function_help
+            .as_ref()
+            .map(|packet| packet.lookup_key.clone()),
     };
     let derived_presentation = derive_formula_presentation(&document.source_text, &document);
     formula_space.editor_document = Some(document);
@@ -90,7 +95,10 @@ struct DerivedFormulaPresentation {
     blocked_reason: Option<String>,
 }
 
-fn derive_formula_presentation(source_text: &str, document: &EditorDocument) -> DerivedFormulaPresentation {
+fn derive_formula_presentation(
+    source_text: &str,
+    document: &EditorDocument,
+) -> DerivedFormulaPresentation {
     if let Some(value_presentation) = document.value_presentation.as_ref() {
         return derived_presentation_from_value_presentation(value_presentation);
     }
@@ -193,10 +201,12 @@ fn derived_presentation_from_value_presentation(
     DerivedFormulaPresentation {
         evaluation_summary: Some(value_presentation.evaluation_summary.clone()),
         effective_display_summary: value_presentation.effective_display_summary.clone(),
-        array_preview: value_presentation.array_preview.as_ref().map(|preview| FormulaArrayPreviewState {
-            label: preview.label.clone(),
-            rows: preview.rows.clone(),
-            truncated: preview.truncated,
+        array_preview: value_presentation.array_preview.as_ref().map(|preview| {
+            FormulaArrayPreviewState {
+                label: preview.label.clone(),
+                rows: preview.rows.clone(),
+                truncated: preview.truncated,
+            }
         }),
         blocked_reason: value_presentation.blocked_reason.clone(),
     }
@@ -249,10 +259,7 @@ fn parse_sequence_formula(source_text: &str) -> Option<(usize, usize, Vec<Vec<St
 }
 
 fn format_array_display(rows: &[Vec<String>]) -> String {
-    let row_strings = rows
-        .iter()
-        .map(|row| row.join(","))
-        .collect::<Vec<_>>();
+    let row_strings = rows.iter().map(|row| row.join(",")).collect::<Vec<_>>();
     format!("{{{}}}", row_strings.join(";"))
 }
 
@@ -296,7 +303,10 @@ mod tests {
             },
             signature_help: Some(SignatureHelpContext {
                 callee_text: "SUM".to_string(),
-                call_span: FormulaTextSpan { start: 0, len: source_text.chars().count() },
+                call_span: FormulaTextSpan {
+                    start: 0,
+                    len: source_text.chars().count(),
+                },
                 active_argument_index: 1,
             }),
             function_help: None,
@@ -322,10 +332,7 @@ mod tests {
     fn apply_editor_document_updates_formula_space_text_and_help() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(
-            formula_space_id.clone(),
-            "=1+1",
-        ));
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
 
         EditorSessionService::apply_editor_document(
             &mut formula_spaces,
@@ -339,16 +346,25 @@ mod tests {
         assert_eq!(updated.completion_help.completion_count, 1);
         assert!(updated.completion_help.has_signature_help);
         assert_eq!(updated.editor_surface_state.completion_anchor_offset, None);
-        assert_eq!(updated.editor_surface_state.completion_selected_index, Some(0));
-        assert_eq!(updated.editor_surface_state.signature_help_anchor_offset, None);
-        assert_eq!(updated.latest_evaluation_summary.as_deref(), Some("Text · 123.4"));
+        assert_eq!(
+            updated.editor_surface_state.completion_selected_index,
+            Some(0)
+        );
+        assert_eq!(
+            updated.editor_surface_state.signature_help_anchor_offset,
+            None
+        );
+        assert_eq!(
+            updated.latest_evaluation_summary.as_deref(),
+            Some("Text · 123.4")
+        );
         assert_eq!(updated.effective_display_summary.as_deref(), Some("123.4"));
         assert_eq!(
             updated
                 .editor_document
                 .as_ref()
                 .expect("editor document retained")
-            .green_tree_key(),
+                .green_tree_key(),
             "green-1"
         );
     }
@@ -357,7 +373,10 @@ mod tests {
     fn apply_editor_document_derives_preview_sum_result() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2,3)"));
+        formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2,3)",
+        ));
 
         EditorSessionService::apply_editor_document(
             &mut formula_spaces,
@@ -367,7 +386,10 @@ mod tests {
         .expect("known formula space should update");
 
         let updated = formula_spaces.get(&formula_space_id).expect("space exists");
-        assert_eq!(updated.latest_evaluation_summary.as_deref(), Some("Number · 6"));
+        assert_eq!(
+            updated.latest_evaluation_summary.as_deref(),
+            Some("Number · 6")
+        );
         assert_eq!(updated.effective_display_summary.as_deref(), Some("6"));
         assert!(updated.array_preview.is_none());
     }
@@ -376,7 +398,10 @@ mod tests {
     fn apply_editor_document_derives_sequence_array_preview() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=SEQUENCE(2,2)"));
+        formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SEQUENCE(2,2)",
+        ));
 
         EditorSessionService::apply_editor_document(
             &mut formula_spaces,
@@ -390,9 +415,15 @@ mod tests {
             updated.latest_evaluation_summary.as_deref(),
             Some("Array · 2x2 dynamic result")
         );
-        assert_eq!(updated.effective_display_summary.as_deref(), Some("{1,2;3,4}"));
         assert_eq!(
-            updated.array_preview.as_ref().map(|preview| preview.rows.len()),
+            updated.effective_display_summary.as_deref(),
+            Some("{1,2;3,4}")
+        );
+        assert_eq!(
+            updated
+                .array_preview
+                .as_ref()
+                .map(|preview| preview.rows.len()),
             Some(2)
         );
     }
@@ -421,10 +452,7 @@ mod tests {
     fn handle_formula_edit_intent_routes_through_bridge_and_updates_space() {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(
-            formula_space_id.clone(),
-            "=1+1",
-        ));
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
         let bridge = FakeBridge {
             document: sample_document("=SUM(1,2,3)"),
         };

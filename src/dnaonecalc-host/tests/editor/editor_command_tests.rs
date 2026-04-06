@@ -55,17 +55,42 @@ fn ex_13_outdent_command_removes_spaces_for_multiline_selection() {
 
 #[test]
 fn ex_14_keydown_mapping_covers_tab_and_arrow_navigation() {
-    assert_eq!(keydown_to_command("ArrowLeft", false), Some(EditorCommand::MoveCaretLeft));
-    assert_eq!(keydown_to_command("ArrowRight", false), Some(EditorCommand::MoveCaretRight));
-    assert_eq!(keydown_to_command("ArrowLeft", true), Some(EditorCommand::ExtendSelectionLeft));
     assert_eq!(
-        keydown_to_command("ArrowRight", true),
+        keydown_to_command("ArrowLeft", false, false),
+        Some(EditorCommand::MoveCaretLeft)
+    );
+    assert_eq!(
+        keydown_to_command("ArrowRight", false, false),
+        Some(EditorCommand::MoveCaretRight)
+    );
+    assert_eq!(
+        keydown_to_command("ArrowLeft", true, false),
+        Some(EditorCommand::ExtendSelectionLeft)
+    );
+    assert_eq!(
+        keydown_to_command("ArrowRight", true, false),
         Some(EditorCommand::ExtendSelectionRight)
     );
-    assert_eq!(keydown_to_command("Backspace", false), Some(EditorCommand::Backspace));
-    assert_eq!(keydown_to_command("Delete", false), Some(EditorCommand::Delete));
-    assert_eq!(keydown_to_command("Tab", false), Some(EditorCommand::IndentWithSpaces));
-    assert_eq!(keydown_to_command("Tab", true), Some(EditorCommand::OutdentWithSpaces));
+    assert_eq!(
+        keydown_to_command("Backspace", false, false),
+        Some(EditorCommand::Backspace)
+    );
+    assert_eq!(
+        keydown_to_command("Delete", false, false),
+        Some(EditorCommand::Delete)
+    );
+    assert_eq!(
+        keydown_to_command("Tab", false, false),
+        Some(EditorCommand::IndentWithSpaces)
+    );
+    assert_eq!(
+        keydown_to_command("Tab", true, false),
+        Some(EditorCommand::OutdentWithSpaces)
+    );
+    assert_eq!(
+        keydown_to_command("x", false, true),
+        Some(EditorCommand::CutSelection)
+    );
 }
 
 #[test]
@@ -99,7 +124,10 @@ fn ex_21_insert_text_replaces_non_collapsed_selection() {
     let text = "=SUM(1,2)";
     let state = EditorSurfaceState {
         caret: EditorCaret { offset: 5 },
-        selection: EditorSelection { anchor: 1, focus: 4 },
+        selection: EditorSelection {
+            anchor: 1,
+            focus: 4,
+        },
         scroll_window: EditorScrollWindow {
             first_visible_line: 0,
             visible_line_count: 6,
@@ -120,7 +148,10 @@ fn ex_22_backspace_and_delete_respect_selection_and_caret() {
     let text = "=SUM(1,2)";
     let selected = EditorSurfaceState {
         caret: EditorCaret { offset: 5 },
-        selection: EditorSelection { anchor: 1, focus: 4 },
+        selection: EditorSelection {
+            anchor: 1,
+            focus: 4,
+        },
         scroll_window: EditorScrollWindow {
             first_visible_line: 0,
             visible_line_count: 6,
@@ -149,4 +180,28 @@ fn ex_22_backspace_and_delete_respect_selection_and_caret() {
     let delete = apply_editor_command(text, &collapsed, EditorCommand::Delete);
     assert_eq!(delete.text, "=UM(1,2)");
     assert_eq!(delete.state.caret.offset, 1);
+}
+
+#[test]
+fn ex_23_cut_selection_removes_selected_text_without_moving_focus_state() {
+    let text = "=SUM(1,2)";
+    let selected = EditorSurfaceState {
+        caret: EditorCaret { offset: 4 },
+        selection: EditorSelection {
+            anchor: 1,
+            focus: 4,
+        },
+        scroll_window: EditorScrollWindow {
+            first_visible_line: 0,
+            visible_line_count: 6,
+        },
+        completion_anchor_offset: None,
+        completion_selected_index: None,
+        signature_help_anchor_offset: None,
+    };
+
+    let cut = apply_editor_command(text, &selected, EditorCommand::CutSelection);
+    assert_eq!(cut.text, "=(1,2)");
+    assert_eq!(cut.state.caret.offset, 1);
+    assert!(cut.state.selection.is_collapsed());
 }

@@ -1,21 +1,27 @@
 use leptos::prelude::*;
 
-use crate::ui::panels::inspect::{
-    InspectSummaryClusterViewModel, InspectWalkClusterViewModel,
-};
+use crate::ui::panels::inspect::{InspectSummaryClusterViewModel, InspectWalkClusterViewModel};
 
 #[component]
-fn InspectWalkNode(node: crate::services::inspect_mode::InspectFormulaWalkNodeView) -> impl IntoView {
+fn InspectWalkNode(
+    node: crate::services::inspect_mode::InspectFormulaWalkNodeView,
+) -> impl IntoView {
     let state_label = format!("{:?}", node.state);
-    let value_preview = node.value_preview.clone().unwrap_or_else(|| "Unavailable".to_string());
+    let value_preview = node
+        .value_preview
+        .clone()
+        .unwrap_or_else(|| "Unavailable".to_string());
 
     view! {
         <li class="onecalc-inspect-shell__walk-node" data-node-id=node.node_id.clone()>
             <div class="onecalc-inspect-shell__walk-node-header">
                 <span class="onecalc-inspect-shell__walk-node-label">{node.label.clone()}</span>
-                <span class="onecalc-inspect-shell__walk-node-state">{state_label}</span>
+                <span class="onecalc-inspect-shell__walk-node-state" data-node-state=state_label.clone()>{state_label.clone()}</span>
             </div>
-            <div class="onecalc-inspect-shell__walk-node-value">{value_preview}</div>
+            <div class="onecalc-inspect-shell__walk-node-value">
+                <span class="onecalc-inspect-shell__walk-node-value-label">"Value preview"</span>
+                <strong>{value_preview}</strong>
+            </div>
             {if node.children.is_empty() {
                 view! { <></> }.into_any()
             } else {
@@ -35,9 +41,14 @@ fn InspectWalkNode(node: crate::services::inspect_mode::InspectFormulaWalkNodeVi
 }
 
 #[component]
-fn InspectSummaryCard(title: &'static str, value: String, data_panel: &'static str) -> impl IntoView {
+fn InspectSummaryCard(
+    title: &'static str,
+    value: String,
+    data_panel: &'static str,
+) -> impl IntoView {
     view! {
         <section class="onecalc-inspect-shell__summary-card" data-panel=data_panel>
+            <div class="onecalc-inspect-shell__eyebrow">"Summary"</div>
             <h3>{title}</h3>
             <div>{value}</div>
         </section>
@@ -57,12 +68,22 @@ pub fn InspectShell(
     let bind_summary = summary
         .bind_summary
         .as_ref()
-        .map(|value| format!("vars={}, refs={}", value.variable_count, value.reference_count))
+        .map(|value| {
+            format!(
+                "vars={}, refs={}",
+                value.variable_count, value.reference_count
+            )
+        })
         .unwrap_or_else(|| "Unavailable".to_string());
     let eval_summary = summary
         .eval_summary
         .as_ref()
-        .map(|value| format!("steps={}, duration={}", value.step_count, value.duration_text))
+        .map(|value| {
+            format!(
+                "steps={}, duration={}",
+                value.step_count, value.duration_text
+            )
+        })
         .unwrap_or_else(|| "Unavailable".to_string());
     let provenance_summary = summary
         .provenance_summary
@@ -73,7 +94,13 @@ pub fn InspectShell(
     view! {
         <section class="onecalc-inspect-shell" data-screen="inspect">
             <header class="onecalc-inspect-shell__header">
-                <h1>"Semantic Inspect"</h1>
+                <div>
+                    <div class="onecalc-inspect-shell__eyebrow">"Inspect"</div>
+                    <h1>"Semantic Inspect"</h1>
+                </div>
+                <p class="onecalc-inspect-shell__lead">
+                    "Dissect parse, bind, eval, provenance, and retained discrepancy context through a semantic x-ray of the entered cell text."
+                </p>
                 <div class="onecalc-inspect-shell__meta">
                     <span data-role="inspect-scenario-label">{walk.scenario_label.clone()}</span>
                     <span data-role="inspect-truth-source">{walk.truth_source_label.clone()}</span>
@@ -85,8 +112,16 @@ pub fn InspectShell(
 
             <div class="onecalc-inspect-shell__body">
                 <section class="onecalc-inspect-shell__walk-cluster" data-panel="inspect-walk">
-                    <h2>"Formula Walk"</h2>
-                    <pre class="onecalc-inspect-shell__source">{walk.raw_entered_cell_text}</pre>
+                    <div class="onecalc-inspect-shell__panel-header">
+                        <div>
+                            <div class="onecalc-inspect-shell__eyebrow">"Walk"</div>
+                            <h2>"Formula Walk"</h2>
+                        </div>
+                    </div>
+                    <div class="onecalc-inspect-shell__source-card">
+                        <div class="onecalc-inspect-shell__source-label">"Cell entry"</div>
+                        <pre class="onecalc-inspect-shell__source">{walk.raw_entered_cell_text}</pre>
+                    </div>
                     <ul class="onecalc-inspect-shell__walk">
                         {if walk.formula_walk_nodes.is_empty() {
                             view! { <li>"No formula walk"</li> }.into_any()
@@ -104,7 +139,12 @@ pub fn InspectShell(
                 </section>
 
                 <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
-                    <h2>"Summaries"</h2>
+                    <div class="onecalc-inspect-shell__panel-header">
+                        <div>
+                            <div class="onecalc-inspect-shell__eyebrow">"Context"</div>
+                            <h2>"Summaries"</h2>
+                        </div>
+                    </div>
                     <section class="onecalc-inspect-shell__context-card" data-role="inspect-context-card">
                         <div data-role="inspect-packet-kind">{summary.packet_kind_summary.clone()}</div>
                         <div data-role="inspect-capability-floor">{summary.capability_floor_summary.clone()}</div>
@@ -141,6 +181,31 @@ pub fn InspectShell(
                                         {context.comparison_status.clone()}
                                     </div>
                                     {context
+                                        .bundle_report_path
+                                        .as_ref()
+                                        .map(|bundle_path| view! {
+                                            <div data-role="inspect-retained-bundle-path">
+                                                "Bundle: "
+                                                {bundle_path.clone()}
+                                            </div>
+                                        })}
+                                    {context
+                                        .xml_source_summary
+                                        .as_ref()
+                                        .map(|summary| view! {
+                                            <div data-role="inspect-retained-xml-source">
+                                                {summary.clone()}
+                                            </div>
+                                        })}
+                                    {context
+                                        .display_comparison_summary
+                                        .as_ref()
+                                        .map(|summary| view! {
+                                            <div data-role="inspect-retained-display-comparison">
+                                                {summary.clone()}
+                                            </div>
+                                        })}
+                                    {context
                                         .discrepancy_summary
                                         .as_ref()
                                         .map(|summary| view! {
@@ -148,6 +213,20 @@ pub fn InspectShell(
                                                 {summary.clone()}
                                             </div>
                                         })}
+                                    {if context.upstream_gap_summary.is_empty() {
+                                        view! { <></> }.into_any()
+                                    } else {
+                                        view! {
+                                            <ul data-role="inspect-retained-upstream-gap-summary">
+                                                {context
+                                                    .upstream_gap_summary
+                                                    .iter()
+                                                    .map(|item| view! { <li>{item.clone()}</li> })
+                                                    .collect_view()}
+                                            </ul>
+                                        }
+                                            .into_any()
+                                    }}
                                 </section>
                             }
                         })}
@@ -164,12 +243,10 @@ pub fn InspectShell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::oxfml::FormulaWalkNodeState;
     use crate::adapters::oxfml::{BindSummary, EvalSummary, ParseSummary, ProvenanceSummary};
     use crate::services::inspect_mode::{InspectFormulaWalkNodeView, InspectViewModel};
-    use crate::ui::panels::inspect::{
-        build_inspect_summary_cluster, build_inspect_walk_cluster,
-    };
-    use crate::adapters::oxfml::FormulaWalkNodeState;
+    use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 
     #[test]
     fn inspect_shell_renders_walk_and_summary_content() {
@@ -208,12 +285,20 @@ mod tests {
                 profile_summary: "OC-H0".to_string(),
                 blocked_reason: None,
             }),
-            retained_artifact_context: Some(crate::services::inspect_mode::InspectRetainedArtifactContextView {
-                artifact_id: "artifact-1".to_string(),
-                case_id: "case-1".to_string(),
-                comparison_status: "blocked".to_string(),
-                discrepancy_summary: Some("excel lane unavailable".to_string()),
-            }),
+            retained_artifact_context: Some(
+                crate::services::inspect_mode::InspectRetainedArtifactContextView {
+                    artifact_id: "artifact-1".to_string(),
+                    case_id: "case-1".to_string(),
+                    comparison_status: "blocked".to_string(),
+                    discrepancy_summary: Some("excel lane unavailable".to_string()),
+                    bundle_report_path: Some("target/onecalc-verification/example".to_string()),
+                    xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
+                    display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
+                    upstream_gap_summary: vec![
+                        "OxXlPlay missing: effective_display_text".to_string(),
+                    ],
+                },
+            ),
         };
 
         let html = view! {
@@ -236,5 +321,9 @@ mod tests {
         assert!(html.contains("Artifact: "));
         assert!(html.contains("artifact-1"));
         assert!(html.contains("excel lane unavailable"));
+        assert!(html.contains("data-role=\"inspect-retained-bundle-path\""));
+        assert!(html.contains("data-role=\"inspect-retained-xml-source\""));
+        assert!(html.contains("data-role=\"inspect-retained-display-comparison\""));
+        assert!(html.contains("data-role=\"inspect-retained-upstream-gap-summary\""));
     }
 }

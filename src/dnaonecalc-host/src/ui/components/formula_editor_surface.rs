@@ -1,20 +1,18 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
+use web_sys::{ClipboardEvent, HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent};
 
+#[cfg(target_arch = "wasm32")]
+use crate::ui::editor::browser_measurement::capture_overlay_measurement_event;
 use crate::ui::editor::commands::{
     classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use crate::ui::editor::geometry::{
-    derive_overlay_snapshot,
-};
+use crate::ui::editor::geometry::derive_overlay_snapshot;
 use crate::ui::editor::geometry::{
     resolve_overlay_box, EditorOverlayGeometrySnapshot, EditorOverlayMeasurement,
     EditorOverlayMeasurementEvent, EditorOverlayMeasurementSource,
 };
-#[cfg(target_arch = "wasm32")]
-use crate::ui::editor::browser_measurement::capture_overlay_measurement_event;
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
@@ -52,12 +50,13 @@ pub fn FormulaEditorSurface(
     let (selection_measurement_source, selection_box) = resolve_overlay_box(
         overlay_geometry.selection_box,
         overlay_measurement.span_box(
-        &editor.raw_entered_cell_text,
-        crate::adapters::oxfml::FormulaTextSpan {
-            start: selection_start,
-            len: selection_end.saturating_sub(selection_start),
-        },
-    ));
+            &editor.raw_entered_cell_text,
+            crate::adapters::oxfml::FormulaTextSpan {
+                start: selection_start,
+                len: selection_end.saturating_sub(selection_start),
+            },
+        ),
+    );
     let selected_completion_proposal_id = editor.selected_completion_proposal_id.clone();
     let completion_anchor_span = editor.completion_anchor_span;
     let measurement_source = if overlay_geometry != EditorOverlayGeometrySnapshot::default() {
@@ -138,6 +137,7 @@ pub fn FormulaEditorSurface(
                                     callback.run(build_overlay_measurement_event(&editor_for_input_measurement));
                                 }
                             }
+                            let _ = textarea.focus();
                         }
                         on:keyup=move |ev| {
                             #[cfg(not(target_arch = "wasm32"))]
@@ -156,11 +156,64 @@ pub fn FormulaEditorSurface(
                                 }
                             }
                         }
+                        on:cut=move |ev: ClipboardEvent| {
+                            ev.prevent_default();
+                            ev.stop_propagation();
+                            let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                            if let Some(callback) = on_input_event.as_ref() {
+                                callback.run(EditorInputEvent {
+                                    text: textarea.value(),
+                                    selection_start: textarea
+                                        .selection_start()
+                                        .ok()
+                                        .flatten()
+                                        .map(|offset| offset as usize),
+                                    selection_end: textarea
+                                        .selection_end()
+                                        .ok()
+                                        .flatten()
+                                        .map(|offset| offset as usize),
+                                    input_kind: crate::ui::editor::commands::EditorInputKind::Other,
+                                    inserted_text: None,
+                                });
+                            }
+                            if let Some(command_callback) = on_command.as_ref() {
+                                command_callback.run(EditorCommand::CutSelection);
+                            }
+                            let _ = textarea.focus();
+                        }
                         on:keydown=move |ev: KeyboardEvent| {
-                            if let Some(command) = keydown_to_command(&ev.key(), ev.shift_key()) {
+                            let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                            if let Some(command) = keydown_to_command(
+                                &ev.key(),
+                                ev.shift_key(),
+                                ev.ctrl_key() || ev.meta_key(),
+                            ) {
+                                ev.prevent_default();
+                                ev.stop_propagation();
+                                if command == EditorCommand::CutSelection {
+                                    if let Some(callback) = on_input_event.as_ref() {
+                                        callback.run(EditorInputEvent {
+                                            text: textarea.value(),
+                                            selection_start: textarea
+                                                .selection_start()
+                                                .ok()
+                                                .flatten()
+                                                .map(|offset| offset as usize),
+                                            selection_end: textarea
+                                                .selection_end()
+                                                .ok()
+                                                .flatten()
+                                                .map(|offset| offset as usize),
+                                            input_kind: crate::ui::editor::commands::EditorInputKind::Other,
+                                            inserted_text: None,
+                                        });
+                                    }
+                                }
                                 if let Some(command_callback) = on_command.as_ref() {
                                     command_callback.run(command);
                                 }
+                                let _ = textarea.focus();
                             }
                         }
                     />

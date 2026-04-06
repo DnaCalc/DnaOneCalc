@@ -330,12 +330,48 @@ mod tests {
             Some(FormulaTextSpan { start: 0, len: 9 }),
         );
 
-        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.left_px), Some(32));
-        assert_eq!(snapshot.selection_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(24));
-        assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
-        assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
-        assert_eq!(snapshot.completion_popup_box.as_ref().map(|box_geometry| box_geometry.column_index), Some(1));
-        assert_eq!(snapshot.signature_help_popup_box.as_ref().map(|box_geometry| box_geometry.width_px), Some(72));
+        assert_eq!(
+            snapshot
+                .caret_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.left_px),
+            Some(32)
+        );
+        assert_eq!(
+            snapshot
+                .selection_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.width_px),
+            Some(24)
+        );
+        assert_eq!(
+            snapshot
+                .completion_anchor_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.column_index),
+            Some(1)
+        );
+        assert_eq!(
+            snapshot
+                .signature_help_anchor_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.width_px),
+            Some(72)
+        );
+        assert_eq!(
+            snapshot
+                .completion_popup_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.column_index),
+            Some(1)
+        );
+        assert_eq!(
+            snapshot
+                .signature_help_popup_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.width_px),
+            Some(72)
+        );
     }
 
     #[test]
@@ -354,11 +390,47 @@ mod tests {
             },
         );
 
-        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(20));
-        assert_eq!(snapshot.caret_box.as_ref().map(|box_geometry| box_geometry.left_px), Some(0));
-        assert_eq!(snapshot.completion_anchor_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(0));
-        assert_eq!(snapshot.signature_help_anchor_box.as_ref().map(|box_geometry| box_geometry.height_px), Some(80));
-        assert_eq!(snapshot.completion_popup_box.as_ref().map(|box_geometry| box_geometry.top_px), Some(0));
-        assert_eq!(snapshot.signature_help_popup_box.as_ref().map(|box_geometry| box_geometry.height_px), Some(80));
+        assert_eq!(
+            snapshot
+                .caret_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.top_px),
+            Some(20)
+        );
+        assert_eq!(
+            snapshot
+                .caret_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.left_px),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot
+                .completion_anchor_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.top_px),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot
+                .signature_help_anchor_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.height_px),
+            Some(80)
+        );
+        assert_eq!(
+            snapshot
+                .completion_popup_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.top_px),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot
+                .signature_help_popup_box
+                .as_ref()
+                .map(|box_geometry| box_geometry.height_px),
+            Some(80)
+        );
     }
 }

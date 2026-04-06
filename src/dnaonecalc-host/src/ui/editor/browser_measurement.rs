@@ -2,8 +2,7 @@ use crate::ui::panels::explore::ExploreEditorClusterViewModel;
 
 #[cfg(target_arch = "wasm32")]
 use crate::ui::editor::geometry::{
-    derive_overlay_snapshot_with_metrics, EditorOverlayMeasurementEvent,
-    TextareaMeasurementMetrics,
+    derive_overlay_snapshot_with_metrics, EditorOverlayMeasurementEvent, TextareaMeasurementMetrics,
 };
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlTextAreaElement;

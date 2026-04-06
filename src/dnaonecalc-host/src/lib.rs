@@ -31,7 +31,8 @@ pub fn mount_onecalc_preview(element_id: &str) -> Result<(), JsValue> {
         .dyn_into::<web_sys::HtmlElement>()?;
 
     let initial_state = app::preview_state::preview_host_state();
-    let editor_bridge = app::host_mount::bootstrap_editor_bridge(app::host_mount::HostMountTarget::WebBrowser);
+    let editor_bridge =
+        app::host_mount::bootstrap_editor_bridge(app::host_mount::HostMountTarget::WebBrowser);
     let mount_handle = mount_to(host, move || {
         view! {
             <ui::components::app_shell::OneCalcShellApp

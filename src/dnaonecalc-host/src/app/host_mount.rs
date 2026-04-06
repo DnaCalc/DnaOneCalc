@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::adapters::oxfml::{OxfmlEditorBridge, PreviewOxfmlBridge};
 #[cfg(feature = "oxfml-live")]
 use crate::adapters::oxfml::LiveOxfmlBridge;
+use crate::adapters::oxfml::{OxfmlEditorBridge, PreviewOxfmlBridge};
 use leptos::prelude::*;
 
 use crate::state::OneCalcHostState;
@@ -48,8 +48,9 @@ pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostStat
     let spec = bootstrap_spec(target);
 
     let editor_bridge = bootstrap_editor_bridge(target);
-    let body = view! { <OneCalcShellApp initial_state=initial_state editor_bridge=Some(editor_bridge) /> }
-        .to_html();
+    let body =
+        view! { <OneCalcShellApp initial_state=initial_state editor_bridge=Some(editor_bridge) /> }
+            .to_html();
     format!(
         "<div id=\"{}\" data-host-target=\"{host_label}\" data-shell-root=\"onecalc\">{body}</div>",
         spec.mount_element_id
@@ -90,7 +91,8 @@ mod tests {
 
     #[test]
     fn render_shell_document_wraps_shell_in_html_document() {
-        let html = render_shell_document(HostMountTarget::DesktopTauri, OneCalcHostState::default());
+        let html =
+            render_shell_document(HostMountTarget::DesktopTauri, OneCalcHostState::default());
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("<title>DNA OneCalc</title>"));
         assert!(html.contains("data-shell-root=\"onecalc\""));
