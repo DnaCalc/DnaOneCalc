@@ -45,6 +45,8 @@ pub fn import_programmatic_artifact(
         upstream_gap_report: None,
         visible_output_match: None,
         replay_equivalent: None,
+        replay_mismatch_records: Vec::new(),
+        replay_explain_records: Vec::new(),
         oxfml_effective_display_summary: None,
         excel_observed_value_repr: None,
     };
@@ -139,10 +141,8 @@ pub fn import_verification_bundle_report_json(
     state: &mut OneCalcHostState,
     request: VerificationBundleImportRequest,
 ) -> Result<Vec<String>, String> {
-    let report: VerificationBundleReport =
-        serde_json::from_str(&request.report_json).map_err(|error| {
-            format!("failed to parse verification bundle report JSON: {error}")
-        })?;
+    let report: VerificationBundleReport = serde_json::from_str(&request.report_json)
+        .map_err(|error| format!("failed to parse verification bundle report JSON: {error}"))?;
 
     if report.case_reports.is_empty() {
         return Err("verification bundle report did not contain any case reports".to_string());
@@ -152,8 +152,10 @@ pub fn import_verification_bundle_report_json(
     for case_report in &report.case_reports {
         let formula_space_id =
             FormulaSpaceId::new(format!("verify-{}", sanitize_case_id(&case_report.case_id)));
-        let mut formula_space =
-            FormulaSpaceState::new(formula_space_id.clone(), case_report.entered_cell_text.clone());
+        let mut formula_space = FormulaSpaceState::new(
+            formula_space_id.clone(),
+            case_report.entered_cell_text.clone(),
+        );
         formula_space.latest_evaluation_summary =
             case_report.oxfml_summary.evaluation_summary.clone();
         formula_space.effective_display_summary =
@@ -170,7 +172,12 @@ pub fn import_verification_bundle_report_json(
         formula_space.context.trace_summary = case_report
             .spreadsheet_xml_extraction
             .as_ref()
-            .map(|extraction| format!("XML source {} @ {}", extraction.workbook_path, extraction.locator))
+            .map(|extraction| {
+                format!(
+                    "XML source {} @ {}",
+                    extraction.workbook_path, extraction.locator
+                )
+            })
             .or_else(|| Some("Imported verification bundle".to_string()));
         formula_space.context.blocked_reason = case_report.oxfml_summary.blocked_reason.clone();
         state.formula_spaces.insert(formula_space);
@@ -179,7 +186,10 @@ pub fn import_verification_bundle_report_json(
             .open_formula_space_order
             .contains(&formula_space_id)
         {
-            state.workspace_shell.open_formula_space_order.push(formula_space_id.clone());
+            state
+                .workspace_shell
+                .open_formula_space_order
+                .push(formula_space_id.clone());
         }
 
         let artifact_id = case_report.artifact_catalog_entry.artifact_id.clone();
@@ -196,14 +206,18 @@ pub fn import_verification_bundle_report_json(
             upstream_gap_report: case_report.upstream_gap_report.clone(),
             visible_output_match: case_report.visible_output_match,
             replay_equivalent: case_report.replay_equivalent,
+            replay_mismatch_records: case_report.replay_mismatch_records.clone(),
+            replay_explain_records: case_report.replay_explain_records.clone(),
             oxfml_effective_display_summary: case_report
                 .oxfml_summary
                 .effective_display_summary
                 .clone(),
-            excel_observed_value_repr: case_report
-                .excel_summary
-                .as_ref()
-                .and_then(|summary| summary.observed_value_repr.clone()),
+            excel_observed_value_repr: case_report.excel_summary.as_ref().and_then(|summary| {
+                summary
+                    .effective_display_text
+                    .clone()
+                    .or(summary.observed_value_repr.clone())
+            }),
         };
         state
             .retained_artifacts
@@ -459,8 +473,53 @@ mod tests {
                 comparison_status: ProgrammaticComparisonStatus::Mismatched,
                 visible_output_match: Some(false),
                 replay_equivalent: Some(false),
-                replay_mismatch_kinds: vec!["view_value".to_string()],
-                discrepancy_summary: Some("OxFml=6 / Excel=$6.00".to_string()),
+                replay_mismatch_kinds: vec![
+                    "effective_display_text".to_string(),
+                    "projection_coverage_gap".to_string(),
+                    "projection_coverage_gap".to_string(),
+                ],
+                replay_mismatch_records: vec![
+                    crate::services::verification_bundle::OxReplayMismatchRecord {
+                        mismatch_kind: "effective_display_text".to_string(),
+                        severity: Some("informational".to_string()),
+                        view_family: Some("effective_display_text".to_string()),
+                        left_value_repr: Some("6".to_string()),
+                        right_value_repr: Some("$6.00".to_string()),
+                        detail: Some("comparison view values diverged".to_string()),
+                    },
+                    crate::services::verification_bundle::OxReplayMismatchRecord {
+                        mismatch_kind: "projection_coverage_gap".to_string(),
+                        severity: Some("coverage".to_string()),
+                        view_family: Some("formatting_view".to_string()),
+                        left_value_repr: None,
+                        right_value_repr: Some("{\"number_format_code\":\"$#,##0.00\"}".to_string()),
+                        detail: Some("comparison view family `formatting_view` is missing on one side".to_string()),
+                    },
+                    crate::services::verification_bundle::OxReplayMismatchRecord {
+                        mismatch_kind: "projection_coverage_gap".to_string(),
+                        severity: Some("coverage".to_string()),
+                        view_family: Some("conditional_formatting_view".to_string()),
+                        left_value_repr: None,
+                        right_value_repr: Some("[{\"range\":\"A1\",\"rule_kind\":\"expression\"}]".to_string()),
+                        detail: Some("comparison view family `conditional_formatting_view` is missing on one side".to_string()),
+                    },
+                ],
+                replay_explain_records: vec![
+                    crate::services::verification_bundle::OxReplayExplainRecord {
+                        query_id: Some("explain-01".to_string()),
+                        summary: Some("comparison diverged on `effective_display_text`".to_string()),
+                        mismatch_kind: "effective_display_text".to_string(),
+                        severity: Some("informational".to_string()),
+                        view_family: Some("effective_display_text".to_string()),
+                        left_value_repr: Some("6".to_string()),
+                        right_value_repr: Some("$6.00".to_string()),
+                        detail: Some("comparison view values diverged".to_string()),
+                    },
+                ],
+                discrepancy_summary: Some(
+                    "Display divergence (effective_display_text): OxFml 6 vs Excel $6.00 | Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side"
+                        .to_string(),
+                ),
                 oxfml_summary: OxfmlVerificationSummary {
                     evaluation_summary: Some("Number · 6".to_string()),
                     effective_display_summary: Some("6".to_string()),
@@ -470,6 +529,7 @@ mod tests {
                 },
                 excel_summary: Some(ExcelObservationSummary {
                     observed_value_repr: Some("$6.00".to_string()),
+                    effective_display_text: Some("$6.00".to_string()),
                     observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
                     capture_status: "captured".to_string(),
                 }),
@@ -482,6 +542,7 @@ mod tests {
                     entered_cell_text: "=SUM(1,2,3)".to_string(),
                     data_type: Some("Number".to_string()),
                     style_id: Some("calc".to_string()),
+                    style_hierarchy: vec!["calcBase".to_string(), "calc".to_string()],
                     number_format_code: Some("$#,##0.00".to_string()),
                     font_color: Some("#112233".to_string()),
                     fill_color: Some("#445566".to_string()),
@@ -490,16 +551,25 @@ mod tests {
                     observation_scope: VerificationObservationScope {
                         oxfml_required_scope: vec!["format_profile".to_string()],
                         oxxlplay_required_surfaces: vec!["effective_display_text".to_string()],
-                        oxreplay_required_views: vec!["formatting_view".to_string()],
+                        oxreplay_required_views: vec![
+                            "formatting_view".to_string(),
+                            "conditional_formatting_view".to_string(),
+                        ],
                     },
                 }),
                 upstream_gap_report: Some(VerificationObservationGapReport {
                     oxfml_scope_required: vec!["format_profile".to_string()],
                     oxxlplay_supported_surfaces: vec!["cell_value".to_string()],
                     oxxlplay_missing_surfaces: vec!["effective_display_text".to_string()],
-                    oxreplay_required_views: vec!["formatting_view".to_string()],
+                    oxreplay_required_views: vec![
+                        "formatting_view".to_string(),
+                        "conditional_formatting_view".to_string(),
+                    ],
                     oxreplay_current_bundle_views: vec!["visible_value".to_string()],
-                    oxreplay_missing_views: vec!["formatting_view".to_string()],
+                    oxreplay_missing_views: vec![
+                        "formatting_view".to_string(),
+                        "conditional_formatting_view".to_string(),
+                    ],
                 }),
                 case_output_dir: "target/onecalc-verification/bundle-1/cases/xml-case-1".to_string(),
                 scenario_path: "target/onecalc-verification/bundle-1/cases/xml-case-1/scenario.json".to_string(),
@@ -522,7 +592,10 @@ mod tests {
             .expect("artifact imported");
         assert!(artifact.xml_extraction.is_some());
         assert!(artifact.upstream_gap_report.is_some());
-        assert_eq!(artifact.bundle_report_path.as_deref(), Some("target/onecalc-verification/bundle-1"));
+        assert_eq!(
+            artifact.bundle_report_path.as_deref(),
+            Some("target/onecalc-verification/bundle-1")
+        );
         assert_eq!(artifact.excel_observed_value_repr.as_deref(), Some("$6.00"));
         assert_eq!(
             state.active_formula_space_view.active_mode,

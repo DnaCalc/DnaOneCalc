@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::services::inspect_mode::{InspectComparisonRecordView, InspectExplainRecordView};
 use crate::ui::panels::inspect::{InspectSummaryClusterViewModel, InspectWalkClusterViewModel};
 
 #[component]
@@ -16,7 +17,12 @@ fn InspectWalkNode(
         <li class="onecalc-inspect-shell__walk-node" data-node-id=node.node_id.clone()>
             <div class="onecalc-inspect-shell__walk-node-header">
                 <span class="onecalc-inspect-shell__walk-node-label">{node.label.clone()}</span>
-                <span class="onecalc-inspect-shell__walk-node-state" data-node-state=state_label.clone()>{state_label.clone()}</span>
+                <span
+                    class="onecalc-inspect-shell__walk-node-state"
+                    data-node-state=state_label.clone()
+                >
+                    {state_label.clone()}
+                </span>
             </div>
             <div class="onecalc-inspect-shell__walk-node-value">
                 <span class="onecalc-inspect-shell__walk-node-value-label">"Value preview"</span>
@@ -52,6 +58,80 @@ fn InspectSummaryCard(
             <h3>{title}</h3>
             <div>{value}</div>
         </section>
+    }
+}
+
+#[component]
+fn InspectComparisonRecordCard(record: InspectComparisonRecordView) -> impl IntoView {
+    view! {
+        <article
+            class="onecalc-inspect-shell__comparison-record"
+            data-role="inspect-comparison-record"
+            data-family=record.view_family.clone().unwrap_or_else(|| record.mismatch_kind.clone())
+            data-projection-gap=if record.is_projection_gap { "true" } else { "false" }
+        >
+            <header class="onecalc-inspect-shell__comparison-record-header">
+                <div>
+                    <div class="onecalc-inspect-shell__eyebrow">"Comparison family"</div>
+                    <h4 data-role="inspect-comparison-family">{record.family_label.clone()}</h4>
+                </div>
+                <div class="onecalc-inspect-shell__comparison-record-badges">
+                    <span data-role="inspect-comparison-kind">{record.status_label.clone()}</span>
+                    <span data-role="inspect-comparison-severity">{record.severity.clone()}</span>
+                </div>
+            </header>
+            <p data-role="inspect-comparison-summary">{record.summary.clone()}</p>
+            <div class="onecalc-inspect-shell__comparison-lane">
+                <div class="onecalc-inspect-shell__comparison-lane-card" data-role="inspect-comparison-left">
+                    <span class="onecalc-inspect-shell__walk-node-value-label">"OxFml"</span>
+                    <strong>{record.left_value_repr.unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                </div>
+                <div class="onecalc-inspect-shell__comparison-lane-card" data-role="inspect-comparison-right">
+                    <span class="onecalc-inspect-shell__walk-node-value-label">"Excel / replay"</span>
+                    <strong>{record.right_value_repr.unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                </div>
+            </div>
+            {record.detail.as_ref().map(|detail| view! {
+                <div class="onecalc-inspect-shell__comparison-detail" data-role="inspect-comparison-detail">
+                    {detail.clone()}
+                </div>
+            })}
+        </article>
+    }
+}
+
+#[component]
+fn InspectExplainRecordCard(record: InspectExplainRecordView) -> impl IntoView {
+    view! {
+        <article
+            class="onecalc-inspect-shell__explain-record"
+            data-role="inspect-explain-record"
+            data-family=record.view_family.clone().unwrap_or_else(|| record.mismatch_kind.clone())
+        >
+            <header class="onecalc-inspect-shell__explain-record-header">
+                <div>
+                    <div class="onecalc-inspect-shell__eyebrow">"Explain"</div>
+                    <h4>{record.family_label.clone()}</h4>
+                </div>
+                {record.query_id.as_ref().map(|query_id| view! {
+                    <span data-role="inspect-explain-query-id">{query_id.clone()}</span>
+                })}
+            </header>
+            <p data-role="inspect-explain-summary">{record.summary.clone()}</p>
+            <div class="onecalc-inspect-shell__comparison-lane">
+                <div class="onecalc-inspect-shell__comparison-lane-card">
+                    <span class="onecalc-inspect-shell__walk-node-value-label">"OxFml"</span>
+                    <strong>{record.left_value_repr.unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                </div>
+                <div class="onecalc-inspect-shell__comparison-lane-card">
+                    <span class="onecalc-inspect-shell__walk-node-value-label">"Excel / replay"</span>
+                    <strong>{record.right_value_repr.unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                </div>
+            </div>
+            {record.detail.as_ref().map(|detail| view! {
+                <div class="onecalc-inspect-shell__comparison-detail">{detail.clone()}</div>
+            })}
+        </article>
     }
 }
 
@@ -99,7 +179,7 @@ pub fn InspectShell(
                     <h1>"Semantic Inspect"</h1>
                 </div>
                 <p class="onecalc-inspect-shell__lead">
-                    "Dissect parse, bind, eval, provenance, and retained discrepancy context through a semantic x-ray of the entered cell text."
+                    "Dissect formula structure, replay evidence, comparison-family divergence, and retained discrepancy context through one semantic x-ray surface."
                 </p>
                 <div class="onecalc-inspect-shell__meta">
                     <span data-role="inspect-scenario-label">{walk.scenario_label.clone()}</span>
@@ -167,7 +247,29 @@ pub fn InspectShell(
                                     data-artifact-id=context.artifact_id.clone()
                                     data-comparison-status=context.comparison_status.clone()
                                 >
-                                    <h3>"Retained Artifact Context"</h3>
+                                    <header class="onecalc-inspect-shell__retained-context-header">
+                                        <div>
+                                            <div class="onecalc-inspect-shell__eyebrow">"Retained discrepancy"</div>
+                                            <h3>"Artifact Context"</h3>
+                                        </div>
+                                        <div class="onecalc-inspect-shell__retained-context-badges">
+                                            <span data-role="inspect-retained-comparison-status">{context.comparison_status.clone()}</span>
+                                            <span data-role="inspect-retained-visible-output-match">
+                                                {match context.visible_output_match {
+                                                    Some(true) => "visible output matched".to_string(),
+                                                    Some(false) => "visible output diverged".to_string(),
+                                                    None => "visible output unknown".to_string(),
+                                                }}
+                                            </span>
+                                            <span data-role="inspect-retained-replay-equivalent">
+                                                {match context.replay_equivalent {
+                                                    Some(true) => "replay equivalent".to_string(),
+                                                    Some(false) => "replay diverged".to_string(),
+                                                    None => "replay unknown".to_string(),
+                                                }}
+                                            </span>
+                                        </div>
+                                    </header>
                                     <div data-role="inspect-retained-artifact-id">
                                         "Artifact: "
                                         {context.artifact_id.clone()}
@@ -175,10 +277,6 @@ pub fn InspectShell(
                                     <div data-role="inspect-retained-case-id">
                                         "Case: "
                                         {context.case_id.clone()}
-                                    </div>
-                                    <div data-role="inspect-retained-comparison-status">
-                                        "Status: "
-                                        {context.comparison_status.clone()}
                                     </div>
                                     {context
                                         .bundle_report_path
@@ -225,15 +323,61 @@ pub fn InspectShell(
                                                     .collect_view()}
                                             </ul>
                                         }
-                                            .into_any()
+                                        .into_any()
                                     }}
                                 </section>
                             }
                         })}
-                    <InspectSummaryCard title="Parse" value=parse_status data_panel="inspect-parse" />
-                    <InspectSummaryCard title="Bind" value=bind_summary data_panel="inspect-bind" />
-                    <InspectSummaryCard title="Eval" value=eval_summary data_panel="inspect-eval" />
-                    <InspectSummaryCard title="Provenance" value=provenance_summary data_panel="inspect-provenance" />
+                    {if summary.comparison_records.is_empty() {
+                        view! { <></> }.into_any()
+                    } else {
+                        view! {
+                            <section class="onecalc-inspect-shell__comparison-board" data-role="inspect-comparison-board">
+                                <div class="onecalc-inspect-shell__panel-header">
+                                    <div>
+                                        <div class="onecalc-inspect-shell__eyebrow">"Replay diff"</div>
+                                        <h3>"Comparison families"</h3>
+                                    </div>
+                                </div>
+                                <div class="onecalc-inspect-shell__comparison-grid">
+                                    {summary
+                                        .comparison_records
+                                        .into_iter()
+                                        .map(|record| view! { <InspectComparisonRecordCard record=record /> })
+                                        .collect_view()}
+                                </div>
+                            </section>
+                        }
+                        .into_any()
+                    }}
+                    {if summary.explain_records.is_empty() {
+                        view! { <></> }.into_any()
+                    } else {
+                        view! {
+                            <section class="onecalc-inspect-shell__explain-board" data-role="inspect-explain-board">
+                                <div class="onecalc-inspect-shell__panel-header">
+                                    <div>
+                                        <div class="onecalc-inspect-shell__eyebrow">"Replay explain"</div>
+                                        <h3>"Machine-readable explain evidence"</h3>
+                                    </div>
+                                </div>
+                                <div class="onecalc-inspect-shell__explain-grid">
+                                    {summary
+                                        .explain_records
+                                        .into_iter()
+                                        .map(|record| view! { <InspectExplainRecordCard record=record /> })
+                                        .collect_view()}
+                                </div>
+                            </section>
+                        }
+                        .into_any()
+                    }}
+                    <div class="onecalc-inspect-shell__summary-grid">
+                        <InspectSummaryCard title="Parse" value=parse_status data_panel="inspect-parse" />
+                        <InspectSummaryCard title="Bind" value=bind_summary data_panel="inspect-bind" />
+                        <InspectSummaryCard title="Eval" value=eval_summary data_panel="inspect-eval" />
+                        <InspectSummaryCard title="Provenance" value=provenance_summary data_panel="inspect-provenance" />
+                    </div>
                 </section>
             </div>
         </section>
@@ -245,19 +389,22 @@ mod tests {
     use super::*;
     use crate::adapters::oxfml::FormulaWalkNodeState;
     use crate::adapters::oxfml::{BindSummary, EvalSummary, ParseSummary, ProvenanceSummary};
-    use crate::services::inspect_mode::{InspectFormulaWalkNodeView, InspectViewModel};
+    use crate::services::inspect_mode::{
+        InspectComparisonRecordView, InspectExplainRecordView, InspectFormulaWalkNodeView,
+        InspectRetainedArtifactContextView, InspectViewModel,
+    };
     use crate::ui::panels::inspect::{build_inspect_summary_cluster, build_inspect_walk_cluster};
 
     #[test]
-    fn inspect_shell_renders_walk_and_summary_content() {
+    fn inspect_shell_renders_walk_and_replay_content() {
         let view_model = InspectViewModel {
             scenario_label: "Blocked discrepancy".to_string(),
-            truth_source_label: "preview-backed".to_string(),
+            truth_source_label: "live-backed".to_string(),
             host_profile_summary: "Windows desktop preview".to_string(),
-            packet_kind_summary: "preview blocked packet".to_string(),
-            capability_floor_summary: "Inspect with blocked reason".to_string(),
+            packet_kind_summary: "verification publication".to_string(),
+            capability_floor_summary: "Inspect with retained replay evidence".to_string(),
             mode_availability_summary: "Explore / Inspect / Workbench".to_string(),
-            trace_summary: Some("Preview trace captured for retained discrepancy".to_string()),
+            trace_summary: Some("Replay compare captured for retained discrepancy".to_string()),
             blocked_reason: Some("Excel comparison lane unavailable on this host".to_string()),
             raw_entered_cell_text: "=LET(x,1,x)".to_string(),
             inspect_result_summary: Some("Number".to_string()),
@@ -285,20 +432,60 @@ mod tests {
                 profile_summary: "OC-H0".to_string(),
                 blocked_reason: None,
             }),
-            retained_artifact_context: Some(
-                crate::services::inspect_mode::InspectRetainedArtifactContextView {
-                    artifact_id: "artifact-1".to_string(),
-                    case_id: "case-1".to_string(),
-                    comparison_status: "blocked".to_string(),
-                    discrepancy_summary: Some("excel lane unavailable".to_string()),
-                    bundle_report_path: Some("target/onecalc-verification/example".to_string()),
-                    xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
-                    display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
-                    upstream_gap_summary: vec![
-                        "OxXlPlay missing: effective_display_text".to_string(),
-                    ],
-                },
-            ),
+            retained_artifact_context: Some(InspectRetainedArtifactContextView {
+                artifact_id: "artifact-1".to_string(),
+                case_id: "case-1".to_string(),
+                comparison_status: "blocked".to_string(),
+                visible_output_match: Some(false),
+                replay_equivalent: Some(false),
+                discrepancy_summary: Some("excel lane unavailable".to_string()),
+                bundle_report_path: Some("target/onecalc-verification/example".to_string()),
+                xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
+                display_comparison_summary: Some(
+                    "Display divergence (effective_display_text): OxFml 6 vs Excel $6.00"
+                        .to_string(),
+                ),
+                upstream_gap_summary: vec![
+                    "Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side".to_string(),
+                ],
+                comparison_records: vec![
+                    InspectComparisonRecordView {
+                        mismatch_kind: "effective_display_text".to_string(),
+                        severity: "informational".to_string(),
+                        view_family: Some("effective_display_text".to_string()),
+                        family_label: "Effective display".to_string(),
+                        status_label: "Display divergence".to_string(),
+                        summary: "comparison view values diverged".to_string(),
+                        left_value_repr: Some("6".to_string()),
+                        right_value_repr: Some("$6.00".to_string()),
+                        detail: Some("comparison view values diverged".to_string()),
+                        is_projection_gap: false,
+                    },
+                    InspectComparisonRecordView {
+                        mismatch_kind: "projection_coverage_gap".to_string(),
+                        severity: "coverage".to_string(),
+                        view_family: Some("formatting_view".to_string()),
+                        family_label: "Formatting".to_string(),
+                        status_label: "Coverage gap".to_string(),
+                        summary: "comparison view family `formatting_view` is missing on one side".to_string(),
+                        left_value_repr: None,
+                        right_value_repr: Some("{\"number_format_code\":\"$#,##0.00\"}".to_string()),
+                        detail: Some("comparison view family `formatting_view` is missing on one side".to_string()),
+                        is_projection_gap: true,
+                    },
+                ],
+                explain_records: vec![InspectExplainRecordView {
+                    query_id: Some("explain-01".to_string()),
+                    mismatch_kind: "effective_display_text".to_string(),
+                    severity: "informational".to_string(),
+                    view_family: Some("effective_display_text".to_string()),
+                    family_label: "Effective display".to_string(),
+                    summary: "comparison diverged on `effective_display_text`".to_string(),
+                    left_value_repr: Some("6".to_string()),
+                    right_value_repr: Some("$6.00".to_string()),
+                    detail: Some("comparison view values diverged".to_string()),
+                }],
+            }),
         };
 
         let html = view! {
@@ -318,12 +505,19 @@ mod tests {
         assert!(html.contains("Parse"));
         assert!(html.contains("Valid"));
         assert!(html.contains("data-role=\"inspect-retained-context\""));
-        assert!(html.contains("Artifact: "));
         assert!(html.contains("artifact-1"));
-        assert!(html.contains("excel lane unavailable"));
         assert!(html.contains("data-role=\"inspect-retained-bundle-path\""));
         assert!(html.contains("data-role=\"inspect-retained-xml-source\""));
         assert!(html.contains("data-role=\"inspect-retained-display-comparison\""));
         assert!(html.contains("data-role=\"inspect-retained-upstream-gap-summary\""));
+        assert!(html.contains("data-role=\"inspect-comparison-board\""));
+        assert!(html.contains("data-role=\"inspect-comparison-record\""));
+        assert!(html.contains("Display divergence"));
+        assert!(html.contains("Coverage gap"));
+        assert!(html.contains("data-role=\"inspect-explain-board\""));
+        assert!(html.contains("data-role=\"inspect-explain-record\""));
+        assert!(html.contains("comparison diverged on `effective_display_text`"));
+        assert!(html.contains("data-role=\"inspect-retained-visible-output-match\""));
+        assert!(html.contains("data-role=\"inspect-retained-replay-equivalent\""));
     }
 }

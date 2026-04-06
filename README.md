@@ -36,6 +36,14 @@ Verification entrypoints:
 - `powershell -File .\scripts\run-host-acceptance-full.ps1` runs the full `dnaonecalc-host` acceptance suite.
 - `powershell -File .\scripts\run-browser-tests.ps1` runs the wasm/browser-host suite using a repo-local `wasm-bindgen-test-runner` bootstrap.
 
+XML verification CLI:
+- Checked-in XML host/capability config example: [docs/VERIFICATION_CONFIG_XML_EXAMPLE.xml](docs/VERIFICATION_CONFIG_XML_EXAMPLE.xml)
+- Single-cell SpreadsheetML 2003 verification example:
+  - `cargo run -p dnaonecalc-host -- verify-xml-cell --case-id xml-case-1 --workbook-xml C:\Work\DnaCalc\OxXlPlay\docs\test-corpus\excel\xlplay_capture_spreadsheetml_formatting_001\workbook.xml --locator Input!A1 --config-xml C:\Work\DnaCalc\DnaOneCalc\docs\VERIFICATION_CONFIG_XML_EXAMPLE.xml --output-root C:\Work\DnaCalc\DnaOneCalc\target\onecalc-verification\manual-xml-case`
+- Direct formula verification example:
+  - `cargo run -p dnaonecalc-host -- verify-formula --case-id case-1 --formula "=SUM(1,2,3)" --config-xml C:\Work\DnaCalc\DnaOneCalc\docs\VERIFICATION_CONFIG_XML_EXAMPLE.xml --output-root C:\Work\DnaCalc\DnaOneCalc\target\onecalc-verification\manual-formula-case`
+- `verify-xml-cell` compares live OxFml against Excel/OxXlPlay/OxReplay using the retained-bundle flow and exits non-zero when the case is mismatched or blocked.
+
 Preview entrypoint:
 - `powershell -File .\scripts\run-onecalc-preview.ps1` builds the current wasm preview, starts a local HTTP server, and opens the interactive browser app.
 

@@ -1035,6 +1035,7 @@ name = "oxfml_core"
 version = "0.1.0"
 dependencies = [
  "oxfunc_core",
+ "serde_json",
 ]
 
 [[package]]

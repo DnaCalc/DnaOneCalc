@@ -6,8 +6,8 @@ use leptos::prelude::*;
 use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
     apply_editor_overlay_measurement_to_active_formula_space,
-    import_verification_bundle_report_into_workspace,
-    import_manual_retained_artifact_into_active_formula_space, open_retained_artifact_from_catalog,
+    import_manual_retained_artifact_into_active_formula_space,
+    import_verification_bundle_report_into_workspace, open_retained_artifact_from_catalog,
     open_retained_artifact_from_catalog_in_inspect,
 };
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};

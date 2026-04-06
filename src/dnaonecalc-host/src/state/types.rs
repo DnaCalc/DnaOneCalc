@@ -6,7 +6,9 @@ use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
 use crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction;
-use crate::services::verification_bundle::VerificationObservationGapReport;
+use crate::services::verification_bundle::{
+    OxReplayExplainRecord, OxReplayMismatchRecord, VerificationObservationGapReport,
+};
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -203,6 +205,8 @@ pub struct RetainedArtifactRecord {
     pub upstream_gap_report: Option<VerificationObservationGapReport>,
     pub visible_output_match: Option<bool>,
     pub replay_equivalent: Option<bool>,
+    pub replay_mismatch_records: Vec<OxReplayMismatchRecord>,
+    pub replay_explain_records: Vec<OxReplayExplainRecord>,
     pub oxfml_effective_display_summary: Option<String>,
     pub excel_observed_value_repr: Option<String>,
 }
@@ -284,6 +288,8 @@ mod tests {
             upstream_gap_report: None,
             visible_output_match: None,
             replay_equivalent: None,
+            replay_mismatch_records: Vec::new(),
+            replay_explain_records: Vec::new(),
             oxfml_effective_display_summary: None,
             excel_observed_value_repr: None,
         };

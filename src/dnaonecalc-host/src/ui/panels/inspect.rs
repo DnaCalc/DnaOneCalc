@@ -1,6 +1,7 @@
 use crate::adapters::oxfml::{BindSummary, EvalSummary, ParseSummary, ProvenanceSummary};
 use crate::services::inspect_mode::{
-    InspectFormulaWalkNodeView, InspectRetainedArtifactContextView, InspectViewModel,
+    InspectComparisonRecordView, InspectExplainRecordView, InspectFormulaWalkNodeView,
+    InspectRetainedArtifactContextView, InspectViewModel,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub struct InspectSummaryClusterViewModel {
     pub eval_summary: Option<EvalSummary>,
     pub provenance_summary: Option<ProvenanceSummary>,
     pub retained_artifact_context: Option<InspectRetainedArtifactContextView>,
+    pub comparison_records: Vec<InspectComparisonRecordView>,
+    pub explain_records: Vec<InspectExplainRecordView>,
 }
 
 pub fn build_inspect_walk_cluster(view_model: &InspectViewModel) -> InspectWalkClusterViewModel {
@@ -43,6 +46,17 @@ pub fn build_inspect_walk_cluster(view_model: &InspectViewModel) -> InspectWalkC
 pub fn build_inspect_summary_cluster(
     view_model: &InspectViewModel,
 ) -> InspectSummaryClusterViewModel {
+    let comparison_records = view_model
+        .retained_artifact_context
+        .as_ref()
+        .map(|context| context.comparison_records.clone())
+        .unwrap_or_default();
+    let explain_records = view_model
+        .retained_artifact_context
+        .as_ref()
+        .map(|context| context.explain_records.clone())
+        .unwrap_or_default();
+
     InspectSummaryClusterViewModel {
         packet_kind_summary: view_model.packet_kind_summary.clone(),
         capability_floor_summary: view_model.capability_floor_summary.clone(),
@@ -54,6 +68,8 @@ pub fn build_inspect_summary_cluster(
         eval_summary: view_model.eval_summary.clone(),
         provenance_summary: view_model.provenance_summary.clone(),
         retained_artifact_context: view_model.retained_artifact_context.clone(),
+        comparison_records,
+        explain_records,
     }
 }
 
@@ -61,7 +77,10 @@ pub fn build_inspect_summary_cluster(
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{FormulaWalkNodeState, ParseSummary};
-    use crate::services::inspect_mode::{InspectFormulaWalkNodeView, InspectViewModel};
+    use crate::services::inspect_mode::{
+        InspectComparisonRecordView, InspectExplainRecordView, InspectFormulaWalkNodeView,
+        InspectViewModel,
+    };
 
     #[test]
     fn inspect_walk_cluster_keeps_formula_walk_surface_fields() {
@@ -102,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn inspect_summary_cluster_keeps_summary_surface_fields() {
+    fn inspect_summary_cluster_keeps_summary_and_replay_surface_fields() {
         let view_model = InspectViewModel {
             raw_entered_cell_text: "=LET(x,1,x)".to_string(),
             scenario_label: "let binding".to_string(),
@@ -136,11 +155,42 @@ mod tests {
                 artifact_id: "artifact-1".to_string(),
                 case_id: "case-1".to_string(),
                 comparison_status: "blocked".to_string(),
+                visible_output_match: Some(false),
+                replay_equivalent: Some(false),
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
                 bundle_report_path: Some("target/onecalc-verification/example".to_string()),
                 xml_source_summary: Some("Input @ Input!A1 | format $#,##0.00".to_string()),
-                display_comparison_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
-                upstream_gap_summary: vec!["OxXlPlay missing: effective_display_text".to_string()],
+                display_comparison_summary: Some(
+                    "Display divergence (effective_display_text): OxFml 6 vs Excel $6.00"
+                        .to_string(),
+                ),
+                upstream_gap_summary: vec![
+                    "Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side"
+                        .to_string(),
+                ],
+                comparison_records: vec![InspectComparisonRecordView {
+                    mismatch_kind: "effective_display_text".to_string(),
+                    severity: "informational".to_string(),
+                    view_family: Some("effective_display_text".to_string()),
+                    family_label: "Effective display".to_string(),
+                    status_label: "Display divergence".to_string(),
+                    summary: "comparison view values diverged".to_string(),
+                    left_value_repr: Some("6".to_string()),
+                    right_value_repr: Some("$6.00".to_string()),
+                    detail: Some("comparison view values diverged".to_string()),
+                    is_projection_gap: false,
+                }],
+                explain_records: vec![InspectExplainRecordView {
+                    query_id: Some("explain-01".to_string()),
+                    mismatch_kind: "effective_display_text".to_string(),
+                    severity: "informational".to_string(),
+                    view_family: Some("effective_display_text".to_string()),
+                    family_label: "Effective display".to_string(),
+                    summary: "comparison diverged on `effective_display_text`".to_string(),
+                    left_value_repr: Some("6".to_string()),
+                    right_value_repr: Some("$6.00".to_string()),
+                    detail: Some("comparison view values diverged".to_string()),
+                }],
             }),
         };
 
@@ -162,6 +212,8 @@ mod tests {
                 .map(|x| x.profile_summary.as_str()),
             Some("OC-H0")
         );
+        assert_eq!(cluster.comparison_records.len(), 1);
+        assert_eq!(cluster.explain_records.len(), 1);
         assert_eq!(
             cluster
                 .retained_artifact_context

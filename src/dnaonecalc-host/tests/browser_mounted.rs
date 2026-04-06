@@ -8,9 +8,8 @@ use dnaonecalc_host::app::preview_state::preview_host_state;
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, default_windows_excel_capability_profile,
-    default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry,
-    ProgrammaticBatchPlan, ProgrammaticComparisonLane, ProgrammaticComparisonStatus,
-    ProgrammaticOpenModeHint,
+    default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan,
+    ProgrammaticComparisonLane, ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
 use dnaonecalc_host::services::retained_artifacts::{
     import_programmatic_artifact, RetainedArtifactImportRequest,
@@ -19,8 +18,9 @@ use dnaonecalc_host::services::spreadsheet_xml::{
     SpreadsheetXmlCellExtraction, VerificationObservationScope,
 };
 use dnaonecalc_host::services::verification_bundle::{
-    ExcelObservationSummary, OxfmlVerificationSummary, VerificationBundleReport,
-    VerificationCaseReport, VerificationObservationGapReport,
+    ExcelObservationSummary, OxReplayExplainRecord, OxReplayMismatchRecord,
+    OxfmlVerificationSummary, VerificationBundleReport, VerificationCaseReport,
+    VerificationObservationGapReport,
 };
 use dnaonecalc_host::state::{FormulaSpaceState, OneCalcHostState};
 use dnaonecalc_host::test_support::sample_editor_document;
@@ -156,8 +156,63 @@ fn sample_verification_bundle_report_json() -> String {
             comparison_status: ProgrammaticComparisonStatus::Mismatched,
             visible_output_match: Some(false),
             replay_equivalent: Some(false),
-            replay_mismatch_kinds: vec!["view_value".to_string()],
-            discrepancy_summary: Some("OxFml 6 vs Excel $6.00".to_string()),
+            replay_mismatch_kinds: vec![
+                "effective_display_text".to_string(),
+                "projection_coverage_gap".to_string(),
+                "projection_coverage_gap".to_string(),
+            ],
+            replay_mismatch_records: vec![
+                OxReplayMismatchRecord {
+                    mismatch_kind: "effective_display_text".to_string(),
+                    severity: Some("informational".to_string()),
+                    view_family: Some("effective_display_text".to_string()),
+                    left_value_repr: Some("6".to_string()),
+                    right_value_repr: Some("$6.00".to_string()),
+                    detail: Some("comparison view values diverged".to_string()),
+                },
+                OxReplayMismatchRecord {
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("formatting_view".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: Some("{\"number_format_code\":\"$#,##0.00\",\"font_color\":\"#112233\",\"fill_color\":\"#ddeeff\"}".to_string()),
+                    detail: Some("comparison view family `formatting_view` is missing on `crosslane_xml_view_family_gap_001_left`".to_string()),
+                },
+                OxReplayMismatchRecord {
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("conditional_formatting_view".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: Some("[{\"range\":\"A1\",\"rule_kind\":\"expression\",\"formula\":\"=A1>0\",\"font_color\":\"#FF0000\",\"fill_color\":\"#00FF00\"}]".to_string()),
+                    detail: Some("comparison view family `conditional_formatting_view` is missing on `crosslane_xml_view_family_gap_001_left`".to_string()),
+                },
+            ],
+            replay_explain_records: vec![
+                OxReplayExplainRecord {
+                    query_id: Some("explain-crosslane-01".to_string()),
+                    summary: Some("comparison diverged on `effective_display_text`".to_string()),
+                    mismatch_kind: "effective_display_text".to_string(),
+                    severity: Some("informational".to_string()),
+                    view_family: Some("effective_display_text".to_string()),
+                    left_value_repr: Some("6".to_string()),
+                    right_value_repr: Some("$6.00".to_string()),
+                    detail: Some("comparison view values diverged".to_string()),
+                },
+                OxReplayExplainRecord {
+                    query_id: Some("explain-crosslane-02".to_string()),
+                    summary: Some("comparison view family `formatting_view` is missing on one side".to_string()),
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("formatting_view".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: Some("{\"number_format_code\":\"$#,##0.00\",\"font_color\":\"#112233\",\"fill_color\":\"#ddeeff\"}".to_string()),
+                    detail: Some("comparison view family `formatting_view` is missing on `crosslane_xml_view_family_gap_001_left`".to_string()),
+                },
+            ],
+            discrepancy_summary: Some(
+                "Display divergence (effective_display_text): OxFml 6 vs Excel $6.00 | Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on `crosslane_xml_view_family_gap_001_left`"
+                    .to_string(),
+            ),
             oxfml_summary: OxfmlVerificationSummary {
                 evaluation_summary: Some("Number · 6".to_string()),
                 effective_display_summary: Some("6".to_string()),
@@ -167,6 +222,7 @@ fn sample_verification_bundle_report_json() -> String {
             },
             excel_summary: Some(ExcelObservationSummary {
                 observed_value_repr: Some("$6.00".to_string()),
+                effective_display_text: Some("$6.00".to_string()),
                 observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
                 capture_status: "captured".to_string(),
             }),
@@ -179,6 +235,7 @@ fn sample_verification_bundle_report_json() -> String {
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 data_type: Some("Number".to_string()),
                 style_id: Some("calc".to_string()),
+                style_hierarchy: vec!["calcBase".to_string(), "calc".to_string()],
                 number_format_code: Some("$#,##0.00".to_string()),
                 font_color: Some("#112233".to_string()),
                 fill_color: Some("#ddeeff".to_string()),
@@ -187,16 +244,25 @@ fn sample_verification_bundle_report_json() -> String {
                 observation_scope: VerificationObservationScope {
                     oxfml_required_scope: vec!["format_profile".to_string()],
                     oxxlplay_required_surfaces: vec!["effective_display_text".to_string()],
-                    oxreplay_required_views: vec!["formatting_view".to_string()],
+                    oxreplay_required_views: vec![
+                        "formatting_view".to_string(),
+                        "conditional_formatting_view".to_string(),
+                    ],
                 },
             }),
             upstream_gap_report: Some(VerificationObservationGapReport {
                 oxfml_scope_required: vec!["format_profile".to_string()],
                 oxxlplay_supported_surfaces: vec!["cell_value".to_string()],
                 oxxlplay_missing_surfaces: vec!["effective_display_text".to_string()],
-                oxreplay_required_views: vec!["formatting_view".to_string()],
+                oxreplay_required_views: vec![
+                    "formatting_view".to_string(),
+                    "conditional_formatting_view".to_string(),
+                ],
                 oxreplay_current_bundle_views: vec!["visible_value".to_string()],
-                oxreplay_missing_views: vec!["formatting_view".to_string()],
+                oxreplay_missing_views: vec![
+                    "formatting_view".to_string(),
+                    "conditional_formatting_view".to_string(),
+                ],
             }),
             case_output_dir: "target/onecalc-verification/browser-bundle-1/cases/xml-case-browser-1"
                 .to_string(),
@@ -388,9 +454,18 @@ async fn live_bridge_typing_updates_visible_calculated_result() {
     })
     .await;
 
-    assert!(html.contains("Calculated value"), "mounted html after typing: {html}");
-    assert!(html.contains("Number · 6"), "mounted html after typing: {html}");
-    assert!(html.contains(">6</strong>"), "mounted html after typing: {html}");
+    assert!(
+        html.contains("Calculated value"),
+        "mounted html after typing: {html}"
+    );
+    assert!(
+        html.contains("Number · 6"),
+        "mounted html after typing: {html}"
+    );
+    assert!(
+        html.contains(">6</strong>"),
+        "mounted html after typing: {html}"
+    );
 
     drop(mount_handle);
     host.remove();
@@ -458,9 +533,18 @@ async fn typing_in_editor_refreshes_result_state_through_live_bridge() {
     })
     .await;
 
-    assert!(html.contains("Number · 6"), "mounted html after typing: {html}");
-    assert!(html.contains(">6</strong>"), "mounted html after typing: {html}");
-    assert!(html.contains("Function target"), "mounted html after typing: {html}");
+    assert!(
+        html.contains("Number · 6"),
+        "mounted html after typing: {html}"
+    );
+    assert!(
+        html.contains(">6</strong>"),
+        "mounted html after typing: {html}"
+    );
+    assert!(
+        html.contains("Function target"),
+        "mounted html after typing: {html}"
+    );
 
     drop(mount_handle);
     host.remove();
@@ -525,9 +609,7 @@ async fn backspace_keydown_updates_editor_state_and_clears_stale_analysis() {
         .expect("dispatch keydown");
 
     let html = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 8")
-            && html.contains("expected ')'")
-            && html.contains("Number · 3")
+        html.contains("Chars: 8") && html.contains("expected ')'") && html.contains("Number · 3")
     })
     .await;
 
@@ -543,7 +625,10 @@ async fn backspace_keydown_updates_editor_state_and_clears_stale_analysis() {
         html.contains("Number · 3"),
         "mounted html after keydown: {html}"
     );
-    assert!(html.contains("Function target"), "mounted html after keydown: {html}");
+    assert!(
+        html.contains("Function target"),
+        "mounted html after keydown: {html}"
+    );
 
     drop(mount_handle);
     host.remove();
@@ -665,7 +750,8 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
 
     let mut formula_space = FormulaSpaceState::new(formula_space_id, "=SUM(1,2)");
     formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
-    formula_space.editor_surface_state = EditorSurfaceState::for_text_with_selection("=SUM(1,2)", 1, 4);
+    formula_space.editor_surface_state =
+        EditorSurfaceState::for_text_with_selection("=SUM(1,2)", 1, 4);
     formula_space.effective_display_summary = Some("3".to_string());
     formula_space.latest_evaluation_summary = Some("Number".to_string());
     state.formula_spaces.insert(formula_space);
@@ -698,7 +784,9 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
     cut_init.set_cancelable(true);
     let cut_event = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &cut_init)
         .expect("ctrl+x event");
-    let cut_dispatch_result = textarea.dispatch_event(&cut_event).expect("dispatch ctrl+x");
+    let cut_dispatch_result = textarea
+        .dispatch_event(&cut_event)
+        .expect("dispatch ctrl+x");
     assert!(!cut_dispatch_result, "ctrl+x should be prevented");
 
     let html = wait_for_host_html(&document, |html| {
@@ -707,7 +795,10 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
             && html.contains("data-role=\"editor-input\"")
     })
     .await;
-    assert!(html.contains("Chars: 6"), "mounted html after ctrl+x: {html}");
+    assert!(
+        html.contains("Chars: 6"),
+        "mounted html after ctrl+x: {html}"
+    );
     assert_eq!(
         document
             .active_element()
@@ -968,7 +1059,8 @@ async fn verification_bundle_import_surface_imports_xml_case_and_opens_inspect_c
         "mounted html after bundle import: {imported_html}"
     );
     assert!(
-        imported_html.contains("OxXlPlay missing: effective_display_text"),
+        imported_html
+            .contains("Display divergence (effective_display_text): OxFml 6 vs Excel $6.00"),
         "mounted html after bundle import: {imported_html}"
     );
 
@@ -986,7 +1078,7 @@ async fn verification_bundle_import_surface_imports_xml_case_and_opens_inspect_c
         html.contains("data-screen=\"inspect\"")
             && html.contains("artifact-bundle-1")
             && html.contains("C:/tmp/browser-workbook.xml @ Input!A1")
-            && html.contains("OxReplay missing: formatting_view")
+            && html.contains("Projection coverage gap (formatting_view)")
     })
     .await;
     assert!(

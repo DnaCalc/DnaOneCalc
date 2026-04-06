@@ -13,11 +13,28 @@ pub fn ShellFrame(
     view! {
         <div class="onecalc-shell-frame">
             <aside class="onecalc-shell-frame__rail">
-                <h1>"DNA OneCalc"</h1>
-                <div class="onecalc-shell-frame__active-space">
-                    "Active space: "
-                    {frame.active_formula_space_label.clone()}
+                <div class="onecalc-shell-frame__brand-block">
+                    <div class="onecalc-shell-frame__eyebrow">"DNA Calc"</div>
+                    <h1>"DNA OneCalc"</h1>
+                    <p class="onecalc-shell-frame__brand-copy">
+                        "Explore live OxFml execution, inspect replay evidence, and triage retained Excel comparisons from one shell."
+                    </p>
                 </div>
+                <section class="onecalc-shell-frame__active-card" data-role="active-space-context">
+                    <div class="onecalc-shell-frame__eyebrow">"Active space"</div>
+                    <strong>{frame.active_formula_space_label.clone()}</strong>
+                    <div class="onecalc-shell-frame__active-meta">
+                        <span data-role="active-space-truth-source">{frame.active_truth_source_label.clone()}</span>
+                        <span data-role="active-space-host-profile">{frame.active_host_profile_summary.clone()}</span>
+                        <span data-role="active-space-packet-kind">{frame.active_packet_kind_summary.clone()}</span>
+                    </div>
+                    <div
+                        class="onecalc-shell-frame__active-capability"
+                        data-role="active-space-capability-floor"
+                    >
+                        {frame.active_capability_floor_summary.clone()}
+                    </div>
+                </section>
                 <ul class="onecalc-shell-frame__space-list">
                     {frame
                         .formula_spaces
@@ -44,7 +61,15 @@ pub fn ShellFrame(
                                             }
                                         }
                                     >
-                                        {formula_space.label.clone()}
+                                        <span class="onecalc-shell-frame__space-button-label">
+                                            {formula_space.label.clone()}
+                                        </span>
+                                        <span class="onecalc-shell-frame__space-button-meta">
+                                            {formula_space.truth_source_label.clone()}
+                                        </span>
+                                        <span class="onecalc-shell-frame__space-button-packet">
+                                            {formula_space.packet_kind_summary.clone()}
+                                        </span>
                                     </button>
                                     {if formula_space.is_pinned {
                                         view! { <span class="onecalc-shell-frame__space-pin">"Pinned"</span> }.into_any()
@@ -60,6 +85,12 @@ pub fn ShellFrame(
 
             <main class="onecalc-shell-frame__content">
                 <header class="onecalc-shell-frame__context-bar">
+                    <div class="onecalc-shell-frame__context-copy">
+                        <div class="onecalc-shell-frame__eyebrow">"Mode surface"</div>
+                        <div class="onecalc-shell-frame__context-title">
+                            {frame.active_formula_space_label.clone()}
+                        </div>
+                    </div>
                     <nav class="onecalc-shell-frame__mode-switch">
                         {frame
                             .mode_tabs
@@ -113,6 +144,10 @@ mod tests {
             <ShellFrame
                 frame=ShellFrameViewModel {
                     active_formula_space_label: "space-1".to_string(),
+                    active_truth_source_label: "live-backed".to_string(),
+                    active_host_profile_summary: "Windows Excel default".to_string(),
+                    active_packet_kind_summary: "verification publication".to_string(),
+                    active_capability_floor_summary: "Explore + Inspect + Workbench".to_string(),
                     mode_tabs: vec![
                         ShellModeTabViewModel {
                             mode: AppMode::Explore,
@@ -128,6 +163,8 @@ mod tests {
                     formula_spaces: vec![ShellFormulaSpaceListItemViewModel {
                         formula_space_id: "space-1".to_string(),
                         label: "space-1".to_string(),
+                        truth_source_label: "live-backed".to_string(),
+                        packet_kind_summary: "verification publication".to_string(),
                         is_active: true,
                         is_pinned: true,
                     }],
@@ -141,12 +178,14 @@ mod tests {
         .to_html();
 
         assert!(html.contains("DNA OneCalc"));
-        assert!(html.contains("Active space: "));
+        assert!(html.contains("data-role=\"active-space-context\""));
+        assert!(html.contains("data-role=\"active-space-truth-source\""));
         assert!(html.contains("space-1"));
         assert!(html.contains("data-mode=\"Explore\""));
         assert!(html.contains("data-role=\"formula-space-select\""));
         assert!(html.contains("data-state=\"active\""));
         assert!(html.contains("Pinned"));
+        assert!(html.contains("verification publication"));
         assert!(html.contains("Body"));
     }
 }

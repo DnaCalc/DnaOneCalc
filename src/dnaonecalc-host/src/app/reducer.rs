@@ -1,6 +1,6 @@
 use crate::services::retained_artifacts::{
-    import_manual_artifact_for_active_formula_space, open_retained_artifact_by_id,
-    open_retained_artifact_in_inspect_by_id, import_verification_bundle_report_json,
+    import_manual_artifact_for_active_formula_space, import_verification_bundle_report_json,
+    open_retained_artifact_by_id, open_retained_artifact_in_inspect_by_id,
     ManualRetainedArtifactImportRequest, VerificationBundleImportRequest,
 };
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};

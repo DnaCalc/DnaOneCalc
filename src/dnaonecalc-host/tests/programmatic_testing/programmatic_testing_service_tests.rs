@@ -34,7 +34,9 @@ fn builds_headless_batch_plan_for_excel_comparison_runs() {
         plan.comparison_lane,
         ProgrammaticComparisonLane::OxfmlAndExcel
     );
-    assert!(plan.retained_artifact_kinds.contains(&"replay_bundle".to_string()));
+    assert!(plan
+        .retained_artifact_kinds
+        .contains(&"replay_bundle".to_string()));
     assert!(plan
         .retained_artifact_kinds
         .contains(&"comparison_outcome".to_string()));

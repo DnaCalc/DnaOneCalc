@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use dnaonecalc_host::app::host_mount::{render_shell_document, HostMountTarget};
 use dnaonecalc_host::app::OneCalcHostApp;
-use dnaonecalc_host::app::host_mount::{HostMountTarget, render_shell_document};
-use dnaonecalc_host::services::programmatic_testing::ProgrammaticComparisonStatus;
+use dnaonecalc_host::services::programmatic_testing::{
+    default_verification_config, load_verification_config_xml, ProgrammaticComparisonStatus,
+};
 use dnaonecalc_host::services::verification_bundle::{
-    VerificationBundleReport, default_output_root, load_verification_batch_request,
-    run_verification_batch, single_case_request, single_xml_case_request,
+    default_output_root, load_verification_batch_request, run_verification_batch,
+    single_case_request_with_config, single_xml_case_request_with_config, VerificationBundleReport,
 };
 
 fn main() -> ExitCode {
@@ -40,6 +42,7 @@ fn run_verify_formula(args: Vec<String>) -> ExitCode {
     let mut case_id = None;
     let mut formula = None;
     let mut output_root = None;
+    let mut config_xml = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -54,6 +57,10 @@ fn run_verify_formula(args: Vec<String>) -> ExitCode {
             }
             "--output-root" => {
                 output_root = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--config-xml" => {
+                config_xml = args.get(index + 1).map(PathBuf::from);
                 index += 2;
             }
             other => {
@@ -73,7 +80,14 @@ fn run_verify_formula(args: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let request = single_case_request(case_id, formula);
+    let config = match load_config_or_default(config_xml.as_ref()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(4);
+        }
+    };
+    let request = single_case_request_with_config(case_id, formula, &config);
     let output_root = match output_root {
         Some(path) => path,
         None => match default_output_root() {
@@ -160,6 +174,7 @@ fn run_verify_xml_cell(args: Vec<String>) -> ExitCode {
     let mut workbook_xml = None;
     let mut locator = None;
     let mut output_root = None;
+    let mut config_xml = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -178,6 +193,10 @@ fn run_verify_xml_cell(args: Vec<String>) -> ExitCode {
             }
             "--output-root" => {
                 output_root = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--config-xml" => {
+                config_xml = args.get(index + 1).map(PathBuf::from);
                 index += 2;
             }
             other => {
@@ -201,7 +220,15 @@ fn run_verify_xml_cell(args: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let request = match single_xml_case_request(case_id, workbook_xml, locator) {
+    let config = match load_config_or_default(config_xml.as_ref()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(4);
+        }
+    };
+    let request = match single_xml_case_request_with_config(case_id, workbook_xml, locator, &config)
+    {
         Ok(request) => request,
         Err(error) => {
             eprintln!("{error}");
@@ -249,7 +276,12 @@ fn print_report(report: &VerificationBundleReport) {
                 .unwrap_or("<unavailable>"),
             case.excel_summary
                 .as_ref()
-                .and_then(|summary| summary.observed_value_repr.as_deref())
+                .and_then(|summary| {
+                    summary
+                        .effective_display_text
+                        .as_deref()
+                        .or(summary.observed_value_repr.as_deref())
+                })
                 .unwrap_or("<unavailable>"),
             case.visible_output_match
                 .map(|value| value.to_string())
@@ -289,9 +321,15 @@ fn print_help() {
         "dnaonecalc-host\n\
          \n\
          Commands:\n\
-           verify-formula --case-id <id> --formula <text> [--output-root <path>]\n\
-           verify-xml-cell --case-id <id> --workbook-xml <path> --locator <Sheet!Cell> [--output-root <path>]\n\
-           verify-batch --input <json-path> [--output-root <path>]\n\
+          verify-formula --case-id <id> --formula <text> [--config-xml <path>] [--output-root <path>]\n\
+          verify-xml-cell --case-id <id> --workbook-xml <path> --locator <Sheet!Cell> [--config-xml <path>] [--output-root <path>]\n\
+          verify-batch --input <json-path> [--output-root <path>]\n\
+         \n\
+         Verification config XML shape:\n\
+          <verification-config>\n\
+            <host-profile profile-id=\"windows_excel_default\" requires-excel-observation=\"true\" />\n\
+            <capabilities host-summary=\"windows_native_excel_default\" excel-observation-available=\"true\" />\n\
+          </verification-config>\n\
          \n\
          Batch input JSON shape:\n\
            {{\n\
@@ -303,4 +341,14 @@ fn print_help() {
              ]\n\
            }}"
     );
+}
+
+fn load_config_or_default(
+    config_xml: Option<&PathBuf>,
+) -> Result<dnaonecalc_host::services::programmatic_testing::ProgrammaticVerificationConfig, String>
+{
+    match config_xml {
+        Some(path) => load_verification_config_xml(path),
+        None => Ok(default_verification_config()),
+    }
 }

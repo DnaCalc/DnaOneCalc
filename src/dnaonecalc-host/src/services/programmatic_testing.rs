@@ -1,3 +1,7 @@
+use std::fs;
+use std::path::Path;
+
+use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +28,12 @@ pub struct ProgrammaticHostProfile {
 pub struct ProgrammaticCapabilityProfile {
     pub host_summary: String,
     pub excel_observation_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgrammaticVerificationConfig {
+    pub host_profile: ProgrammaticHostProfile,
+    pub capabilities: ProgrammaticCapabilityProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +83,102 @@ pub fn default_windows_excel_capability_profile() -> ProgrammaticCapabilityProfi
     ProgrammaticCapabilityProfile {
         host_summary: "windows_native_excel_default".to_string(),
         excel_observation_available: true,
+    }
+}
+
+pub fn default_verification_config() -> ProgrammaticVerificationConfig {
+    ProgrammaticVerificationConfig {
+        host_profile: default_windows_excel_host_profile(),
+        capabilities: default_windows_excel_capability_profile(),
+    }
+}
+
+pub fn load_verification_config_xml(
+    config_path: impl AsRef<Path>,
+) -> Result<ProgrammaticVerificationConfig, String> {
+    let config_path = config_path.as_ref();
+    let xml = fs::read_to_string(config_path).map_err(|error| {
+        format!(
+            "failed to read verification config XML from `{}`: {error}",
+            config_path.display()
+        )
+    })?;
+    let document = Document::parse(&xml).map_err(|error| {
+        format!(
+            "failed to parse verification config XML from `{}`: {error}",
+            config_path.display()
+        )
+    })?;
+    let root = document.root_element();
+    if root.tag_name().name() != "verification-config" {
+        return Err(format!(
+            "verification config XML `{}` must use a <verification-config> root element",
+            config_path.display()
+        ));
+    }
+
+    let host_node = root
+        .children()
+        .find(|node| node.is_element() && node.tag_name().name() == "host-profile");
+    let capabilities_node = root
+        .children()
+        .find(|node| node.is_element() && node.tag_name().name() == "capabilities");
+
+    let default = default_verification_config();
+    let host_profile = if let Some(node) = host_node {
+        ProgrammaticHostProfile {
+            profile_id: node
+                .attribute("profile-id")
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| default.host_profile.profile_id.clone()),
+            requires_excel_observation: parse_bool_attr(
+                node.attribute("requires-excel-observation"),
+                default.host_profile.requires_excel_observation,
+                "requires-excel-observation",
+                config_path,
+            )?,
+        }
+    } else {
+        default.host_profile
+    };
+
+    let capabilities = if let Some(node) = capabilities_node {
+        ProgrammaticCapabilityProfile {
+            host_summary: node
+                .attribute("host-summary")
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| default.capabilities.host_summary.clone()),
+            excel_observation_available: parse_bool_attr(
+                node.attribute("excel-observation-available"),
+                default.capabilities.excel_observation_available,
+                "excel-observation-available",
+                config_path,
+            )?,
+        }
+    } else {
+        default.capabilities
+    };
+
+    Ok(ProgrammaticVerificationConfig {
+        host_profile,
+        capabilities,
+    })
+}
+
+fn parse_bool_attr(
+    value: Option<&str>,
+    default: bool,
+    attribute_name: &str,
+    config_path: &Path,
+) -> Result<bool, String> {
+    match value {
+        None => Ok(default),
+        Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        Some(other) => Err(format!(
+            "verification config XML `{}` has invalid boolean `{other}` for `{attribute_name}`; expected `true` or `false`",
+            config_path.display()
+        )),
     }
 }
 
@@ -221,5 +327,37 @@ mod tests {
         assert_eq!(mismatch.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
         assert_eq!(blocked.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
         assert_eq!(matched.open_mode_hint, ProgrammaticOpenModeHint::Inspect);
+    }
+
+    #[test]
+    fn load_verification_config_xml_reads_host_and_capability_overrides() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "onecalc-verification-config-{}-{}.xml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+        fs::write(
+            &temp_path,
+            r#"<verification-config>
+  <host-profile profile-id="windows_excel_default" requires-excel-observation="true" />
+  <capabilities host-summary="windows_native_excel_default" excel-observation-available="false" />
+</verification-config>"#,
+        )
+        .expect("config write");
+
+        let config = load_verification_config_xml(&temp_path).expect("config");
+
+        assert_eq!(config.host_profile.profile_id, "windows_excel_default");
+        assert!(config.host_profile.requires_excel_observation);
+        assert_eq!(
+            config.capabilities.host_summary,
+            "windows_native_excel_default"
+        );
+        assert!(!config.capabilities.excel_observation_available);
+
+        let _ = fs::remove_file(temp_path);
     }
 }

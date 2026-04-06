@@ -24,6 +24,8 @@ pub struct ShellModeTabViewModel {
 pub struct ShellFormulaSpaceListItemViewModel {
     pub formula_space_id: String,
     pub label: String,
+    pub truth_source_label: String,
+    pub packet_kind_summary: String,
     pub is_active: bool,
     pub is_pinned: bool,
 }
@@ -31,6 +33,10 @@ pub struct ShellFormulaSpaceListItemViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellFrameViewModel {
     pub active_formula_space_label: String,
+    pub active_truth_source_label: String,
+    pub active_host_profile_summary: String,
+    pub active_packet_kind_summary: String,
+    pub active_capability_floor_summary: String,
     pub mode_tabs: Vec<ShellModeTabViewModel>,
     pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
 }
@@ -95,6 +101,8 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                 .map(|formula_space| ShellFormulaSpaceListItemViewModel {
                     formula_space_id: formula_space.formula_space_id.as_str().to_string(),
                     label: formula_space.context.scenario_label.clone(),
+                    truth_source_label: formula_space.context.truth_source.label().to_string(),
+                    packet_kind_summary: formula_space.context.packet_kind.clone(),
                     is_active: &formula_space.formula_space_id == active_formula_space_id,
                     is_pinned: state
                         .workspace_shell
@@ -106,6 +114,14 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
 
     Some(ShellFrameViewModel {
         active_formula_space_label: active_formula_space.context.scenario_label.clone(),
+        active_truth_source_label: active_formula_space
+            .context
+            .truth_source
+            .label()
+            .to_string(),
+        active_host_profile_summary: active_formula_space.context.host_profile.clone(),
+        active_packet_kind_summary: active_formula_space.context.packet_kind.clone(),
+        active_capability_floor_summary: active_formula_space.context.capability_floor.clone(),
         mode_tabs,
         formula_spaces,
     })
@@ -221,9 +237,11 @@ mod tests {
 
         let frame = build_shell_frame_view_model(&state).expect("frame should exist");
         assert_eq!(frame.active_formula_space_label, "space-1");
+        assert_eq!(frame.active_truth_source_label, "local-fallback");
         assert_eq!(frame.formula_spaces.len(), 1);
         assert!(frame.formula_spaces[0].is_active);
         assert!(!frame.formula_spaces[0].is_pinned);
+        assert_eq!(frame.formula_spaces[0].truth_source_label, "local-fallback");
         assert!(frame
             .mode_tabs
             .iter()
