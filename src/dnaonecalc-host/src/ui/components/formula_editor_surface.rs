@@ -23,6 +23,12 @@ pub fn FormulaEditorSurface(
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
     #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
+    let line_count = editor.raw_entered_cell_text.lines().count().max(1);
+    let function_count = editor
+        .syntax_runs
+        .iter()
+        .filter(|run| run.role == SyntaxTokenRole::Function)
+        .count();
     let diagnostics_text = if editor.diagnostics.is_empty() {
         "No diagnostics".to_string()
     } else {
@@ -70,16 +76,56 @@ pub fn FormulaEditorSurface(
     let editor_for_click_measurement = editor.clone();
     let editor_for_input_measurement = editor.clone();
     let editor_for_keyup_measurement = editor.clone();
+    let diagnostics_state_label = if editor.diagnostics.is_empty() {
+        "Ready to evaluate".to_string()
+    } else {
+        format!("{} diagnostic(s) need review", editor.diagnostics.len())
+    };
+    let diagnostics_state_detail = if editor.diagnostics.is_empty() {
+        "Live OxFml analysis is clean and the editor surface is in-sync."
+    } else {
+        "Live OxFml analysis reported issues in the current entry."
+    };
 
     view! {
         <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
             <header class="onecalc-formula-editor-surface__toolbar">
-                <span>"Chars: " {editor.raw_entered_cell_text.chars().count()}</span>
-                <span>"Tokens: " {editor.syntax_runs.len()}</span>
-                <span>"Diagnostics: " {editor.diagnostics.len()}</span>
+                <div class="onecalc-formula-editor-surface__toolbar-copy">
+                    <div>
+                        <div class="onecalc-formula-editor-surface__toolbar-title">"Formula"</div>
+                        <div class="onecalc-formula-editor-surface__toolbar-subtitle">
+                            "Native input, live syntax, and replay-aware assist in one surface."
+                        </div>
+                    </div>
+                    <div class="onecalc-formula-editor-surface__toolbar-metrics">
+                        <span>{line_count} " lines"</span>
+                        <span>{editor.syntax_runs.len()} " tokens"</span>
+                        <span>{function_count} " functions"</span>
+                    </div>
+                </div>
+                <div class="onecalc-formula-editor-surface__toolbar-state" data-role="editor-toolbar-state">
+                    {if editor.diagnostics.is_empty() { "Clean" } else { "Review" }}
+                </div>
             </header>
 
             <div class="onecalc-formula-editor-surface__body">
+                <div class="onecalc-formula-editor-surface__line-rail" data-role="editor-line-rail">
+                    {(1..=line_count)
+                        .map(|line_number| {
+                            let active = line_number.saturating_sub(1) == caret_box.start.line_index;
+                            view! {
+                                <div
+                                    class=("onecalc-formula-editor-surface__line-number", true)
+                                    class=("onecalc-formula-editor-surface__line-number--active", active)
+                                    data-line-number=line_number
+                                >
+                                    {line_number}
+                                </div>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                <div class="onecalc-formula-editor-surface__editor-stage">
                 <div class="onecalc-formula-editor-surface__native-input-layer" data-role="native-input-layer">
                     <textarea
                         class="onecalc-formula-editor-surface__textarea"
@@ -488,7 +534,23 @@ pub fn FormulaEditorSurface(
                             }
                         })}
                 </div>
+                </div>
             </div>
+
+            <footer class="onecalc-formula-editor-surface__diagnostic-band" data-role="editor-diagnostic-band">
+                <div class="onecalc-formula-editor-surface__diagnostic-band-state">
+                    <span class="onecalc-formula-editor-surface__diagnostic-icon">
+                        {if editor.diagnostics.is_empty() { "OK" } else { "!" }}
+                    </span>
+                    <div>
+                        <strong>{diagnostics_state_label}</strong>
+                        <div>{diagnostics_state_detail}</div>
+                    </div>
+                </div>
+                <div class="onecalc-formula-editor-surface__diagnostic-band-action">
+                    {if editor.has_signature_help { "Signature help ready" } else { "Assist idle" }}
+                </div>
+            </footer>
 
             <footer class="onecalc-formula-editor-surface__footer">
                 <div class="onecalc-formula-editor-surface__editor-state">

@@ -26,28 +26,18 @@ fn ExploreEditorPanel(
         <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
             <div class="onecalc-explore-shell__panel-header">
                 <div>
+                    <div class="onecalc-explore-shell__section-accent"></div>
                     <h2>"Editor"</h2>
-                    <div class="onecalc-explore-shell__scenario-label" data-role="explore-scenario-label">
-                        {editor.scenario_label.clone()}
-                    </div>
-                </div>
-                <div class="onecalc-explore-shell__truth-chip" data-role="explore-truth-source">
-                    {editor.truth_source_label.clone()}
+                    <div class="onecalc-explore-shell__eyebrow">"Primary authoring surface"</div>
                 </div>
             </div>
             <div class="onecalc-explore-shell__panel-intro" data-role="explore-panel-intro">
                 <div class="onecalc-explore-shell__eyebrow">"Formula authoring"</div>
                 <p>
-                    "Edit Excel cell-entry text directly, see continuous evaluation, and keep assist, diagnostics, and runtime context visible in one place."
+                    "Keep the cell entry dominant. Diagnostics stay close to the formula, while result and guided help remain visible without competing for focus."
                 </p>
             </div>
-            <div class="onecalc-explore-shell__context-strip" data-role="explore-context-strip">
-                <span data-role="explore-host-profile">{editor.host_profile_summary.clone()}</span>
-                <span data-role="explore-packet-kind">{editor.packet_kind_summary.clone()}</span>
-                <span data-role="explore-capability-floor">{editor.capability_floor_summary.clone()}</span>
-                <span data-role="explore-mode-availability">{editor.mode_availability_summary.clone()}</span>
-            </div>
-            <div class="onecalc-explore-shell__status-strip" data-role="explore-status-strip">
+            <div class="onecalc-explore-shell__editor-summary-row" data-role="explore-editor-summary">
                 <div class="onecalc-explore-shell__status-card" data-role="explore-diagnostics-summary">
                     <span class="onecalc-explore-shell__status-label">"Diagnostics"</span>
                     <strong>{diagnostics_label}</strong>
@@ -56,16 +46,18 @@ fn ExploreEditorPanel(
                     <span class="onecalc-explore-shell__status-label">"Assist"</span>
                     <strong>{format!("{} proposal(s)", editor.completion_count)}</strong>
                 </div>
-                <div class="onecalc-explore-shell__status-card" data-role="explore-help-target">
-                    <span class="onecalc-explore-shell__status-label">"Help target"</span>
-                    <strong>{function_help.clone()}</strong>
+                <div class="onecalc-explore-shell__status-card" data-role="explore-authoring-summary">
+                    <span class="onecalc-explore-shell__status-label">"Authoring state"</span>
+                    <strong>{if editor.reused_green_tree { "Incremental reuse" } else { "Fresh analysis" }}</strong>
                 </div>
             </div>
-            {editor.trace_summary.as_ref().map(|trace_summary| view! {
-                <div class="onecalc-explore-shell__trace-summary" data-role="explore-trace-summary">
-                    {trace_summary.clone()}
-                </div>
-            })}
+            <div class="onecalc-explore-shell__editor-note" data-role="explore-editor-note">
+                <span class="onecalc-explore-shell__metric-label">"Current help target"</span>
+                <strong>{function_help.clone()}</strong>
+                {editor.trace_summary.as_ref().map(|trace_summary| view! {
+                    <span class="onecalc-explore-shell__editor-note-detail">{trace_summary.clone()}</span>
+                })}
+            </div>
             {editor.blocked_reason.as_ref().map(|blocked_reason| view! {
                 <div class="onecalc-explore-shell__blocked-reason" data-role="explore-blocked-reason">
                     {blocked_reason.clone()}
@@ -101,6 +93,7 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
         <section class="onecalc-explore-shell__result-panel" data-panel="explore-result">
             <div class="onecalc-explore-shell__panel-header">
                 <div>
+                    <div class="onecalc-explore-shell__section-accent"></div>
                     <h2>"Result"</h2>
                     <div class="onecalc-explore-shell__eyebrow">"Runtime view"</div>
                 </div>
@@ -109,18 +102,35 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
                 </div>
             </div>
             <section class="onecalc-explore-shell__hero-result" data-role="explore-hero-result">
-                <div class="onecalc-explore-shell__hero-result-label">"Calculated value"</div>
-                <div class="onecalc-explore-shell__hero-result-value" data-role="explore-result-value">
-                    {result_value}
+                <div class="onecalc-explore-shell__hero-result-copy">
+                    <div class="onecalc-explore-shell__hero-result-label">"Calculated value"</div>
+                    <div class="onecalc-explore-shell__hero-result-value" data-role="explore-result-value">
+                        {result_value}
+                    </div>
+                    <p class="onecalc-explore-shell__hero-result-caption">
+                        "This is the current OxFml-visible result surface for the active cell entry."
+                    </p>
+                </div>
+                <div class="onecalc-explore-shell__hero-result-sidecar">
+                    <div class="onecalc-explore-shell__hero-pill">
+                        <span>"Display"</span>
+                        <strong>{effective_display.clone()}</strong>
+                    </div>
+                    <div class="onecalc-explore-shell__hero-pill">
+                        <span>"Evaluation"</span>
+                        <strong>{evaluation_summary.clone()}</strong>
+                    </div>
                 </div>
             </section>
-            <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
-                <span class="onecalc-explore-shell__metric-label">"Effective display"</span>
-                <strong>{effective_display}</strong>
-            </div>
-            <div class="onecalc-explore-shell__result-metric" data-role="explore-evaluation-summary">
-                <span class="onecalc-explore-shell__metric-label">"Evaluation summary"</span>
-                <strong>{evaluation_summary}</strong>
+            <div class="onecalc-explore-shell__result-grid">
+                <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
+                    <span class="onecalc-explore-shell__metric-label">"Effective display"</span>
+                    <strong>{effective_display}</strong>
+                </div>
+                <div class="onecalc-explore-shell__result-metric" data-role="explore-evaluation-summary">
+                    <span class="onecalc-explore-shell__metric-label">"Evaluation summary"</span>
+                    <strong>{evaluation_summary}</strong>
+                </div>
             </div>
             {result.array_preview.as_ref().map(|array_preview| view! {
                 <section class="onecalc-explore-shell__array-preview" data-role="explore-array-preview">
@@ -165,9 +175,20 @@ fn ExploreHelpPanel(editor: ExploreEditorClusterViewModel) -> impl IntoView {
         <section class="onecalc-explore-shell__help-panel" data-panel="explore-help">
             <div class="onecalc-explore-shell__panel-header">
                 <div>
+                    <div class="onecalc-explore-shell__section-accent"></div>
                     <h2>"Assist"</h2>
                     <div class="onecalc-explore-shell__eyebrow">"Guided entry"</div>
                 </div>
+            </div>
+            <div class="onecalc-explore-shell__assist-intro">
+                "Use this rail as guided reference. It should help the author move forward without displacing the formula or result surfaces."
+            </div>
+            <div class="onecalc-explore-shell__assist-callout" data-role="explore-assist-callout">
+                <div>
+                    <div class="onecalc-explore-shell__eyebrow">"Inspect handoff"</div>
+                    <strong>"Switch to semantic inspection when guidance is no longer enough and the formula needs explanation."</strong>
+                </div>
+                <span class="onecalc-explore-shell__assist-callout-state">"Inspect-ready"</span>
             </div>
             <div class="onecalc-explore-shell__assist-meta" data-role="explore-assist-meta">
                 <div class="onecalc-explore-shell__assist-metric">
@@ -377,24 +398,61 @@ pub fn ExploreShell(
     view! {
         <section class="onecalc-explore-shell" data-screen="explore">
             <header class="onecalc-explore-shell__header">
-                <div>
-                    <div class="onecalc-explore-shell__eyebrow">"Explore"</div>
-                    <h1>"Formula Explorer"</h1>
+                <div class="onecalc-explore-shell__header-copy">
+                    <div>
+                        <div class="onecalc-explore-shell__eyebrow">"Explore"</div>
+                        <h1>"Formula Explorer"</h1>
+                    </div>
+                    <div class="onecalc-explore-shell__hero-badges">
+                        <span>{editor.scenario_label.clone()}</span>
+                        <span>{editor.truth_source_label.clone()}</span>
+                    </div>
                 </div>
                 <p class="onecalc-explore-shell__lead">
-                    "Author a formula, watch live OxFml evaluation, and keep result, display, diagnostics, and assist surfaces visible without leaving the screen."
+                    "Author the cell entry on the left, read the evaluated result in the center, and keep guided help on the right. The screen should support sustained formula work without making you hunt for truth."
                 </p>
+                <section class="onecalc-explore-shell__overview-deck" data-role="explore-overview-deck">
+                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-primary">
+                        <div class="onecalc-explore-shell__eyebrow">"Current formula space"</div>
+                        <strong>{editor.scenario_label.clone()}</strong>
+                        <p>
+                            "The left surface is the primary authoring space for the active scenario."
+                        </p>
+                    </article>
+                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-result">
+                        <div class="onecalc-explore-shell__eyebrow">"Visible display"</div>
+                        <strong>{result.effective_display_summary.clone().unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                        <p>{result.result_value_summary.clone().unwrap_or_else(|| "No result surface yet".to_string())}</p>
+                    </article>
+                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-capability">
+                        <div class="onecalc-explore-shell__eyebrow">"Authoring posture"</div>
+                        <strong>{if editor.diagnostics.is_empty() { "Ready to iterate" } else { "Needs repair" }}</strong>
+                        <p>
+                            {format!(
+                                "{} diagnostic(s), {} completion proposal(s)",
+                                editor.diagnostics.len(),
+                                editor.completion_count
+                            )}
+                        </p>
+                    </article>
+                </section>
             </header>
 
             <div class="onecalc-explore-shell__body">
-                <ExploreEditorPanel
-                    editor=editor.clone()
-                    on_input_event=on_input_event
-                    on_command=on_command
-                    on_overlay_measurement=on_overlay_measurement
-                />
-                <ExploreResultPanel result=result />
-                <ExploreHelpPanel editor=editor />
+                <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--editor">
+                    <ExploreEditorPanel
+                        editor=editor.clone()
+                        on_input_event=on_input_event
+                        on_command=on_command
+                        on_overlay_measurement=on_overlay_measurement
+                    />
+                </div>
+                <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--result">
+                    <ExploreResultPanel result=result />
+                </div>
+                <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--help">
+                    <ExploreHelpPanel editor=editor />
+                </div>
             </div>
         </section>
     }
@@ -498,8 +556,8 @@ mod tests {
 
         assert!(html.contains("Formula Explorer"));
         assert!(html.contains("data-panel=\"explore-editor\""));
-        assert!(html.contains("data-role=\"explore-context-strip\""));
-        assert!(html.contains("data-role=\"explore-truth-source\""));
+        assert!(html.contains("data-role=\"explore-editor-summary\""));
+        assert!(html.contains("data-role=\"explore-editor-note\""));
         assert!(html.contains("data-component=\"formula-editor-surface\""));
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-token-role=\"function\""));

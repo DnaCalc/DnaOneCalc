@@ -174,9 +174,11 @@ pub fn InspectShell(
     view! {
         <section class="onecalc-inspect-shell" data-screen="inspect">
             <header class="onecalc-inspect-shell__header">
-                <div>
-                    <div class="onecalc-inspect-shell__eyebrow">"Inspect"</div>
-                    <h1>"Semantic Inspect"</h1>
+                <div class="onecalc-inspect-shell__header-copy">
+                    <div>
+                        <div class="onecalc-inspect-shell__eyebrow">"Inspect"</div>
+                        <h1>"Semantic Inspect"</h1>
+                    </div>
                 </div>
                 <p class="onecalc-inspect-shell__lead">
                     "Dissect formula structure, replay evidence, comparison-family divergence, and retained discrepancy context through one semantic x-ray surface."
@@ -186,45 +188,164 @@ pub fn InspectShell(
                     <span data-role="inspect-truth-source">{walk.truth_source_label.clone()}</span>
                     <span data-role="inspect-host-profile">{walk.host_profile_summary.clone()}</span>
                     <span>"Green tree: " {walk.green_tree_key.unwrap_or_else(|| "none".to_string())}</span>
-                    <span>"Result: " {walk.inspect_result_summary.unwrap_or_else(|| "Unavailable".to_string())}</span>
+                    <span>"Result: " {walk.inspect_result_summary.clone().unwrap_or_else(|| "Unavailable".to_string())}</span>
                 </div>
+                <section class="onecalc-inspect-shell__overview-deck" data-role="inspect-overview-deck">
+                    <article class="onecalc-inspect-shell__overview-card" data-role="inspect-overview-source">
+                        <div class="onecalc-inspect-shell__eyebrow">"Source formula"</div>
+                        <strong>{walk.raw_entered_cell_text.clone()}</strong>
+                        <p>"Keep source and current result nearby while reading the semantic walk."</p>
+                    </article>
+                    <article class="onecalc-inspect-shell__overview-card" data-role="inspect-overview-result">
+                        <div class="onecalc-inspect-shell__eyebrow">"Current result"</div>
+                        <strong>{walk.inspect_result_summary.clone().unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                        <p>{parse_status.clone()}</p>
+                    </article>
+                    <article class="onecalc-inspect-shell__overview-card" data-role="inspect-overview-provenance">
+                        <div class="onecalc-inspect-shell__eyebrow">"Provenance posture"</div>
+                        <strong>{provenance_summary.clone()}</strong>
+                        <p>{summary.blocked_reason.clone().unwrap_or_else(|| "No blocked dimension recorded".to_string())}</p>
+                    </article>
+                </section>
             </header>
 
             <div class="onecalc-inspect-shell__body">
-                <section class="onecalc-inspect-shell__walk-cluster" data-panel="inspect-walk">
-                    <div class="onecalc-inspect-shell__panel-header">
-                        <div>
-                            <div class="onecalc-inspect-shell__eyebrow">"Walk"</div>
-                            <h2>"Formula Walk"</h2>
+                <div class="onecalc-inspect-shell__column onecalc-inspect-shell__column--left">
+                    <section class="onecalc-inspect-shell__source-stack" data-panel="inspect-source-stack">
+                        <div class="onecalc-inspect-shell__panel-header">
+                            <div>
+                                <div class="onecalc-inspect-shell__section-accent"></div>
+                                <div class="onecalc-inspect-shell__eyebrow">"Orientation"</div>
+                                <h2>"Source and result"</h2>
+                            </div>
                         </div>
-                    </div>
-                    <div class="onecalc-inspect-shell__source-card">
-                        <div class="onecalc-inspect-shell__source-label">"Cell entry"</div>
-                        <pre class="onecalc-inspect-shell__source">{walk.raw_entered_cell_text}</pre>
-                    </div>
-                    <ul class="onecalc-inspect-shell__walk">
-                        {if walk.formula_walk_nodes.is_empty() {
-                            view! { <li>"No formula walk"</li> }.into_any()
-                        } else {
-                            view! {
-                                {walk
-                                    .formula_walk_nodes
-                                    .into_iter()
-                                    .map(|node| view! { <InspectWalkNode node=node /> })
-                                    .collect_view()}
-                            }
-                            .into_any()
-                        }}
-                    </ul>
-                </section>
+                        <div class="onecalc-inspect-shell__source-card">
+                            <div class="onecalc-inspect-shell__source-label">"Cell entry"</div>
+                            <pre class="onecalc-inspect-shell__source">{walk.raw_entered_cell_text.clone()}</pre>
+                        </div>
+                        <div class="onecalc-inspect-shell__source-card" data-role="inspect-result-anchor">
+                            <div class="onecalc-inspect-shell__source-label">"Current result"</div>
+                            <strong>{walk.inspect_result_summary.clone().unwrap_or_else(|| "Unavailable".to_string())}</strong>
+                        </div>
+                        {summary
+                            .retained_artifact_context
+                            .as_ref()
+                            .map(|context| {
+                                view! {
+                                    <section
+                                        class="onecalc-inspect-shell__retained-context"
+                                        data-role="inspect-retained-context"
+                                        data-artifact-id=context.artifact_id.clone()
+                                        data-comparison-status=context.comparison_status.clone()
+                                    >
+                                        <header class="onecalc-inspect-shell__retained-context-header">
+                                            <div>
+                                                <div class="onecalc-inspect-shell__eyebrow">"Retained discrepancy"</div>
+                                                <h3>"Artifact context"</h3>
+                                            </div>
+                                            <div class="onecalc-inspect-shell__retained-context-badges">
+                                                <span data-role="inspect-retained-comparison-status">{context.comparison_status.clone()}</span>
+                                                <span data-role="inspect-retained-visible-output-match">
+                                                    {match context.visible_output_match {
+                                                        Some(true) => "visible output matched".to_string(),
+                                                        Some(false) => "visible output diverged".to_string(),
+                                                        None => "visible output unknown".to_string(),
+                                                    }}
+                                                </span>
+                                                <span data-role="inspect-retained-replay-equivalent">
+                                                    {match context.replay_equivalent {
+                                                        Some(true) => "replay equivalent".to_string(),
+                                                        Some(false) => "replay diverged".to_string(),
+                                                        None => "replay unknown".to_string(),
+                                                    }}
+                                                </span>
+                                            </div>
+                                        </header>
+                                        <div data-role="inspect-retained-artifact-id">
+                                            "Artifact: "
+                                            {context.artifact_id.clone()}
+                                        </div>
+                                        <div data-role="inspect-retained-case-id">
+                                            "Case: "
+                                            {context.case_id.clone()}
+                                        </div>
+                                        {context
+                                            .bundle_report_path
+                                            .as_ref()
+                                            .map(|bundle_path| view! {
+                                                <div data-role="inspect-retained-bundle-path">
+                                                    "Bundle: "
+                                                    {bundle_path.clone()}
+                                                </div>
+                                            })}
+                                        {context
+                                            .xml_source_summary
+                                            .as_ref()
+                                            .map(|summary| view! {
+                                                <div data-role="inspect-retained-xml-source">
+                                                    {summary.clone()}
+                                                </div>
+                                            })}
+                                        {context
+                                            .display_comparison_summary
+                                            .as_ref()
+                                            .map(|summary| view! {
+                                                <div data-role="inspect-retained-display-comparison">
+                                                    {summary.clone()}
+                                                </div>
+                                            })}
+                                        {context
+                                            .discrepancy_summary
+                                            .as_ref()
+                                            .map(|summary| view! {
+                                                <div data-role="inspect-retained-discrepancy-summary">
+                                                    {summary.clone()}
+                                                </div>
+                                            })}
+                                    </section>
+                                }
+                            })}
+                    </section>
+                </div>
 
-                <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
-                    <div class="onecalc-inspect-shell__panel-header">
-                        <div>
-                            <div class="onecalc-inspect-shell__eyebrow">"Context"</div>
-                            <h2>"Summaries"</h2>
+                <div class="onecalc-inspect-shell__column onecalc-inspect-shell__column--walk">
+                    <section class="onecalc-inspect-shell__walk-cluster" data-panel="inspect-walk">
+                        <div class="onecalc-inspect-shell__panel-header">
+                            <div>
+                                <div class="onecalc-inspect-shell__section-accent"></div>
+                                <div class="onecalc-inspect-shell__eyebrow">"Walk"</div>
+                                <h2>"Formula Walk"</h2>
+                            </div>
                         </div>
-                    </div>
+                        <div class="onecalc-inspect-shell__walk-intro" data-role="inspect-walk-intro">
+                            "This central surface is the semantic reading path. Use it to understand structure and value flow before dropping into retained replay evidence."
+                        </div>
+                        <ul class="onecalc-inspect-shell__walk">
+                            {if walk.formula_walk_nodes.is_empty() {
+                                view! { <li>"No formula walk"</li> }.into_any()
+                            } else {
+                                view! {
+                                    {walk
+                                        .formula_walk_nodes
+                                        .into_iter()
+                                        .map(|node| view! { <InspectWalkNode node=node /> })
+                                        .collect_view()}
+                                }
+                                .into_any()
+                            }}
+                        </ul>
+                    </section>
+                </div>
+
+                <div class="onecalc-inspect-shell__column onecalc-inspect-shell__column--summary">
+                    <section class="onecalc-inspect-shell__summary-cluster" data-panel="inspect-summary">
+                        <div class="onecalc-inspect-shell__panel-header">
+                            <div>
+                                <div class="onecalc-inspect-shell__section-accent"></div>
+                                <div class="onecalc-inspect-shell__eyebrow">"Summary"</div>
+                                <h2>"Semantic and replay context"</h2>
+                            </div>
+                        </div>
                     <section class="onecalc-inspect-shell__context-card" data-role="inspect-context-card">
                         <div data-role="inspect-packet-kind">{summary.packet_kind_summary.clone()}</div>
                         <div data-role="inspect-capability-floor">{summary.capability_floor_summary.clone()}</div>
@@ -236,98 +357,6 @@ pub fn InspectShell(
                             <div data-role="inspect-blocked-reason">{blocked_reason.clone()}</div>
                         })}
                     </section>
-                    {summary
-                        .retained_artifact_context
-                        .as_ref()
-                        .map(|context| {
-                            view! {
-                                <section
-                                    class="onecalc-inspect-shell__retained-context"
-                                    data-role="inspect-retained-context"
-                                    data-artifact-id=context.artifact_id.clone()
-                                    data-comparison-status=context.comparison_status.clone()
-                                >
-                                    <header class="onecalc-inspect-shell__retained-context-header">
-                                        <div>
-                                            <div class="onecalc-inspect-shell__eyebrow">"Retained discrepancy"</div>
-                                            <h3>"Artifact Context"</h3>
-                                        </div>
-                                        <div class="onecalc-inspect-shell__retained-context-badges">
-                                            <span data-role="inspect-retained-comparison-status">{context.comparison_status.clone()}</span>
-                                            <span data-role="inspect-retained-visible-output-match">
-                                                {match context.visible_output_match {
-                                                    Some(true) => "visible output matched".to_string(),
-                                                    Some(false) => "visible output diverged".to_string(),
-                                                    None => "visible output unknown".to_string(),
-                                                }}
-                                            </span>
-                                            <span data-role="inspect-retained-replay-equivalent">
-                                                {match context.replay_equivalent {
-                                                    Some(true) => "replay equivalent".to_string(),
-                                                    Some(false) => "replay diverged".to_string(),
-                                                    None => "replay unknown".to_string(),
-                                                }}
-                                            </span>
-                                        </div>
-                                    </header>
-                                    <div data-role="inspect-retained-artifact-id">
-                                        "Artifact: "
-                                        {context.artifact_id.clone()}
-                                    </div>
-                                    <div data-role="inspect-retained-case-id">
-                                        "Case: "
-                                        {context.case_id.clone()}
-                                    </div>
-                                    {context
-                                        .bundle_report_path
-                                        .as_ref()
-                                        .map(|bundle_path| view! {
-                                            <div data-role="inspect-retained-bundle-path">
-                                                "Bundle: "
-                                                {bundle_path.clone()}
-                                            </div>
-                                        })}
-                                    {context
-                                        .xml_source_summary
-                                        .as_ref()
-                                        .map(|summary| view! {
-                                            <div data-role="inspect-retained-xml-source">
-                                                {summary.clone()}
-                                            </div>
-                                        })}
-                                    {context
-                                        .display_comparison_summary
-                                        .as_ref()
-                                        .map(|summary| view! {
-                                            <div data-role="inspect-retained-display-comparison">
-                                                {summary.clone()}
-                                            </div>
-                                        })}
-                                    {context
-                                        .discrepancy_summary
-                                        .as_ref()
-                                        .map(|summary| view! {
-                                            <div data-role="inspect-retained-discrepancy-summary">
-                                                {summary.clone()}
-                                            </div>
-                                        })}
-                                    {if context.upstream_gap_summary.is_empty() {
-                                        view! { <></> }.into_any()
-                                    } else {
-                                        view! {
-                                            <ul data-role="inspect-retained-upstream-gap-summary">
-                                                {context
-                                                    .upstream_gap_summary
-                                                    .iter()
-                                                    .map(|item| view! { <li>{item.clone()}</li> })
-                                                    .collect_view()}
-                                            </ul>
-                                        }
-                                        .into_any()
-                                    }}
-                                </section>
-                            }
-                        })}
                     {if summary.comparison_records.is_empty() {
                         view! { <></> }.into_any()
                     } else {
@@ -372,13 +401,41 @@ pub fn InspectShell(
                         }
                         .into_any()
                     }}
+                    {summary
+                        .retained_artifact_context
+                        .as_ref()
+                        .map(|context| {
+                            if context.upstream_gap_summary.is_empty() {
+                                view! { <></> }.into_any()
+                            } else {
+                                view! {
+                                    <section class="onecalc-inspect-shell__gap-board" data-role="inspect-gap-board">
+                                        <div class="onecalc-inspect-shell__panel-header">
+                                            <div>
+                                                <div class="onecalc-inspect-shell__eyebrow">"Coverage"</div>
+                                                <h3>"Projection and lane gaps"</h3>
+                                            </div>
+                                        </div>
+                                        <ul data-role="inspect-retained-upstream-gap-summary">
+                                            {context
+                                                .upstream_gap_summary
+                                                .iter()
+                                                .map(|item| view! { <li>{item.clone()}</li> })
+                                                .collect_view()}
+                                        </ul>
+                                    </section>
+                                }
+                                .into_any()
+                            }
+                        })}
                     <div class="onecalc-inspect-shell__summary-grid">
                         <InspectSummaryCard title="Parse" value=parse_status data_panel="inspect-parse" />
                         <InspectSummaryCard title="Bind" value=bind_summary data_panel="inspect-bind" />
                         <InspectSummaryCard title="Eval" value=eval_summary data_panel="inspect-eval" />
                         <InspectSummaryCard title="Provenance" value=provenance_summary data_panel="inspect-provenance" />
                     </div>
-                </section>
+                    </section>
+                </div>
             </div>
         </section>
     }

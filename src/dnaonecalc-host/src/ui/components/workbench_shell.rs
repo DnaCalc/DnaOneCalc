@@ -113,9 +113,11 @@ pub fn WorkbenchShell(
     view! {
         <section class="onecalc-workbench-shell" data-screen="workbench">
             <header class="onecalc-workbench-shell__header">
-                <div>
-                    <div class="onecalc-workbench-shell__eyebrow">"Workbench"</div>
-                    <h1>"Twin Oracle Workbench"</h1>
+                <div class="onecalc-workbench-shell__header-copy">
+                    <div>
+                        <div class="onecalc-workbench-shell__eyebrow">"Workbench"</div>
+                        <h1>"Twin Oracle Workbench"</h1>
+                    </div>
                 </div>
                 <p class="onecalc-workbench-shell__lead">
                     "Browse retained discrepancies, spend replay family evidence directly, and move from imported Excel comparison bundles into semantic dissection without changing tools."
@@ -128,12 +130,31 @@ pub fn WorkbenchShell(
                         {outcome.comparison_status_summary.clone().unwrap_or_else(|| "pending".to_string())}
                     </span>
                 </div>
+                <section class="onecalc-workbench-shell__overview-deck" data-role="workbench-overview-deck">
+                    <article class="onecalc-workbench-shell__overview-card" data-role="workbench-overview-outcome">
+                        <div class="onecalc-workbench-shell__eyebrow">"Comparison outcome"</div>
+                        <strong>{outcome_summary.clone()}</strong>
+                        <p>{outcome.recommended_action.clone()}</p>
+                    </article>
+                    <article class="onecalc-workbench-shell__overview-card" data-role="workbench-overview-reliability">
+                        <div class="onecalc-workbench-shell__eyebrow">"Reliability"</div>
+                        <strong>{comparison_badge_text(outcome.replay_equivalent, "Replay equivalent", "Replay diverged", "Replay unknown")}</strong>
+                        <p>{comparison_badge_text(outcome.visible_output_match, "Visible output matched", "Visible output diverged", "Visible output unknown")}</p>
+                    </article>
+                    <article class="onecalc-workbench-shell__overview-card" data-role="workbench-overview-capability">
+                        <div class="onecalc-workbench-shell__eyebrow">"Capability floor"</div>
+                        <strong>{outcome.capability_floor_summary.clone()}</strong>
+                        <p>"Treat blocked dimensions and coverage gaps separately from semantic mismatch."</p>
+                    </article>
+                </section>
             </header>
 
             <div class="onecalc-workbench-shell__body">
+                <div class="onecalc-workbench-shell__column onecalc-workbench-shell__column--main">
                 <section class="onecalc-workbench-shell__outcome-card" data-panel="workbench-outcome">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Outcome"</div>
                             <h2>"Retained discrepancy state"</h2>
                         </div>
@@ -168,35 +189,41 @@ pub fn WorkbenchShell(
                 <section class="onecalc-workbench-shell__evidence-card" data-panel="workbench-evidence">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Evidence"</div>
                             <h2>"Imported and live context"</h2>
                         </div>
                     </div>
-                    <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
-                    <div>{evidence_summary}</div>
-                    {evidence.imported_bundle_summary.as_ref().map(|summary| view! {
-                        <div data-role="workbench-imported-bundle-summary">{summary.clone()}</div>
-                    })}
-                    {evidence.xml_source_summary.as_ref().map(|summary| view! {
-                        <div data-role="workbench-xml-source-summary">{summary.clone()}</div>
-                    })}
-                    {evidence.display_comparison_summary.as_ref().map(|summary| view! {
-                        <div data-role="workbench-display-comparison-summary">{summary.clone()}</div>
-                    })}
-                    {evidence.trace_summary.as_ref().map(|trace_summary| view! {
-                        <div data-role="workbench-trace-summary">{trace_summary.clone()}</div>
-                    })}
-                    {evidence
-                        .retained_discrepancy_summary
-                        .clone()
-                        .map(|summary| view! {
-                            <div data-role="retained-discrepancy-summary">{summary}</div>
-                        })}
+                    <div class="onecalc-workbench-shell__observation-envelope">
+                        <pre class="onecalc-workbench-shell__evidence-source">{evidence.raw_entered_cell_text}</pre>
+                        <div class="onecalc-workbench-shell__observation-grid">
+                            <div class="onecalc-workbench-shell__observation-card">{evidence_summary}</div>
+                            {evidence.imported_bundle_summary.as_ref().map(|summary| view! {
+                                <div class="onecalc-workbench-shell__observation-card" data-role="workbench-imported-bundle-summary">{summary.clone()}</div>
+                            })}
+                            {evidence.xml_source_summary.as_ref().map(|summary| view! {
+                                <div class="onecalc-workbench-shell__observation-card" data-role="workbench-xml-source-summary">{summary.clone()}</div>
+                            })}
+                            {evidence.display_comparison_summary.as_ref().map(|summary| view! {
+                                <div class="onecalc-workbench-shell__observation-card" data-role="workbench-display-comparison-summary">{summary.clone()}</div>
+                            })}
+                            {evidence.trace_summary.as_ref().map(|trace_summary| view! {
+                                <div class="onecalc-workbench-shell__observation-card" data-role="workbench-trace-summary">{trace_summary.clone()}</div>
+                            })}
+                            {evidence
+                                .retained_discrepancy_summary
+                                .clone()
+                                .map(|summary| view! {
+                                    <div class="onecalc-workbench-shell__observation-card" data-role="retained-discrepancy-summary">{summary}</div>
+                                })}
+                        </div>
+                    </div>
                 </section>
 
                 <section class="onecalc-workbench-shell__compare-card" data-panel="workbench-compare">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Replay diff"</div>
                             <h2>"Comparison families"</h2>
                         </div>
@@ -210,6 +237,32 @@ pub fn WorkbenchShell(
                                     .comparison_records
                                     .into_iter()
                                     .map(|record| view! { <WorkbenchComparisonRecordCard record=record /> })
+                                    .collect_view()}
+                            }
+                            .into_any()
+                        }}
+                    </div>
+                </section>
+                </div>
+
+                <div class="onecalc-workbench-shell__column onecalc-workbench-shell__column--support">
+                <section class="onecalc-workbench-shell__replay-card" data-panel="workbench-replay">
+                    <div class="onecalc-workbench-shell__panel-header">
+                        <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
+                            <div class="onecalc-workbench-shell__eyebrow">"Replay explain"</div>
+                            <h2>"Explain evidence"</h2>
+                        </div>
+                    </div>
+                    <div class="onecalc-workbench-shell__comparison-grid" data-role="workbench-explain-grid">
+                        {if evidence.explain_records.is_empty() {
+                            view! { <div>"No explain records yet"</div> }.into_any()
+                        } else {
+                            view! {
+                                {evidence
+                                    .explain_records
+                                    .into_iter()
+                                    .map(|record| view! { <WorkbenchExplainRecordCard record=record /> })
                                     .collect_view()}
                             }
                             .into_any()
@@ -231,48 +284,35 @@ pub fn WorkbenchShell(
                     }}
                 </section>
 
-                <section class="onecalc-workbench-shell__replay-card" data-panel="workbench-replay">
-                    <div class="onecalc-workbench-shell__panel-header">
-                        <div>
-                            <div class="onecalc-workbench-shell__eyebrow">"Replay explain"</div>
-                            <h2>"Explain evidence"</h2>
-                        </div>
-                    </div>
-                    <div class="onecalc-workbench-shell__comparison-grid" data-role="workbench-explain-grid">
-                        {if evidence.explain_records.is_empty() {
-                            view! { <div>"No explain records yet"</div> }.into_any()
-                        } else {
-                            view! {
-                                {evidence
-                                    .explain_records
-                                    .into_iter()
-                                    .map(|record| view! { <WorkbenchExplainRecordCard record=record /> })
-                                    .collect_view()}
-                            }
-                            .into_any()
-                        }}
-                    </div>
-                </section>
-
                 <section class="onecalc-workbench-shell__lineage-card" data-panel="workbench-lineage">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Lineage"</div>
                             <h2>"Acquisition path"</h2>
                         </div>
                     </div>
-                    <ul>
+                    <ul class="onecalc-workbench-shell__timeline">
                         {lineage
                             .lineage_items
                             .into_iter()
-                            .map(|item| view! { <li>{item}</li> })
+                            .enumerate()
+                            .map(|(index, item)| view! {
+                                <li class="onecalc-workbench-shell__timeline-item" data-step-index=index>
+                                    <span class="onecalc-workbench-shell__timeline-dot"></span>
+                                    <div class="onecalc-workbench-shell__timeline-card">{item}</div>
+                                </li>
+                            })
                             .collect_view()}
                     </ul>
                 </section>
+                </div>
 
+                <div class="onecalc-workbench-shell__column onecalc-workbench-shell__column--actions">
                 <section class="onecalc-workbench-shell__actions-card" data-panel="workbench-actions">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Actions"</div>
                             <h2>"Next moves"</h2>
                         </div>
@@ -281,11 +321,11 @@ pub fn WorkbenchShell(
                         <div class="onecalc-workbench-shell__comparison-label">"Primary move"</div>
                         <strong>{actions.recommended_action.clone()}</strong>
                     </div>
-                    <ul>
+                    <ul class="onecalc-workbench-shell__action-list">
                         {actions
                             .action_items
                             .into_iter()
-                            .map(|item| view! { <li>{item}</li> })
+                            .map(|item| view! { <li class="onecalc-workbench-shell__action-item">{item}</li> })
                             .collect_view()}
                     </ul>
                 </section>
@@ -293,6 +333,7 @@ pub fn WorkbenchShell(
                 <section class="onecalc-workbench-shell__catalog-card" data-panel="workbench-catalog">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Catalog"</div>
                             <h2>"Retained cases"</h2>
                         </div>
@@ -361,6 +402,7 @@ pub fn WorkbenchShell(
                 <section class="onecalc-workbench-shell__import-surface" data-role="retained-import-surface">
                     <div class="onecalc-workbench-shell__panel-header">
                         <div>
+                            <div class="onecalc-workbench-shell__section-accent"></div>
                             <div class="onecalc-workbench-shell__eyebrow">"Import"</div>
                             <h2>"Retained discrepancy form"</h2>
                         </div>
@@ -522,6 +564,7 @@ pub fn WorkbenchShell(
                         </button>
                     </div>
                 </section>
+                </div>
             </div>
         </section>
     }

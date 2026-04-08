@@ -44,7 +44,8 @@ fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     assert!(html.contains("data-anchor-line=\"0\""));
     assert!(html.contains("data-call-line=\"0\""));
     assert!(html.contains("data-role=\"explore-panel-intro\""));
-    assert!(html.contains("data-role=\"explore-status-strip\""));
+    assert!(html.contains("data-role=\"explore-editor-summary\""));
+    assert!(html.contains("data-role=\"explore-editor-note\""));
     assert!(html.contains("data-role=\"explore-diagnostics-summary\""));
     assert!(html.contains("data-role=\"explore-hero-result\""));
     assert!(html.contains("data-role=\"explore-result-state-chip\""));

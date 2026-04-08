@@ -33,12 +33,23 @@ pub struct ShellFormulaSpaceListItemViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellFrameViewModel {
     pub active_formula_space_label: String,
+    pub active_mode_label: &'static str,
     pub active_truth_source_label: String,
     pub active_host_profile_summary: String,
     pub active_packet_kind_summary: String,
     pub active_capability_floor_summary: String,
+    pub context_facts: Vec<ShellChromeFactViewModel>,
+    pub footer_facts: Vec<ShellChromeFactViewModel>,
+    pub workspace_summary: String,
     pub mode_tabs: Vec<ShellModeTabViewModel>,
     pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellChromeFactViewModel {
+    pub label: &'static str,
+    pub value: String,
+    pub tone: &'static str,
 }
 
 pub fn active_formula_space(state: &OneCalcHostState) -> Option<&FormulaSpaceState> {
@@ -76,6 +87,12 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
 pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFrameViewModel> {
     let active_formula_space = active_formula_space(state)?;
     let active_formula_space_id = &active_formula_space.formula_space_id;
+    let active_mode = state.active_formula_space_view.active_mode;
+    let active_mode_label = match active_mode {
+        AppMode::Explore => "Explore",
+        AppMode::Inspect => "Inspect",
+        AppMode::Workbench => "Workbench",
+    };
 
     let mode_tabs = [AppMode::Explore, AppMode::Inspect, AppMode::Workbench]
         .into_iter()
@@ -112,8 +129,68 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         })
         .collect();
 
+    let workspace_summary = format!(
+        "{} open · {} pinned",
+        state.workspace_shell.open_formula_space_order.len(),
+        state.workspace_shell.pinned_formula_space_ids.len()
+    );
+
+    let context_facts = vec![
+        ShellChromeFactViewModel {
+            label: "Truth",
+            value: active_formula_space
+                .context
+                .truth_source
+                .label()
+                .to_string(),
+            tone: "accent",
+        },
+        ShellChromeFactViewModel {
+            label: "Host",
+            value: active_formula_space.context.host_profile.clone(),
+            tone: "default",
+        },
+        ShellChromeFactViewModel {
+            label: "Packet",
+            value: active_formula_space.context.packet_kind.clone(),
+            tone: "default",
+        },
+    ];
+
+    let mut footer_facts = vec![
+        ShellChromeFactViewModel {
+            label: "Capability",
+            value: active_formula_space.context.capability_floor.clone(),
+            tone: "default",
+        },
+        ShellChromeFactViewModel {
+            label: "Modes",
+            value: active_formula_space.context.mode_availability.clone(),
+            tone: "default",
+        },
+        ShellChromeFactViewModel {
+            label: "Workspace",
+            value: workspace_summary.clone(),
+            tone: "muted",
+        },
+    ];
+    if let Some(blocked_reason) = active_formula_space.context.blocked_reason.as_ref() {
+        footer_facts.push(ShellChromeFactViewModel {
+            label: "Blocked",
+            value: blocked_reason.clone(),
+            tone: "warning",
+        });
+    } else if let Some(trace_summary) = active_formula_space.context.trace_summary.as_ref() {
+        footer_facts.push(ShellChromeFactViewModel {
+            label: "Trace",
+            value: trace_summary.clone(),
+            tone: "muted",
+        });
+    }
+
     Some(ShellFrameViewModel {
         active_formula_space_label: active_formula_space.context.scenario_label.clone(),
+        active_mode_label,
         active_truth_source_label: active_formula_space
             .context
             .truth_source
@@ -122,6 +199,9 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         active_host_profile_summary: active_formula_space.context.host_profile.clone(),
         active_packet_kind_summary: active_formula_space.context.packet_kind.clone(),
         active_capability_floor_summary: active_formula_space.context.capability_floor.clone(),
+        context_facts,
+        footer_facts,
+        workspace_summary,
         mode_tabs,
         formula_spaces,
     })
@@ -237,11 +317,18 @@ mod tests {
 
         let frame = build_shell_frame_view_model(&state).expect("frame should exist");
         assert_eq!(frame.active_formula_space_label, "space-1");
+        assert_eq!(frame.active_mode_label, "Inspect");
         assert_eq!(frame.active_truth_source_label, "local-fallback");
+        assert_eq!(frame.workspace_summary, "1 open · 0 pinned");
         assert_eq!(frame.formula_spaces.len(), 1);
         assert!(frame.formula_spaces[0].is_active);
         assert!(!frame.formula_spaces[0].is_pinned);
         assert_eq!(frame.formula_spaces[0].truth_source_label, "local-fallback");
+        assert_eq!(frame.context_facts.len(), 3);
+        assert!(frame
+            .footer_facts
+            .iter()
+            .any(|fact| fact.label == "Capability" && fact.value == "pending"));
         assert!(frame
             .mode_tabs
             .iter()

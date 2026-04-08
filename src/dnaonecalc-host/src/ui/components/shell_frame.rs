@@ -25,14 +25,16 @@ pub fn ShellFrame(
                     <strong>{frame.active_formula_space_label.clone()}</strong>
                     <div class="onecalc-shell-frame__active-meta">
                         <span data-role="active-space-truth-source">{frame.active_truth_source_label.clone()}</span>
-                        <span data-role="active-space-host-profile">{frame.active_host_profile_summary.clone()}</span>
-                        <span data-role="active-space-packet-kind">{frame.active_packet_kind_summary.clone()}</span>
+                        <span data-role="active-space-mode">{frame.active_mode_label}</span>
                     </div>
                     <div
                         class="onecalc-shell-frame__active-capability"
                         data-role="active-space-capability-floor"
                     >
                         {frame.active_capability_floor_summary.clone()}
+                    </div>
+                    <div class="onecalc-shell-frame__workspace-summary" data-role="workspace-summary">
+                        {frame.workspace_summary.clone()}
                     </div>
                 </section>
                 <ul class="onecalc-shell-frame__space-list">
@@ -90,6 +92,28 @@ pub fn ShellFrame(
                         <div class="onecalc-shell-frame__context-title">
                             {frame.active_formula_space_label.clone()}
                         </div>
+                        <div class="onecalc-shell-frame__context-subtitle">
+                            {frame.active_mode_label}
+                            " surface"
+                        </div>
+                    </div>
+                    <div class="onecalc-shell-frame__context-facts" data-role="shell-context-facts">
+                        {frame
+                            .context_facts
+                            .iter()
+                            .map(|fact| {
+                                view! {
+                                    <div
+                                        class="onecalc-shell-frame__context-fact"
+                                        data-tone=fact.tone
+                                        data-label=fact.label
+                                    >
+                                        <span class="onecalc-shell-frame__context-fact-label">{fact.label}</span>
+                                        <strong class="onecalc-shell-frame__context-fact-value">{fact.value.clone()}</strong>
+                                    </div>
+                                }
+                            })
+                            .collect_view()}
                     </div>
                     <nav class="onecalc-shell-frame__mode-switch">
                         {frame
@@ -126,6 +150,25 @@ pub fn ShellFrame(
                 <section class="onecalc-shell-frame__mode-body">
                     {children()}
                 </section>
+
+                <footer class="onecalc-shell-frame__footer" data-role="shell-footer">
+                    {frame
+                        .footer_facts
+                        .iter()
+                        .map(|fact| {
+                            view! {
+                                <div
+                                    class="onecalc-shell-frame__footer-fact"
+                                    data-tone=fact.tone
+                                    data-label=fact.label
+                                >
+                                    <span class="onecalc-shell-frame__footer-fact-label">{fact.label}</span>
+                                    <strong class="onecalc-shell-frame__footer-fact-value">{fact.value.clone()}</strong>
+                                </div>
+                            }
+                        })
+                        .collect_view()}
+                </footer>
             </main>
         </div>
     }
@@ -144,10 +187,31 @@ mod tests {
             <ShellFrame
                 frame=ShellFrameViewModel {
                     active_formula_space_label: "space-1".to_string(),
+                    active_mode_label: "Explore",
                     active_truth_source_label: "live-backed".to_string(),
                     active_host_profile_summary: "Windows Excel default".to_string(),
                     active_packet_kind_summary: "verification publication".to_string(),
                     active_capability_floor_summary: "Explore + Inspect + Workbench".to_string(),
+                    context_facts: vec![
+                        crate::services::shell_composition::ShellChromeFactViewModel {
+                            label: "Truth",
+                            value: "live-backed".to_string(),
+                            tone: "accent",
+                        },
+                        crate::services::shell_composition::ShellChromeFactViewModel {
+                            label: "Host",
+                            value: "Windows Excel default".to_string(),
+                            tone: "default",
+                        },
+                    ],
+                    footer_facts: vec![
+                        crate::services::shell_composition::ShellChromeFactViewModel {
+                            label: "Capability",
+                            value: "Explore + Inspect + Workbench".to_string(),
+                            tone: "default",
+                        },
+                    ],
+                    workspace_summary: "1 open · 1 pinned".to_string(),
                     mode_tabs: vec![
                         ShellModeTabViewModel {
                             mode: AppMode::Explore,
@@ -180,12 +244,15 @@ mod tests {
         assert!(html.contains("DNA OneCalc"));
         assert!(html.contains("data-role=\"active-space-context\""));
         assert!(html.contains("data-role=\"active-space-truth-source\""));
+        assert!(html.contains("data-role=\"shell-context-facts\""));
+        assert!(html.contains("data-role=\"shell-footer\""));
         assert!(html.contains("space-1"));
         assert!(html.contains("data-mode=\"Explore\""));
         assert!(html.contains("data-role=\"formula-space-select\""));
         assert!(html.contains("data-state=\"active\""));
         assert!(html.contains("Pinned"));
         assert!(html.contains("verification publication"));
+        assert!(html.contains("1 open · 1 pinned"));
         assert!(html.contains("Body"));
     }
 }

@@ -62,6 +62,33 @@ async fn wait_for_host_html(
         .inner_html()
 }
 
+async fn wait_for_textarea_value(
+    document: &web_sys::Document,
+    expected_value: &str,
+) -> web_sys::HtmlTextAreaElement {
+    for _ in 0..10 {
+        next_microtask().await;
+        if let Some(element) = document
+            .query_selector("[data-role='editor-input']")
+            .expect("query ok")
+        {
+            let textarea = element
+                .dyn_into::<web_sys::HtmlTextAreaElement>()
+                .expect("textarea");
+            if textarea.value() == expected_value {
+                return textarea;
+            }
+        }
+    }
+
+    document
+        .query_selector("[data-role='editor-input']")
+        .expect("query ok")
+        .expect("editor input")
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .expect("textarea")
+}
+
 fn prepare_host_root(document: &web_sys::Document) -> web_sys::Element {
     if let Some(existing) = document.get_element_by_id("onecalc-mounted-test-root") {
         existing.remove();
@@ -582,13 +609,13 @@ async fn backspace_keydown_updates_editor_state_and_clears_stale_analysis() {
     });
 
     let initial_html = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 9")
+        html.contains("data-role=\"editor-toolbar-state\"")
             && html.contains(">3</strong>")
             && html.contains("Function target")
     })
     .await;
     assert!(
-        initial_html.contains("Chars: 9"),
+        initial_html.contains("data-role=\"editor-toolbar-state\""),
         "initial mounted html: {initial_html}"
     );
 
@@ -609,12 +636,14 @@ async fn backspace_keydown_updates_editor_state_and_clears_stale_analysis() {
         .expect("dispatch keydown");
 
     let html = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 8") && html.contains("expected ')'") && html.contains("Number · 3")
+        html.contains("expected ')'")
+            && html.contains("Input incomplete")
+            && html.contains("data-selection-start=\"8\"")
     })
     .await;
 
     assert!(
-        html.contains("Chars: 8"),
+        html.contains("data-selection-start=\"8\""),
         "mounted html after keydown: {html}"
     );
     assert!(
@@ -622,7 +651,7 @@ async fn backspace_keydown_updates_editor_state_and_clears_stale_analysis() {
         "mounted html after keydown: {html}"
     );
     assert!(
-        html.contains("Number · 3"),
+        html.contains("Input incomplete"),
         "mounted html after keydown: {html}"
     );
     assert!(
@@ -660,7 +689,8 @@ async fn tab_and_shift_tab_stay_in_editor_focus_and_prevent_browser_focus_escape
     });
 
     let _ = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 9") && html.contains("data-role=\"editor-input\"")
+        html.contains("data-role=\"editor-input\"")
+            && html.contains("data-role=\"editor-toolbar-state\"")
     })
     .await;
 
@@ -681,12 +711,14 @@ async fn tab_and_shift_tab_stay_in_editor_focus_and_prevent_browser_focus_escape
     let tab_dispatch_result = textarea.dispatch_event(&tab_event).expect("dispatch tab");
     assert!(!tab_dispatch_result, "tab should be prevented");
 
+    let textarea_after_tab = wait_for_textarea_value(&document, "    =SUM(1,2)").await;
     let html_after_tab = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 13") && html.contains("Effective display")
+        html.contains("data-role=\"explore-effective-display\"")
+            && html.contains("data-role=\"editor-diagnostic-band\"")
     })
     .await;
     assert!(
-        html_after_tab.contains("Chars: 13"),
+        textarea_after_tab.value() == "    =SUM(1,2)",
         "mounted html after tab: {html_after_tab}"
     );
     assert_eq!(
@@ -712,12 +744,14 @@ async fn tab_and_shift_tab_stay_in_editor_focus_and_prevent_browser_focus_escape
         .expect("dispatch shift+tab");
     assert!(!shift_tab_dispatch_result, "shift+tab should be prevented");
 
+    let textarea_after_shift_tab = wait_for_textarea_value(&document, "=SUM(1,2)").await;
     let html_after_shift_tab = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 9") && html.contains("Effective display")
+        html.contains("data-role=\"explore-effective-display\"")
+            && html.contains("data-role=\"editor-diagnostic-band\"")
     })
     .await;
     assert!(
-        html_after_shift_tab.contains("Chars: 9"),
+        textarea_after_shift_tab.value() == "=SUM(1,2)",
         "mounted html after shift+tab: {html_after_shift_tab}"
     );
     assert_eq!(
@@ -762,7 +796,8 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
     });
 
     let _ = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 9") && html.contains("data-role=\"editor-input\"")
+        html.contains("data-role=\"editor-input\"")
+            && html.contains("data-role=\"editor-toolbar-state\"")
     })
     .await;
 
@@ -789,14 +824,14 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
         .expect("dispatch ctrl+x");
     assert!(!cut_dispatch_result, "ctrl+x should be prevented");
 
+    let textarea_after_cut = wait_for_textarea_value(&document, "=(1,2)").await;
     let html = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 6")
-            && html.contains("Evaluation summary: Unavailable")
-            && html.contains("data-role=\"editor-input\"")
+        html.contains("data-role=\"editor-input\"")
+            && html.contains("data-role=\"explore-evaluation-summary\"")
     })
     .await;
     assert!(
-        html.contains("Chars: 6"),
+        textarea_after_cut.value() == "=(1,2)",
         "mounted html after ctrl+x: {html}"
     );
     assert_eq!(
@@ -892,14 +927,14 @@ async fn completion_popup_selection_and_acceptance_work_in_browser_mount() {
         .dispatch_event(&click_event)
         .expect("dispatch click");
 
+    let accepted_textarea = wait_for_textarea_value(&document, "=AVERAGE(").await;
     let accepted_html = wait_for_host_html(&document, |html| {
-        html.contains("Chars: 9")
-            && !html.contains("data-role=\"completion-popup\"")
+        !html.contains("data-role=\"completion-popup\"")
             && html.contains("data-role=\"editor-input\"")
     })
     .await;
     assert!(
-        accepted_html.contains("Chars: 9"),
+        accepted_textarea.value() == "=AVERAGE(",
         "mounted html after acceptance: {accepted_html}"
     );
     let updated_textarea = document
