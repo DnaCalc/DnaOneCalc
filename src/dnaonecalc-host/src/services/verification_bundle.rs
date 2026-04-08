@@ -1010,12 +1010,17 @@ fn build_oxxlplay_scenario_json(
     let locator = spreadsheet_xml_extraction
         .map(|extraction| extraction.locator.clone())
         .unwrap_or_else(|| "Sheet1!A1".to_string());
-    json!({
+    let workbook_kind = if spreadsheet_xml_extraction.is_some() {
+        "spreadsheetml-2003-import"
+    } else {
+        "programmatic-formula"
+    };
+    let mut scenario = json!({
         "scenario_id": scenario_id,
         "replay_class": "capture_surface_basic",
         "retained_root": display_repo_relative(case_dir, repo_root),
         "workbook_ref": "./workbook.xml",
-        "workbook_kind": if spreadsheet_xml_extraction.is_some() { "spreadsheetml-2003-import" } else { "spreadsheetml-2003-generated" },
+        "workbook_kind": workbook_kind,
         "trigger": "open_then_recalc",
         "observable_surfaces": [
             {
@@ -1034,7 +1039,11 @@ fn build_oxxlplay_scenario_json(
         "requested_observation_scope": spreadsheet_xml_extraction.map(|extraction| &extraction.observation_scope),
         "source_cell_locator": spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
         "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone())
-    })
+    });
+    if spreadsheet_xml_extraction.is_none() {
+        scenario["entered_cell_text"] = Value::String(case.entered_cell_text.clone());
+    }
+    scenario
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -2119,6 +2128,52 @@ mod tests {
     }
 
     #[test]
+    fn verification_batch_emits_programmatic_formula_scenario_for_formula_cases() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-formula".to_string(),
+                entered_cell_text: "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))".to_string(),
+                spreadsheet_xml_source: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            diff_equivalent: false,
+            diff_exit_code: 1,
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+
+        assert_eq!(report.case_reports.len(), 1);
+        let case_dir = output_root.join("cases").join("case-formula");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
+
+        assert_eq!(scenario["workbook_kind"], "programmatic-formula");
+        assert_eq!(
+            scenario["entered_cell_text"],
+            "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))"
+        );
+        assert_eq!(scenario["workbook_ref"], "./workbook.xml");
+        assert!(case_dir.join("workbook.xml").is_file());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn verification_batch_marks_capture_failure_as_blocked() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
@@ -2241,6 +2296,13 @@ mod tests {
             .join("case-xml")
             .join("upstream-gap-report.json")
             .is_file());
+        let case_dir = output_root.join("cases").join("case-xml");
+        let scenario: Value =
+            serde_json::from_str(&fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"))
+                .expect("scenario parse");
+        assert_eq!(scenario["workbook_kind"], "spreadsheetml-2003-import");
+        assert!(scenario.get("entered_cell_text").is_none());
+        assert!(case_dir.join("workbook.xml").is_file());
 
         let _ = fs::remove_dir_all(temp_root);
     }
