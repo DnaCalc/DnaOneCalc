@@ -6,6 +6,7 @@ use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
 use crate::state::{
     CompletionHelpState, FormulaArrayPreviewState, FormulaSpaceCollectionState, FormulaSpaceState,
+    ProjectionTruthSource,
 };
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -56,6 +57,7 @@ fn update_formula_space_from_editor_document(
     formula_space: &mut FormulaSpaceState,
     document: EditorDocument,
 ) {
+    let truth_source = infer_truth_source(&document);
     let mut editor_surface_state = EditorSurfaceState::for_text_with_selection(
         &document.source_text,
         formula_space.editor_surface_state.selection.anchor,
@@ -82,9 +84,27 @@ fn update_formula_space_from_editor_document(
     formula_space.latest_evaluation_summary = derived_presentation.evaluation_summary;
     formula_space.effective_display_summary = derived_presentation.effective_display_summary;
     formula_space.array_preview = derived_presentation.array_preview;
+    formula_space.context.truth_source = truth_source;
     if let Some(blocked_reason) = derived_presentation.blocked_reason {
         formula_space.context.blocked_reason = Some(blocked_reason);
     }
+}
+
+fn infer_truth_source(document: &EditorDocument) -> ProjectionTruthSource {
+    if let Some(provenance_summary) = document.provenance_summary.as_ref() {
+        if provenance_summary.profile_summary.contains("PreviewBridge") {
+            return ProjectionTruthSource::PreviewBacked;
+        }
+        if provenance_summary.profile_summary.contains("OxFml") {
+            return ProjectionTruthSource::LiveBacked;
+        }
+    }
+
+    if document.value_presentation.is_some() {
+        return ProjectionTruthSource::LiveBacked;
+    }
+
+    ProjectionTruthSource::LocalFallback
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,7 +303,7 @@ mod tests {
     use crate::adapters::oxfml::{
         CompletionProposal, CompletionProposalKind, EditorAnalysisStage, EditorSyntaxSnapshot,
         FormulaEditResult, FormulaEditReuseSummary, FormulaTextSpan, LiveDiagnosticSnapshot,
-        SignatureHelpContext,
+        ProvenanceSummary, SignatureHelpContext,
     };
 
     fn sample_document(source_text: &str) -> EditorDocument {
@@ -359,6 +379,10 @@ mod tests {
             Some("Text · 123.4")
         );
         assert_eq!(updated.effective_display_summary.as_deref(), Some("123.4"));
+        assert_eq!(
+            updated.context.truth_source,
+            ProjectionTruthSource::LocalFallback
+        );
         assert_eq!(
             updated
                 .editor_document
@@ -472,5 +496,59 @@ mod tests {
 
         let updated = formula_spaces.get(&formula_space_id).expect("space exists");
         assert_eq!(updated.raw_entered_cell_text, "=SUM(1,2,3)");
+        assert_eq!(
+            updated.context.truth_source,
+            ProjectionTruthSource::LocalFallback
+        );
+    }
+
+    #[test]
+    fn apply_editor_document_marks_live_oxfml_documents_as_live_backed() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut formula_spaces = FormulaSpaceCollectionState::default();
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
+        let mut document = sample_document("=SUM(1,2,3)");
+        document.provenance_summary = Some(ProvenanceSummary {
+            profile_summary: "OxFml runtime · Number".to_string(),
+            blocked_reason: None,
+        });
+
+        EditorSessionService::apply_editor_document(
+            &mut formula_spaces,
+            &formula_space_id,
+            document,
+        )
+        .expect("known formula space should update");
+
+        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(
+            updated.context.truth_source,
+            ProjectionTruthSource::LiveBacked
+        );
+    }
+
+    #[test]
+    fn apply_editor_document_marks_preview_bridge_documents_as_preview_backed() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut formula_spaces = FormulaSpaceCollectionState::default();
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
+        let mut document = sample_document("=SUM(1,2,3)");
+        document.provenance_summary = Some(ProvenanceSummary {
+            profile_summary: "PreviewBridge".to_string(),
+            blocked_reason: None,
+        });
+
+        EditorSessionService::apply_editor_document(
+            &mut formula_spaces,
+            &formula_space_id,
+            document,
+        )
+        .expect("known formula space should update");
+
+        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(
+            updated.context.truth_source,
+            ProjectionTruthSource::PreviewBacked
+        );
     }
 }

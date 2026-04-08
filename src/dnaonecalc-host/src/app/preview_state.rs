@@ -89,12 +89,12 @@ fn success_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceState 
     formula_space.latest_evaluation_summary = Some("Number · 3".to_string());
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Success · SUM result".to_string(),
-        host_profile: "Windows desktop preview".to_string(),
-        packet_kind: "preview edit packet".to_string(),
+        host_profile: "Preview host shell".to_string(),
+        packet_kind: "seeded demo state".to_string(),
         capability_floor: "Explore + Inspect".to_string(),
         mode_availability: "Explore / Inspect / Workbench".to_string(),
-        truth_source: ProjectionTruthSource::PreviewBacked,
-        trace_summary: Some("Preview packet reused green=false, bind complete".to_string()),
+        truth_source: ProjectionTruthSource::LocalFallback,
+        trace_summary: Some("Seeded scenario until a live OxFml edit refresh arrives".to_string()),
         blocked_reason: None,
     };
     formula_space
@@ -108,12 +108,12 @@ fn diagnostic_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceSta
         Some("Diagnostic · Missing trailing argument".to_string());
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Diagnostic · Missing argument".to_string(),
-        host_profile: "Windows desktop preview".to_string(),
-        packet_kind: "preview diagnostic packet".to_string(),
+        host_profile: "Preview host shell".to_string(),
+        packet_kind: "seeded demo state".to_string(),
         capability_floor: "Explore + Inspect".to_string(),
         mode_availability: "Explore / Inspect / Workbench".to_string(),
-        truth_source: ProjectionTruthSource::PreviewBacked,
-        trace_summary: Some("Preview parser recovered and emitted one diagnostic".to_string()),
+        truth_source: ProjectionTruthSource::LocalFallback,
+        trace_summary: Some("Seeded scenario until a live OxFml edit refresh arrives".to_string()),
         blocked_reason: None,
     };
     formula_space
@@ -134,12 +134,12 @@ fn array_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceState {
     });
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Array · Dynamic spill".to_string(),
-        host_profile: "Windows desktop preview".to_string(),
-        packet_kind: "preview dynamic-array packet".to_string(),
+        host_profile: "Preview host shell".to_string(),
+        packet_kind: "seeded demo state".to_string(),
         capability_floor: "Explore + Inspect + retained replay".to_string(),
         mode_availability: "Explore / Inspect / Workbench".to_string(),
-        truth_source: ProjectionTruthSource::PreviewBacked,
-        trace_summary: Some("Preview evaluator materialized a bounded 2x2 array".to_string()),
+        truth_source: ProjectionTruthSource::LocalFallback,
+        trace_summary: Some("Seeded scenario until a live OxFml edit refresh arrives".to_string()),
         blocked_reason: None,
     };
     formula_space
@@ -154,12 +154,14 @@ fn blocked_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceState 
         Some("Blocked · comparison lane unavailable".to_string());
     formula_space.context = FormulaSpaceContextState {
         scenario_label: "Blocked · Host limitation".to_string(),
-        host_profile: "Browser preview".to_string(),
-        packet_kind: "preview blocked packet".to_string(),
+        host_profile: "Preview host shell".to_string(),
+        packet_kind: "seeded demo state".to_string(),
         capability_floor: "Inspect with blocked reason".to_string(),
         mode_availability: "Explore / Inspect / Workbench".to_string(),
-        truth_source: ProjectionTruthSource::PreviewBacked,
-        trace_summary: Some("Comparison lane unavailable in preview host".to_string()),
+        truth_source: ProjectionTruthSource::LocalFallback,
+        trace_summary: Some(
+            "Seeded blocked scenario until a live OxFml edit refresh arrives".to_string(),
+        ),
         blocked_reason: Some("Excel comparison lane unavailable on this host".to_string()),
     };
     formula_space
@@ -190,5 +192,14 @@ mod tests {
             .array_preview
             .is_some());
         assert_eq!(state.retained_artifacts.catalog.len(), 3);
+        assert_eq!(
+            state
+                .formula_spaces
+                .get(&FormulaSpaceId::new("preview-success"))
+                .expect("success space")
+                .context
+                .truth_source,
+            ProjectionTruthSource::LocalFallback
+        );
     }
 }
