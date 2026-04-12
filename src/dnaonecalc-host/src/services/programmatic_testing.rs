@@ -205,6 +205,8 @@ pub fn build_programmatic_batch_plan(
     match comparison_lane {
         ProgrammaticComparisonLane::OxfmlOnly => {}
         ProgrammaticComparisonLane::OxfmlAndExcel => {
+            retained_artifact_kinds.push("oxxlplay_batch_manifest".to_string());
+            retained_artifact_kinds.push("oxxlplay_batch_output_index".to_string());
             retained_artifact_kinds.push("comparison_outcome".to_string());
             retained_artifact_kinds.push("discrepancy_index".to_string());
         }

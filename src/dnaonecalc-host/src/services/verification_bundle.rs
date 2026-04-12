@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,7 +50,21 @@ pub struct VerificationBatchRequest {
     pub host_profile: ProgrammaticHostProfile,
     #[serde(default = "default_windows_excel_capability_profile")]
     pub capabilities: ProgrammaticCapabilityProfile,
+    #[serde(default = "default_verification_replay_policy")]
+    pub replay_policy: VerificationReplayPolicy,
     pub cases: Vec<ProgrammaticFormulaCase>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VerificationReplayPolicy {
+    Never,
+    MismatchOnly,
+    Always,
+}
+
+fn default_verification_replay_policy() -> VerificationReplayPolicy {
+    VerificationReplayPolicy::MismatchOnly
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,12 +155,84 @@ pub struct VerificationBundleReport {
     pub case_reports: Vec<VerificationCaseReport>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OxxlplayBatchManifest {
+    pub batch_id: String,
+    pub output_root: String,
+    pub shared_worker_options: OxxlplaySharedWorkerOptions,
+    pub cases: Vec<OxxlplayBatchCaseManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OxxlplaySharedWorkerOptions {
+    pub emit_bundle: bool,
+    pub continue_after_case_failure: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cases_per_worker: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OxxlplayBatchCaseManifest {
+    pub case_id: String,
+    pub scenario_id: String,
+    pub workbook_ref: String,
+    pub workbook_kind: String,
+    pub trigger: String,
+    pub case_output_dir: String,
+    pub observable_surfaces: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entered_cell_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_observation_scope: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_cell_locator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_workbook_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OxxlplayBatchOutputIndex {
+    #[serde(default)]
+    pub cases: Vec<OxxlplayBatchCaseOutputIndex>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OxxlplayBatchCaseOutputIndex {
+    pub case_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oxreplay_manifest_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_replay_path: Option<String>,
+}
+
+#[cfg(feature = "oxfml-live")]
+struct PreparedVerificationCase {
+    case_dir: PathBuf,
+    command_dir: PathBuf,
+    oxxlplay_dir: PathBuf,
+    oxreplay_dir: PathBuf,
+    scenario_path: PathBuf,
+    projection_path: PathBuf,
+    effective_case: ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<SpreadsheetXmlCellExtraction>,
+    upstream_gap_report: Option<VerificationObservationGapReport>,
+    oxfml_result: OxfmlCaseArtifacts,
+    batch_case_manifest: OxxlplayBatchCaseManifest,
+}
+
 #[cfg(feature = "oxfml-live")]
 pub trait VerificationCommandRunner {
-    fn run_oxxlplay_capture(
+    fn run_oxxlplay_capture_batch(
         &self,
-        scenario_path: &Path,
-        output_dir: &Path,
+        manifest_path: &Path,
     ) -> Result<VerificationCommandCapture, String>;
 
     fn run_oxreplay_validate_bundle(
@@ -176,15 +263,13 @@ pub struct ProcessVerificationCommandRunner;
 
 #[cfg(feature = "oxfml-live")]
 impl VerificationCommandRunner for ProcessVerificationCommandRunner {
-    fn run_oxxlplay_capture(
+    fn run_oxxlplay_capture_batch(
         &self,
-        scenario_path: &Path,
-        output_dir: &Path,
+        manifest_path: &Path,
     ) -> Result<VerificationCommandCapture, String> {
-        let scenario_path = absolute_path(scenario_path)?;
-        let output_dir = absolute_path(output_dir)?;
+        let manifest_path = absolute_path(manifest_path)?;
         run_command_capture(
-            "oxxlplay-capture",
+            "oxxlplay-capture-batch",
             "cargo",
             &[
                 OsString::from("run"),
@@ -193,11 +278,9 @@ impl VerificationCommandRunner for ProcessVerificationCommandRunner {
                 OsString::from("-p"),
                 OsString::from("oxxlplay-cli"),
                 OsString::from("--"),
-                OsString::from("capture-run"),
-                OsString::from("--scenario"),
-                scenario_path.into_os_string(),
-                OsString::from("--output-dir"),
-                output_dir.into_os_string(),
+                OsString::from("capture-run-batch"),
+                OsString::from("--manifest"),
+                manifest_path.into_os_string(),
             ],
         )
     }
@@ -340,6 +423,7 @@ pub fn single_case_request_with_config(
     VerificationBatchRequest {
         host_profile: config.host_profile.clone(),
         capabilities: config.capabilities.clone(),
+        replay_policy: default_verification_replay_policy(),
         cases: vec![ProgrammaticFormulaCase {
             case_id: case_id.into(),
             entered_cell_text: formula.into(),
@@ -373,6 +457,7 @@ pub fn single_xml_case_request_with_config(
     Ok(VerificationBatchRequest {
         host_profile: config.host_profile.clone(),
         capabilities: config.capabilities.clone(),
+        replay_policy: default_verification_replay_policy(),
         cases: vec![ProgrammaticFormulaCase {
             case_id,
             entered_cell_text: extraction.entered_cell_text,
@@ -433,6 +518,7 @@ pub fn single_case_request_with_config(
     VerificationBatchRequest {
         host_profile: config.host_profile.clone(),
         capabilities: config.capabilities.clone(),
+        replay_policy: default_verification_replay_policy(),
         cases: vec![ProgrammaticFormulaCase {
             case_id: case_id.into(),
             entered_cell_text: formula.into(),
@@ -479,17 +565,7 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
     output_root: impl AsRef<Path>,
     runner: &R,
 ) -> Result<VerificationBundleReport, String> {
-    if request.cases.is_empty() {
-        return Err("verification batch request must contain at least one case".to_string());
-    }
-    for case in &request.cases {
-        if case.entered_cell_text.trim().is_empty() && case.spreadsheet_xml_source.is_none() {
-            return Err(format!(
-                "verification case `{}` must provide entered_cell_text or spreadsheet_xml_source",
-                case.case_id
-            ));
-        }
-    }
+    validate_verification_request(request)?;
 
     let repo_root = repo_root()?;
     let output_root = output_root.as_ref();
@@ -505,24 +581,123 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
         .and_then(|value| value.to_str())
         .unwrap_or("verification-bundle")
         .to_string();
+    let commands_dir = output_root.join("commands");
+    fs::create_dir_all(&commands_dir).map_err(|error| {
+        format!(
+            "failed to create verification command directory `{}`: {error}",
+            commands_dir.display()
+        )
+    })?;
     let batch_plan =
         build_programmatic_batch_plan(&request.cases, &request.host_profile, &request.capabilities);
 
     write_json_file(output_root.join("input-request.json"), request)?;
     write_json_file(output_root.join("batch-plan.json"), &batch_plan)?;
 
-    let mut retained_artifact_catalog = Vec::with_capacity(request.cases.len());
-    let mut case_reports = Vec::with_capacity(request.cases.len());
-
+    let mut prepared_cases = Vec::with_capacity(request.cases.len());
     for case in &request.cases {
-        let case_report = run_case_verification(
+        prepared_cases.push(prepare_verification_case(
             &repo_root,
             output_root,
             case,
             &request.host_profile,
             &request.capabilities,
-            runner,
-        )?;
+        )?);
+    }
+
+    let mut batch_case_outputs = HashMap::new();
+    let mut batch_failure_reason = None;
+    if batch_plan.comparison_lane == crate::services::programmatic_testing::ProgrammaticComparisonLane::OxfmlAndExcel
+    {
+        let batch_output_root = output_root.join("oxxlplay-batch");
+        fs::create_dir_all(&batch_output_root).map_err(|error| {
+            format!(
+                "failed to create OxXlPlay batch output root `{}`: {error}",
+                batch_output_root.display()
+            )
+        })?;
+
+        let batch_manifest = OxxlplayBatchManifest {
+            batch_id: bundle_id.clone(),
+            output_root: absolute_path(&batch_output_root)?
+                .to_string_lossy()
+                .replace('\\', "/"),
+            shared_worker_options: OxxlplaySharedWorkerOptions {
+                emit_bundle: true,
+                continue_after_case_failure: true,
+                max_cases_per_worker: None,
+            },
+            cases: prepared_cases
+                .iter()
+                .map(|case| case.batch_case_manifest.clone())
+                .collect(),
+        };
+        let batch_manifest_path = commands_dir.join("oxxlplay-capture-batch.manifest.json");
+        write_json_file(&batch_manifest_path, &batch_manifest)?;
+
+        let capture = runner.run_oxxlplay_capture_batch(&batch_manifest_path)?;
+        write_json_file(commands_dir.join("oxxlplay-capture-batch.json"), &capture)?;
+        if capture.exit_code != 0 {
+            batch_failure_reason = Some(format!(
+                "OxXlPlay batch capture failed with exit code {}",
+                capture.exit_code
+            ));
+        } else {
+            let batch_output_index_path = batch_output_root.join("batch-output-index.json");
+            match load_oxxlplay_batch_output_index(&batch_output_index_path) {
+                Ok(batch_output_index) => {
+                    write_json_file(
+                        commands_dir.join("oxxlplay-capture-batch.output-index.json"),
+                        &batch_output_index,
+                    )?;
+                    batch_case_outputs = batch_output_index
+                        .cases
+                        .into_iter()
+                        .map(|case| (case.case_id.clone(), case))
+                        .collect();
+                }
+                Err(error) => {
+                    batch_failure_reason = Some(error);
+                }
+            }
+        }
+    }
+
+    let mut retained_artifact_catalog = Vec::with_capacity(request.cases.len());
+    let mut case_reports = Vec::with_capacity(request.cases.len());
+
+    for prepared_case in prepared_cases {
+        let case_id = prepared_case.effective_case.case_id.clone();
+        let case_report = match batch_plan.comparison_lane {
+            crate::services::programmatic_testing::ProgrammaticComparisonLane::OxfmlOnly => {
+                finish_oxfml_only_case(&repo_root, prepared_case)?
+            }
+            crate::services::programmatic_testing::ProgrammaticComparisonLane::ExcelObservationBlocked => {
+                finish_blocked_case(
+                    &repo_root,
+                    prepared_case,
+                    format!(
+                        "Excel observation is unavailable for host profile `{}` on `{}`",
+                        request.host_profile.profile_id, request.capabilities.host_summary
+                    ),
+                    None,
+                )?
+            }
+            crate::services::programmatic_testing::ProgrammaticComparisonLane::OxfmlAndExcel => {
+                if let Some(reason) = &batch_failure_reason {
+                    finish_blocked_case(&repo_root, prepared_case, reason.clone(), None)?
+                } else {
+                    let batch_case_output = batch_case_outputs.remove(&case_id);
+                    finalize_excel_case(
+                        &repo_root,
+                        prepared_case,
+                        batch_case_output.as_ref(),
+                        request.replay_policy,
+                        runner,
+                    )?
+                }
+            }
+        };
         retained_artifact_catalog.push(case_report.artifact_catalog_entry.clone());
         case_reports.push(case_report);
     }
@@ -545,14 +720,29 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
 }
 
 #[cfg(feature = "oxfml-live")]
-fn run_case_verification<R: VerificationCommandRunner>(
+fn validate_verification_request(request: &VerificationBatchRequest) -> Result<(), String> {
+    if request.cases.is_empty() {
+        return Err("verification batch request must contain at least one case".to_string());
+    }
+    for case in &request.cases {
+        if case.entered_cell_text.trim().is_empty() && case.spreadsheet_xml_source.is_none() {
+            return Err(format!(
+                "verification case `{}` must provide entered_cell_text or spreadsheet_xml_source",
+                case.case_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "oxfml-live")]
+fn prepare_verification_case(
     repo_root: &Path,
     output_root: &Path,
     case: &ProgrammaticFormulaCase,
     host_profile: &ProgrammaticHostProfile,
     capabilities: &ProgrammaticCapabilityProfile,
-    runner: &R,
-) -> Result<VerificationCaseReport, String> {
+) -> Result<PreparedVerificationCase, String> {
     let case_dir = output_root
         .join("cases")
         .join(sanitize_case_id(&case.case_id));
@@ -640,79 +830,169 @@ fn run_case_verification<R: VerificationCommandRunner>(
     );
     write_json_file(&scenario_path, &scenario_json)?;
 
-    let capture = runner.run_oxxlplay_capture(&scenario_path, &oxxlplay_dir)?;
-    write_json_file(command_dir.join("oxxlplay-capture.json"), &capture)?;
-    if capture.exit_code != 0 {
+    let batch_case_manifest = build_oxxlplay_batch_case_manifest(
+        &case_dir,
+        &oxxlplay_dir,
+        &effective_case,
+        spreadsheet_xml_extraction.as_ref(),
+    )?;
+
+    Ok(PreparedVerificationCase {
+        case_dir,
+        command_dir,
+        oxxlplay_dir,
+        oxreplay_dir,
+        scenario_path,
+        projection_path,
+        effective_case,
+        spreadsheet_xml_extraction,
+        upstream_gap_report,
+        oxfml_result,
+        batch_case_manifest,
+    })
+}
+
+#[cfg(feature = "oxfml-live")]
+fn finalize_excel_case<R: VerificationCommandRunner>(
+    repo_root: &Path,
+    prepared: PreparedVerificationCase,
+    batch_case_output: Option<&OxxlplayBatchCaseOutputIndex>,
+    replay_policy: VerificationReplayPolicy,
+    runner: &R,
+) -> Result<VerificationCaseReport, String> {
+    let Some(batch_case_output) = batch_case_output else {
         return finish_blocked_case(
             repo_root,
-            &effective_case,
-            &case_dir,
-            format!(
-                "OxXlPlay capture failed with exit code {}",
-                capture.exit_code
-            ),
-            oxfml_result.summary,
+            prepared,
+            "OxXlPlay batch output index did not include this case".to_string(),
             None,
-            spreadsheet_xml_extraction,
-            upstream_gap_report,
         );
+    };
+    if let Some(error) = &batch_case_output.error {
+        return finish_blocked_case(repo_root, prepared, error.clone(), None);
+    }
+    if let Some(status) = batch_case_output.status.as_deref() {
+        if !matches!(status, "succeeded") {
+            return finish_blocked_case(
+                repo_root,
+                prepared,
+                format!("OxXlPlay batch case reported status `{status}`"),
+                None,
+            );
+        }
     }
 
-    let excel_summary = summarize_excel_capture(oxxlplay_dir.join("capture.json"))?;
+    let resolved_output_dir = resolve_repo_or_absolute_path(
+        repo_root,
+        batch_case_output.output_dir.as_deref(),
+        prepared.oxxlplay_dir.clone(),
+    );
+    let capture_path = resolve_repo_or_absolute_path(
+        repo_root,
+        batch_case_output.capture_path.as_deref(),
+        resolved_output_dir.join("capture.json"),
+    );
+    let manifest_path = resolve_repo_or_absolute_path(
+        repo_root,
+        batch_case_output.oxreplay_manifest_path.as_deref(),
+        resolved_output_dir.join("oxreplay-manifest.json"),
+    );
+    let normalized_replay_path = resolve_repo_or_absolute_path(
+        repo_root,
+        batch_case_output.normalized_replay_path.as_deref(),
+        resolved_output_dir.join("views").join("normalized-replay.json"),
+    );
+
+    let excel_summary = summarize_excel_capture(capture_path)?;
     write_json_file(
-        case_dir.join("excel-observation-summary.json"),
+        prepared.case_dir.join("excel-observation-summary.json"),
         &excel_summary,
     )?;
 
-    let validate_capture =
-        runner.run_oxreplay_validate_bundle(&oxxlplay_dir.join("oxreplay-manifest.json"))?;
+    let visible_output_match = match (
+        prepared.oxfml_result.summary.effective_display_summary.as_deref(),
+        preferred_excel_display_repr(&excel_summary),
+    ) {
+        (Some(left), Some(right)) => Some(left == right),
+        _ => None,
+    };
+
+    if !should_run_oxreplay(replay_policy, visible_output_match) {
+        let comparison_status = match visible_output_match {
+            Some(true) => ProgrammaticComparisonStatus::Matched,
+            Some(false) => ProgrammaticComparisonStatus::Mismatched,
+            None => ProgrammaticComparisonStatus::Blocked,
+        };
+        let discrepancy_summary = build_discrepancy_summary(
+            comparison_status,
+            visible_output_match,
+            &[],
+            &prepared.oxfml_result.summary,
+            &excel_summary,
+        );
+        return finish_case_report(
+            repo_root,
+            prepared,
+            comparison_status,
+            visible_output_match,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            discrepancy_summary,
+            Some(excel_summary),
+        );
+    }
+
+    let validate_capture = runner.run_oxreplay_validate_bundle(&manifest_path)?;
     write_json_file(
-        command_dir.join("oxreplay-validate-bundle.json"),
+        prepared
+            .command_dir
+            .join("oxreplay-validate-bundle.json"),
         &validate_capture,
     )?;
     if !validate_capture.stdout.trim().is_empty() {
         write_json_text_file(
-            oxreplay_dir.join("validate-bundle.report.json"),
+            prepared.oxreplay_dir.join("validate-bundle.report.json"),
             &validate_capture.stdout,
         )?;
     }
     if validate_capture.exit_code != 0 {
         return finish_blocked_case(
             repo_root,
-            &effective_case,
-            &case_dir,
+            prepared,
             format!(
                 "OxReplay validate-bundle reported exit code {}",
                 validate_capture.exit_code
             ),
-            oxfml_result.summary,
             Some(excel_summary),
-            spreadsheet_xml_extraction,
-            upstream_gap_report,
         );
     }
 
     let diff_capture = runner.run_oxreplay_diff(
-        &projection_path,
+        &prepared.projection_path,
         "oxfml-v1-replay-projection",
-        &oxxlplay_dir.join("views").join("normalized-replay.json"),
+        &normalized_replay_path,
         "normalized-replay",
     )?;
-    write_json_file(command_dir.join("oxreplay-diff.json"), &diff_capture)?;
+    write_json_file(prepared.command_dir.join("oxreplay-diff.json"), &diff_capture)?;
     if !diff_capture.stdout.trim().is_empty() {
-        write_json_text_file(oxreplay_dir.join("diff.report.json"), &diff_capture.stdout)?;
+        write_json_text_file(prepared.oxreplay_dir.join("diff.report.json"), &diff_capture.stdout)?;
     }
 
     let explain_capture = runner.run_oxreplay_explain(
-        &projection_path,
+        &prepared.projection_path,
         "oxfml-v1-replay-projection",
-        &oxxlplay_dir.join("views").join("normalized-replay.json"),
+        &normalized_replay_path,
         "normalized-replay",
     )?;
-    write_json_file(command_dir.join("oxreplay-explain.json"), &explain_capture)?;
+    write_json_file(
+        prepared.command_dir.join("oxreplay-explain.json"),
+        &explain_capture,
+    )?;
     if !explain_capture.stdout.trim().is_empty() {
         write_json_text_file(
-            oxreplay_dir.join("explain.report.json"),
+            prepared.oxreplay_dir.join("explain.report.json"),
             &explain_capture.stdout,
         )?;
     }
@@ -722,20 +1002,12 @@ fn run_case_verification<R: VerificationCommandRunner>(
         .get("equivalent")
         .and_then(Value::as_bool)
         .ok_or_else(|| "OxReplay diff output did not contain a boolean `equivalent`".to_string())?;
-
     let replay_mismatch_records = parse_oxreplay_mismatch_records(&diff_report);
     let replay_explain_records = parse_oxreplay_explain_records(&explain_capture.stdout)?;
     let replay_mismatch_kinds = replay_mismatch_records
         .iter()
         .map(|record| record.mismatch_kind.clone())
         .collect::<Vec<_>>();
-    let visible_output_match = match (
-        oxfml_result.summary.effective_display_summary.as_deref(),
-        preferred_excel_display_repr(&excel_summary),
-    ) {
-        (Some(left), Some(right)) => Some(left == right),
-        _ => None,
-    };
     let comparison_status = if diff_capture.exit_code == 0 && is_equivalent {
         ProgrammaticComparisonStatus::Matched
     } else if diff_capture.exit_code == 1 && !is_equivalent {
@@ -743,86 +1015,223 @@ fn run_case_verification<R: VerificationCommandRunner>(
     } else {
         ProgrammaticComparisonStatus::Blocked
     };
-
     let discrepancy_summary = build_discrepancy_summary(
         comparison_status,
         visible_output_match,
         &replay_mismatch_records,
-        &oxfml_result.summary,
+        &prepared.oxfml_result.summary,
         &excel_summary,
     );
-    let artifact_catalog_entry = build_programmatic_artifact_catalog_entry(
-        format!("artifact-{}", sanitize_case_id(&case.case_id)),
-        case.case_id.clone(),
-        comparison_status,
-    );
 
-    let report = VerificationCaseReport {
-        case_id: case.case_id.clone(),
-        entered_cell_text: effective_case.entered_cell_text.clone(),
-        artifact_catalog_entry: artifact_catalog_entry.clone(),
+    finish_case_report(
+        repo_root,
+        prepared,
         comparison_status,
         visible_output_match,
-        replay_equivalent: Some(is_equivalent),
+        Some(is_equivalent),
         replay_mismatch_kinds,
         replay_mismatch_records,
         replay_explain_records,
         discrepancy_summary,
-        oxfml_summary: oxfml_result.summary,
-        excel_summary: Some(excel_summary),
-        spreadsheet_xml_extraction,
-        upstream_gap_report,
-        case_output_dir: display_repo_relative(&case_dir, repo_root),
-        scenario_path: display_repo_relative(&scenario_path, repo_root),
-    };
-    write_json_file(
-        case_dir.join("programmatic-artifact-catalog-entry.json"),
-        &artifact_catalog_entry,
-    )?;
-    write_json_file(case_dir.join("comparison-summary.json"), &report)?;
-    Ok(report)
+        Some(excel_summary),
+    )
+}
+
+#[cfg(feature = "oxfml-live")]
+fn finish_oxfml_only_case(
+    repo_root: &Path,
+    prepared: PreparedVerificationCase,
+) -> Result<VerificationCaseReport, String> {
+    finish_case_report(
+        repo_root,
+        prepared,
+        ProgrammaticComparisonStatus::Matched,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+    )
 }
 
 #[cfg(feature = "oxfml-live")]
 fn finish_blocked_case(
     repo_root: &Path,
-    case: &ProgrammaticFormulaCase,
-    case_dir: &Path,
+    prepared: PreparedVerificationCase,
     blocked_reason: String,
-    oxfml_summary: OxfmlVerificationSummary,
     excel_summary: Option<ExcelObservationSummary>,
-    spreadsheet_xml_extraction: Option<SpreadsheetXmlCellExtraction>,
-    upstream_gap_report: Option<VerificationObservationGapReport>,
+) -> Result<VerificationCaseReport, String> {
+    finish_case_report(
+        repo_root,
+        prepared,
+        ProgrammaticComparisonStatus::Blocked,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Some(blocked_reason),
+        excel_summary,
+    )
+}
+
+#[cfg(feature = "oxfml-live")]
+fn finish_case_report(
+    repo_root: &Path,
+    prepared: PreparedVerificationCase,
+    comparison_status: ProgrammaticComparisonStatus,
+    visible_output_match: Option<bool>,
+    replay_equivalent: Option<bool>,
+    replay_mismatch_kinds: Vec<String>,
+    replay_mismatch_records: Vec<OxReplayMismatchRecord>,
+    replay_explain_records: Vec<OxReplayExplainRecord>,
+    discrepancy_summary: Option<String>,
+    excel_summary: Option<ExcelObservationSummary>,
 ) -> Result<VerificationCaseReport, String> {
     let artifact_catalog_entry = build_programmatic_artifact_catalog_entry(
-        format!("artifact-{}", sanitize_case_id(&case.case_id)),
-        case.case_id.clone(),
-        ProgrammaticComparisonStatus::Blocked,
+        format!(
+            "artifact-{}",
+            sanitize_case_id(&prepared.effective_case.case_id)
+        ),
+        prepared.effective_case.case_id.clone(),
+        comparison_status,
     );
     let report = VerificationCaseReport {
-        case_id: case.case_id.clone(),
-        entered_cell_text: case.entered_cell_text.clone(),
+        case_id: prepared.effective_case.case_id.clone(),
+        entered_cell_text: prepared.effective_case.entered_cell_text.clone(),
         artifact_catalog_entry: artifact_catalog_entry.clone(),
-        comparison_status: ProgrammaticComparisonStatus::Blocked,
-        visible_output_match: None,
-        replay_equivalent: None,
-        replay_mismatch_kinds: Vec::new(),
-        replay_mismatch_records: Vec::new(),
-        replay_explain_records: Vec::new(),
-        discrepancy_summary: Some(blocked_reason),
-        oxfml_summary,
+        comparison_status,
+        visible_output_match,
+        replay_equivalent,
+        replay_mismatch_kinds,
+        replay_mismatch_records,
+        replay_explain_records,
+        discrepancy_summary,
+        oxfml_summary: prepared.oxfml_result.summary,
         excel_summary,
-        spreadsheet_xml_extraction,
-        upstream_gap_report,
-        case_output_dir: display_repo_relative(case_dir, repo_root),
-        scenario_path: display_repo_relative(case_dir.join("scenario.json"), repo_root),
+        spreadsheet_xml_extraction: prepared.spreadsheet_xml_extraction,
+        upstream_gap_report: prepared.upstream_gap_report,
+        case_output_dir: display_repo_relative(&prepared.case_dir, repo_root),
+        scenario_path: display_repo_relative(&prepared.scenario_path, repo_root),
     };
     write_json_file(
-        case_dir.join("programmatic-artifact-catalog-entry.json"),
+        prepared
+            .case_dir
+            .join("programmatic-artifact-catalog-entry.json"),
         &artifact_catalog_entry,
     )?;
-    write_json_file(case_dir.join("comparison-summary.json"), &report)?;
+    write_json_file(prepared.case_dir.join("comparison-summary.json"), &report)?;
     Ok(report)
+}
+
+#[cfg(feature = "oxfml-live")]
+fn build_oxxlplay_batch_case_manifest(
+    case_dir: &Path,
+    oxxlplay_dir: &Path,
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> Result<OxxlplayBatchCaseManifest, String> {
+    let workbook_kind = if spreadsheet_xml_extraction.is_some() {
+        "spreadsheetml-2003-import"
+    } else {
+        "programmatic-formula"
+    };
+    let requested_observation_scope = spreadsheet_xml_extraction
+        .map(|extraction| {
+            serde_json::to_value(&extraction.observation_scope).map_err(|error| {
+                format!(
+                    "failed to serialize requested observation scope for `{}`: {error}",
+                    case.case_id
+                )
+            })
+        })
+        .transpose()?;
+
+    Ok(OxxlplayBatchCaseManifest {
+        case_id: case.case_id.clone(),
+        scenario_id: format!("onecalc_verify_{}", sanitize_case_id(&case.case_id)),
+        workbook_ref: absolute_path(&case_dir.join("workbook.xml"))?
+            .to_string_lossy()
+            .replace('\\', "/"),
+        workbook_kind: workbook_kind.to_string(),
+        trigger: "open_then_recalc".to_string(),
+        case_output_dir: absolute_path(oxxlplay_dir)?
+            .to_string_lossy()
+            .replace('\\', "/"),
+        observable_surfaces: vec![
+            json!({
+                "surface_id": "sheet1_a1_value",
+                "surface_kind": "cell_value",
+                "locator": spreadsheet_xml_extraction
+                    .map(|extraction| extraction.locator.clone())
+                    .unwrap_or_else(|| "Sheet1!A1".to_string()),
+                "required": true
+            }),
+            json!({
+                "surface_id": "sheet1_a1_formula",
+                "surface_kind": "formula_text",
+                "locator": spreadsheet_xml_extraction
+                    .map(|extraction| extraction.locator.clone())
+                    .unwrap_or_else(|| "Sheet1!A1".to_string()),
+                "required": false
+            }),
+        ],
+        entered_cell_text: if spreadsheet_xml_extraction.is_none() {
+            Some(case.entered_cell_text.clone())
+        } else {
+            None
+        },
+        requested_observation_scope,
+        source_cell_locator: spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
+        source_workbook_path: spreadsheet_xml_extraction
+            .map(|extraction| extraction.workbook_path.clone()),
+    })
+}
+
+#[cfg(feature = "oxfml-live")]
+fn should_run_oxreplay(
+    replay_policy: VerificationReplayPolicy,
+    visible_output_match: Option<bool>,
+) -> bool {
+    match replay_policy {
+        VerificationReplayPolicy::Never => false,
+        VerificationReplayPolicy::Always => true,
+        VerificationReplayPolicy::MismatchOnly => visible_output_match != Some(true),
+    }
+}
+
+#[cfg(feature = "oxfml-live")]
+fn load_oxxlplay_batch_output_index(
+    batch_output_index_path: &Path,
+) -> Result<OxxlplayBatchOutputIndex, String> {
+    let value = read_json_file(batch_output_index_path)?;
+    serde_json::from_value(value).map_err(|error| {
+        format!(
+            "failed to parse OxXlPlay batch output index `{}`: {error}",
+            batch_output_index_path.display()
+        )
+    })
+}
+
+#[cfg(feature = "oxfml-live")]
+fn resolve_repo_or_absolute_path(
+    repo_root: &Path,
+    raw_path: Option<&str>,
+    default_path: PathBuf,
+) -> PathBuf {
+    match raw_path {
+        None => default_path,
+        Some(raw_path) => {
+            let path = PathBuf::from(raw_path);
+            if path.is_absolute() {
+                path
+            } else {
+                repo_root.join(path)
+            }
+        }
+    }
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -1932,87 +2341,113 @@ mod tests {
     }
 
     impl VerificationCommandRunner for FakeVerificationRunner {
-        fn run_oxxlplay_capture(
+        fn run_oxxlplay_capture_batch(
             &self,
-            _scenario_path: &Path,
-            output_dir: &Path,
+            manifest_path: &Path,
         ) -> Result<VerificationCommandCapture, String> {
             self.calls
                 .lock()
                 .expect("calls")
-                .push("oxxlplay_capture".to_string());
-            fs::create_dir_all(output_dir.join("views")).expect("views dir");
-            write_json_file(
-                output_dir.join("capture.json"),
-                &json!({
-                    "surfaces": [
-                        {
-                            "surface": {
-                                "surface_id": "sheet1_a1_value",
-                                "surface_kind": "cell_value",
-                                "locator": "Sheet1!A1",
-                                "required": true
-                            },
-                            "status": "direct",
-                            "value_repr": if self.diff_equivalent { "6" } else { "7" },
-                            "capture_loss": "none",
-                            "uncertainty": "none"
-                        },
-                        {
-                            "surface": {
-                                "surface_id": "sheet1_a1_formula",
-                                "surface_kind": "formula_text",
-                                "locator": "Sheet1!A1",
-                                "required": false
-                            },
-                            "status": "direct",
-                            "value_repr": "=SUM(1,2,3)",
-                            "capture_loss": "none",
-                            "uncertainty": "none"
-                        },
-                        {
-                            "surface": {
-                                "surface_id": "sheet1_a1_display",
-                                "surface_kind": "effective_display_text",
-                                "locator": "Sheet1!A1",
-                                "required": true
-                            },
-                            "status": "direct",
-                            "value_repr": if self.diff_equivalent { "6" } else { "$7.00" },
-                            "capture_loss": "none",
-                            "uncertainty": "none"
-                        }
-                    ]
-                }),
+                .push("oxxlplay_capture_batch".to_string());
+            let manifest: OxxlplayBatchManifest = serde_json::from_str(
+                &fs::read_to_string(manifest_path).expect("batch manifest"),
             )
-            .expect("capture should write");
+            .expect("batch manifest parse");
+            let batch_output_root = PathBuf::from(&manifest.output_root);
+            fs::create_dir_all(&batch_output_root).expect("batch output root");
+            let mut case_index = Vec::new();
+
+            for case in &manifest.cases {
+                let output_dir = PathBuf::from(&case.case_output_dir);
+                fs::create_dir_all(output_dir.join("views")).expect("views dir");
+                let repo_root = repo_root().expect("repo root");
+                let output_dir_repo_relative = display_repo_relative(&output_dir, &repo_root);
+                write_json_file(
+                    output_dir.join("capture.json"),
+                    &json!({
+                        "surfaces": [
+                            {
+                                "surface": {
+                                    "surface_id": "sheet1_a1_value",
+                                    "surface_kind": "cell_value",
+                                    "locator": "Sheet1!A1",
+                                    "required": true
+                                },
+                                "status": "direct",
+                                "value_repr": if self.diff_equivalent { "6" } else { "7" },
+                                "capture_loss": "none",
+                                "uncertainty": "none"
+                            },
+                            {
+                                "surface": {
+                                    "surface_id": "sheet1_a1_formula",
+                                    "surface_kind": "formula_text",
+                                    "locator": "Sheet1!A1",
+                                    "required": false
+                                },
+                                "status": "direct",
+                                "value_repr": "=SUM(1,2,3)",
+                                "capture_loss": "none",
+                                "uncertainty": "none"
+                            },
+                            {
+                                "surface": {
+                                    "surface_id": "sheet1_a1_display",
+                                    "surface_kind": "effective_display_text",
+                                    "locator": "Sheet1!A1",
+                                    "required": true
+                                },
+                                "status": "direct",
+                                "value_repr": if self.diff_equivalent { "6" } else { "$7.00" },
+                                "capture_loss": "none",
+                                "uncertainty": "none"
+                            }
+                        ]
+                    }),
+                )
+                .expect("capture should write");
+                write_json_file(
+                    output_dir.join("oxreplay-manifest.json"),
+                    &json!({
+                        "bundle_id": "fake-bundle",
+                        "scenario_id": case.scenario_id,
+                        "bundle_schema": "replay.bundle.v1"
+                    }),
+                )
+                .expect("manifest should write");
+                write_json_file(
+                    output_dir.join("views").join("normalized-replay.json"),
+                    &json!({
+                        "scenario_id": case.scenario_id,
+                        "lane_id": "oxxlplay",
+                        "events": [
+                            {
+                                "event_id": "sheet1_a1_value",
+                                "source_label": "cell_value:Sheet1!A1:direct",
+                                "normalized_family": "excel.surface.cell_value.direct:Sheet1!A1=6"
+                            }
+                        ],
+                        "registry_refs": []
+                    }),
+                )
+                .expect("normalized replay should write");
+                case_index.push(json!({
+                    "case_id": case.case_id,
+                    "status": "succeeded",
+                    "output_dir": output_dir_repo_relative,
+                    "capture_path": format!("{output_dir_repo_relative}/capture.json"),
+                    "oxreplay_manifest_path": format!("{output_dir_repo_relative}/oxreplay-manifest.json"),
+                    "normalized_replay_path": format!("{output_dir_repo_relative}/views/normalized-replay.json")
+                }));
+            }
+
             write_json_file(
-                output_dir.join("oxreplay-manifest.json"),
-                &json!({
-                    "bundle_id": "fake-bundle",
-                    "scenario_id": "onecalc_verify_case_1",
-                    "bundle_schema": "replay.bundle.v1"
-                }),
+                batch_output_root.join("batch-output-index.json"),
+                &json!({ "cases": case_index }),
             )
-            .expect("manifest should write");
-            write_json_file(
-                output_dir.join("views").join("normalized-replay.json"),
-                &json!({
-                    "scenario_id": "onecalc_verify_case_1",
-                    "lane_id": "oxxlplay",
-                    "events": [
-                        {
-                            "event_id": "sheet1_a1_value",
-                            "source_label": "cell_value:Sheet1!A1:direct",
-                            "normalized_family": "excel.surface.cell_value.direct:Sheet1!A1=6"
-                        }
-                    ],
-                    "registry_refs": []
-                }),
-            )
-            .expect("normalized replay should write");
+            .expect("batch output index should write");
             Ok(VerificationCommandCapture {
-                command_label: "oxxlplay-capture".to_string(),
+                command_label: "oxxlplay-capture-batch".to_string(),
                 exit_code: self.capture_exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
@@ -2091,6 +2526,7 @@ mod tests {
         let request = VerificationBatchRequest {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
@@ -2140,6 +2576,7 @@ mod tests {
         let request = VerificationBatchRequest {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-formula".to_string(),
                 entered_cell_text: "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))".to_string(),
@@ -2186,6 +2623,7 @@ mod tests {
         let request = VerificationBatchRequest {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
@@ -2257,6 +2695,7 @@ mod tests {
         let request = VerificationBatchRequest {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-xml".to_string(),
                 entered_cell_text: String::new(),
