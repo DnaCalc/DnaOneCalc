@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::Value;
+
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
 use crate::services::programmatic_testing::{
@@ -203,12 +205,15 @@ pub struct RetainedArtifactRecord {
     pub case_output_dir: Option<String>,
     pub xml_extraction: Option<SpreadsheetXmlCellExtraction>,
     pub upstream_gap_report: Option<VerificationObservationGapReport>,
-    pub visible_output_match: Option<bool>,
+    pub oxfml_comparison_value: Option<Value>,
+    pub excel_comparison_value: Option<Value>,
+    pub value_match: Option<bool>,
+    pub display_match: Option<bool>,
     pub replay_equivalent: Option<bool>,
     pub replay_mismatch_records: Vec<OxReplayMismatchRecord>,
     pub replay_explain_records: Vec<OxReplayExplainRecord>,
     pub oxfml_effective_display_summary: Option<String>,
-    pub excel_observed_value_repr: Option<String>,
+    pub excel_effective_display_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -286,12 +291,15 @@ mod tests {
             case_output_dir: None,
             xml_extraction: None,
             upstream_gap_report: None,
-            visible_output_match: None,
+            oxfml_comparison_value: None,
+            excel_comparison_value: None,
+            value_match: None,
+            display_match: None,
             replay_equivalent: None,
             replay_mismatch_records: Vec::new(),
             replay_explain_records: Vec::new(),
             oxfml_effective_display_summary: None,
-            excel_observed_value_repr: None,
+            excel_effective_display_text: None,
         };
 
         assert_eq!(record.open_mode_hint, ProgrammaticOpenModeHint::Workbench);

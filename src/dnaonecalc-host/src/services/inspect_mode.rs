@@ -3,8 +3,8 @@ use crate::adapters::oxfml::{
     ProvenanceSummary,
 };
 use crate::services::verification_bundle::{
-    replay_display_comparison_summary, replay_projection_coverage_gap_summaries,
-    OxReplayExplainRecord, OxReplayMismatchRecord,
+    display_comparison_summary, replay_projection_coverage_gap_summaries, OxReplayExplainRecord,
+    OxReplayMismatchRecord,
 };
 use crate::state::{FormulaSpaceState, RetainedArtifactRecord};
 
@@ -43,7 +43,8 @@ pub struct InspectRetainedArtifactContextView {
     pub artifact_id: String,
     pub case_id: String,
     pub comparison_status: String,
-    pub visible_output_match: Option<bool>,
+    pub value_match: Option<bool>,
+    pub display_match: Option<bool>,
     pub replay_equivalent: Option<bool>,
     pub discrepancy_summary: Option<String>,
     pub bundle_report_path: Option<String>,
@@ -113,7 +114,8 @@ pub fn build_inspect_view_model(
             artifact_id: artifact.artifact_id.clone(),
             case_id: artifact.case_id.clone(),
             comparison_status: comparison_status_label(artifact),
-            visible_output_match: artifact.visible_output_match,
+            value_match: artifact.value_match,
+            display_match: artifact.display_match,
             replay_equivalent: artifact.replay_equivalent,
             discrepancy_summary: artifact.discrepancy_summary.clone(),
             bundle_report_path: artifact.bundle_report_path.clone(),
@@ -127,10 +129,10 @@ pub fn build_inspect_view_model(
                         .unwrap_or_else(|| "<none>".to_string())
                 )
             }),
-            display_comparison_summary: replay_display_comparison_summary(
-                &artifact.replay_mismatch_records,
+            display_comparison_summary: display_comparison_summary(
+                artifact.display_match,
                 artifact.oxfml_effective_display_summary.as_deref(),
-                artifact.excel_observed_value_repr.as_deref(),
+                artifact.excel_effective_display_text.as_deref(),
             ),
             upstream_gap_summary: {
                 let per_family =
@@ -273,7 +275,7 @@ fn project_replay_explain_record(record: &OxReplayExplainRecord) -> InspectExpla
 fn replay_family_label(view_family: Option<&str>, mismatch_kind: &str) -> String {
     match view_family.unwrap_or(mismatch_kind) {
         "effective_display_text" => "Effective display".to_string(),
-        "visible_value" | "view_value" => "Visible value".to_string(),
+        "comparison_value" => "Comparison value".to_string(),
         "formatting_view" => "Formatting".to_string(),
         "conditional_formatting_view" => "Conditional formatting".to_string(),
         other => other.replace('_', " "),
@@ -284,7 +286,7 @@ fn replay_status_label(mismatch_kind: &str) -> String {
     match mismatch_kind {
         "projection_coverage_gap" => "Coverage gap".to_string(),
         "effective_display_text" => "Display divergence".to_string(),
-        "visible_value" | "view_value" => "Visible value divergence".to_string(),
+        "comparison_value" => "Value divergence".to_string(),
         other => other.replace('_', " "),
     }
 }
@@ -300,6 +302,7 @@ fn replay_record_summary(
 
     match (view_family, mismatch_kind) {
         (Some("effective_display_text"), _) => "Effective display diverged".to_string(),
+        (Some("comparison_value"), _) => "Comparison value diverged".to_string(),
         (Some("formatting_view"), "projection_coverage_gap") => {
             "Formatting comparison family is missing on one side".to_string()
         }
@@ -307,7 +310,7 @@ fn replay_record_summary(
             "Conditional-formatting family is missing on one side".to_string()
         }
         (Some(family), _) => format!("Comparison diverged for `{family}`"),
-        (None, "view_value") => "Visible values diverged".to_string(),
+        (None, "comparison_value") => "Comparison value diverged".to_string(),
         _ => "Comparison diverged".to_string(),
     }
 }
@@ -453,11 +456,14 @@ mod tests {
                     oxxlplay_supported_surfaces: vec!["cell_value".to_string()],
                     oxxlplay_missing_surfaces: vec!["effective_display_text".to_string()],
                     oxreplay_required_views: vec!["formatting_view".to_string()],
-                    oxreplay_current_bundle_views: vec!["visible_value".to_string()],
+                    oxreplay_current_bundle_views: vec!["comparison_value".to_string()],
                     oxreplay_missing_views: vec!["formatting_view".to_string()],
                 },
             ),
-            visible_output_match: Some(false),
+            oxfml_comparison_value: None,
+            excel_comparison_value: None,
+            value_match: Some(true),
+            display_match: Some(false),
             replay_equivalent: Some(false),
             replay_mismatch_records: vec![
                 crate::services::verification_bundle::OxReplayMismatchRecord {
@@ -493,7 +499,7 @@ mod tests {
                 },
             ],
             oxfml_effective_display_summary: Some("6".to_string()),
-            excel_observed_value_repr: Some("$6.00".to_string()),
+            excel_effective_display_text: Some("$6.00".to_string()),
         };
 
         let view_model = build_inspect_view_model(&formula_space, Some(&retained_artifact));
@@ -504,7 +510,8 @@ mod tests {
         assert_eq!(context.artifact_id, "artifact-1");
         assert_eq!(context.case_id, "case-1");
         assert_eq!(context.comparison_status, "blocked");
-        assert_eq!(context.visible_output_match, Some(false));
+        assert_eq!(context.value_match, Some(true));
+        assert_eq!(context.display_match, Some(false));
         assert_eq!(context.replay_equivalent, Some(false));
         assert_eq!(
             context.discrepancy_summary.as_deref(),
@@ -520,7 +527,7 @@ mod tests {
             .is_some_and(|value| value.contains("Input!A1")));
         assert_eq!(
             context.display_comparison_summary.as_deref(),
-            Some("Display divergence (effective_display_text): OxFml 6 vs Excel $6.00")
+            Some("Display divergence: OxFml 6 vs Excel $6.00")
         );
         assert_eq!(context.comparison_records.len(), 2);
         assert_eq!(

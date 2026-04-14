@@ -14,7 +14,8 @@ pub struct WorkbenchOutcomeClusterViewModel {
     pub retained_artifact_id: Option<String>,
     pub retained_case_id: Option<String>,
     pub comparison_status_summary: Option<String>,
-    pub visible_output_match: Option<bool>,
+    pub value_match: Option<bool>,
+    pub display_match: Option<bool>,
     pub replay_equivalent: Option<bool>,
 }
 
@@ -61,7 +62,8 @@ pub fn build_workbench_outcome_cluster(
         retained_artifact_id: view_model.retained_artifact_id.clone(),
         retained_case_id: view_model.retained_case_id.clone(),
         comparison_status_summary: view_model.comparison_status_summary.clone(),
-        visible_output_match: view_model.visible_output_match,
+        value_match: view_model.value_match,
+        display_match: view_model.display_match,
         replay_equivalent: view_model.replay_equivalent,
     }
 }
@@ -129,7 +131,8 @@ mod tests {
             retained_artifact_id: Some("artifact-1".to_string()),
             retained_case_id: Some("case-1".to_string()),
             comparison_status_summary: Some("mismatched".to_string()),
-            visible_output_match: Some(false),
+            value_match: Some(true),
+            display_match: Some(false),
             replay_equivalent: Some(false),
             retained_discrepancy_summary: Some("dna=1 excel=2".to_string()),
             trace_summary: Some("Preview trace".to_string()),
@@ -187,7 +190,8 @@ mod tests {
         assert_eq!(outcome.recommended_action, "Retain and compare");
         assert_eq!(outcome.retained_artifact_id.as_deref(), Some("artifact-1"));
         assert_eq!(outcome.retained_case_id.as_deref(), Some("case-1"));
-        assert_eq!(outcome.visible_output_match, Some(false));
+        assert_eq!(outcome.value_match, Some(true));
+        assert_eq!(outcome.display_match, Some(false));
         assert_eq!(evidence.raw_entered_cell_text, "=SUM(1,2)");
         assert_eq!(
             evidence.retained_discrepancy_summary.as_deref(),

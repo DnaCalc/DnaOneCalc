@@ -40,9 +40,12 @@ use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::FormulaChannelKind;
 #[cfg(feature = "oxfml-live")]
 use oxfunc_core::locale_format::{
-    format_profile, LocaleFormatContext, LocaleProfileId, WorkbookDateSystem,
-    TEST_FORMAT_CODE_ENGINE, TEST_LOCALE_VALUE_PARSER,
+    excel_serial_from_ymd, format_profile, ymd_from_excel_serial, FormatCodeEngine,
+    FormatFailure, LocaleFormatContext, LocaleProfileId, LocaleValueParser, ParseFailure,
+    WorkbookDateSystem,
 };
+#[cfg(feature = "oxfml-live")]
+use oxfunc_core::value::ExcelText;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationBatchRequest {
@@ -78,6 +81,7 @@ pub struct VerificationCommandCapture {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OxfmlVerificationSummary {
     pub evaluation_summary: Option<String>,
+    pub comparison_value: Option<Value>,
     pub effective_display_summary: Option<String>,
     pub blocked_reason: Option<String>,
     pub parse_status: Option<String>,
@@ -86,6 +90,7 @@ pub struct OxfmlVerificationSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExcelObservationSummary {
+    pub comparison_value: Option<Value>,
     pub observed_value_repr: Option<String>,
     pub effective_display_text: Option<String>,
     pub observed_formula_repr: Option<String>,
@@ -120,7 +125,8 @@ pub struct VerificationCaseReport {
     pub entered_cell_text: String,
     pub artifact_catalog_entry: ProgrammaticArtifactCatalogEntry,
     pub comparison_status: ProgrammaticComparisonStatus,
-    pub visible_output_match: Option<bool>,
+    pub value_match: Option<bool>,
+    pub display_match: Option<bool>,
     pub replay_equivalent: Option<bool>,
     pub replay_mismatch_kinds: Vec<String>,
     pub replay_mismatch_records: Vec<OxReplayMismatchRecord>,
@@ -909,23 +915,31 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         &excel_summary,
     )?;
 
-    let visible_output_match = match (
+    if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
+        return finish_blocked_case(repo_root, prepared, failure_reason, Some(excel_summary));
+    }
+
+    let value_match = match (
+        prepared.oxfml_result.summary.comparison_value.as_ref(),
+        excel_summary.comparison_value.as_ref(),
+    ) {
+        (Some(left), Some(right)) => Some(left == right),
+        _ => None,
+    };
+    let display_match = match (
         prepared.oxfml_result.summary.effective_display_summary.as_deref(),
         preferred_excel_display_repr(&excel_summary),
     ) {
         (Some(left), Some(right)) => Some(left == right),
         _ => None,
     };
+    let comparison_status = derive_comparison_status(value_match, display_match);
 
-    if !should_run_oxreplay(replay_policy, visible_output_match) {
-        let comparison_status = match visible_output_match {
-            Some(true) => ProgrammaticComparisonStatus::Matched,
-            Some(false) => ProgrammaticComparisonStatus::Mismatched,
-            None => ProgrammaticComparisonStatus::Blocked,
-        };
+    if !should_run_oxreplay(replay_policy, comparison_status) {
         let discrepancy_summary = build_discrepancy_summary(
             comparison_status,
-            visible_output_match,
+            value_match,
+            display_match,
             &[],
             &prepared.oxfml_result.summary,
             &excel_summary,
@@ -934,7 +948,8 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             repo_root,
             prepared,
             comparison_status,
-            visible_output_match,
+            value_match,
+            display_match,
             None,
             Vec::new(),
             Vec::new(),
@@ -958,13 +973,31 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         )?;
     }
     if validate_capture.exit_code != 0 {
-        return finish_blocked_case(
-            repo_root,
-            prepared,
+        let discrepancy_summary = append_replay_diagnostic_summary(
+            build_discrepancy_summary(
+                comparison_status,
+                value_match,
+                display_match,
+                &[],
+                &prepared.oxfml_result.summary,
+                &excel_summary,
+            ),
             format!(
-                "OxReplay validate-bundle reported exit code {}",
+                "Replay validate-bundle failed (exit code {})",
                 validate_capture.exit_code
             ),
+        );
+        return finish_case_report(
+            repo_root,
+            prepared,
+            comparison_status,
+            value_match,
+            display_match,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            discrepancy_summary,
             Some(excel_summary),
         );
     }
@@ -1008,16 +1041,10 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         .iter()
         .map(|record| record.mismatch_kind.clone())
         .collect::<Vec<_>>();
-    let comparison_status = if diff_capture.exit_code == 0 && is_equivalent {
-        ProgrammaticComparisonStatus::Matched
-    } else if diff_capture.exit_code == 1 && !is_equivalent {
-        ProgrammaticComparisonStatus::Mismatched
-    } else {
-        ProgrammaticComparisonStatus::Blocked
-    };
     let discrepancy_summary = build_discrepancy_summary(
         comparison_status,
-        visible_output_match,
+        value_match,
+        display_match,
         &replay_mismatch_records,
         &prepared.oxfml_result.summary,
         &excel_summary,
@@ -1027,7 +1054,8 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         repo_root,
         prepared,
         comparison_status,
-        visible_output_match,
+        value_match,
+        display_match,
         Some(is_equivalent),
         replay_mismatch_kinds,
         replay_mismatch_records,
@@ -1042,10 +1070,14 @@ fn finish_oxfml_only_case(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
 ) -> Result<VerificationCaseReport, String> {
+    if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
+        return finish_blocked_case(repo_root, prepared, failure_reason, None);
+    }
     finish_case_report(
         repo_root,
         prepared,
         ProgrammaticComparisonStatus::Matched,
+        None,
         None,
         None,
         Vec::new(),
@@ -1069,6 +1101,7 @@ fn finish_blocked_case(
         ProgrammaticComparisonStatus::Blocked,
         None,
         None,
+        None,
         Vec::new(),
         Vec::new(),
         Vec::new(),
@@ -1082,7 +1115,8 @@ fn finish_case_report(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
     comparison_status: ProgrammaticComparisonStatus,
-    visible_output_match: Option<bool>,
+    value_match: Option<bool>,
+    display_match: Option<bool>,
     replay_equivalent: Option<bool>,
     replay_mismatch_kinds: Vec<String>,
     replay_mismatch_records: Vec<OxReplayMismatchRecord>,
@@ -1103,7 +1137,8 @@ fn finish_case_report(
         entered_cell_text: prepared.effective_case.entered_cell_text.clone(),
         artifact_catalog_entry: artifact_catalog_entry.clone(),
         comparison_status,
-        visible_output_match,
+        value_match,
+        display_match,
         replay_equivalent,
         replay_mismatch_kinds,
         replay_mismatch_records,
@@ -1193,12 +1228,14 @@ fn build_oxxlplay_batch_case_manifest(
 #[cfg(feature = "oxfml-live")]
 fn should_run_oxreplay(
     replay_policy: VerificationReplayPolicy,
-    visible_output_match: Option<bool>,
+    comparison_status: ProgrammaticComparisonStatus,
 ) -> bool {
     match replay_policy {
         VerificationReplayPolicy::Never => false,
         VerificationReplayPolicy::Always => true,
-        VerificationReplayPolicy::MismatchOnly => visible_output_match != Some(true),
+        VerificationReplayPolicy::MismatchOnly => {
+            comparison_status != ProgrammaticComparisonStatus::Matched
+        }
     }
 }
 
@@ -1238,6 +1275,7 @@ fn resolve_repo_or_absolute_path(
 struct OxfmlCaseArtifacts {
     summary: OxfmlVerificationSummary,
     replay_projection_json: Value,
+    execution_failure: Option<String>,
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -1274,65 +1312,86 @@ fn run_oxfml_case(
     } else {
         runtime_request
     };
-    let runtime_result = RuntimeEnvironment::new()
-        .execute(runtime_request)
-        .map_err(|error| {
-            format!(
-                "OxFml runtime execution failed for case `{}`: {error}",
-                case.case_id
-            )
-        })?;
-    let projection = ReplayProjectionService::project(
-        ReplayProjectionRequest::runtime_result(&runtime_result)
-            .with_source_case_id(case.case_id.clone())
-            .with_shared_scenario_alias(format!(
-                "onecalc_verify_{}",
-                sanitize_case_id(&case.case_id)
-            )),
-    );
+    let runtime_outcome = RuntimeEnvironment::new().execute(runtime_request);
 
-    let summary = OxfmlVerificationSummary {
-        evaluation_summary: formula_edit_result
+    let evaluation_summary = formula_edit_result
+        .document
+        .value_presentation
+        .as_ref()
+        .map(|value| value.evaluation_summary.clone());
+    let parse_status = formula_edit_result
+        .document
+        .parse_summary
+        .as_ref()
+        .map(|summary| summary.status.clone());
+    let green_tree_key = Some(
+        formula_edit_result
             .document
-            .value_presentation
-            .as_ref()
-            .map(|value| value.evaluation_summary.clone()),
-        effective_display_summary: Some(
-            runtime_result
-                .verification_publication_surface
-                .effective_display_text
-                .clone(),
-        ),
-        blocked_reason: formula_edit_result
-            .document
-            .value_presentation
-            .as_ref()
-            .and_then(|value| value.blocked_reason.clone())
-            .or_else(|| {
-                formula_edit_result
-                    .document
-                    .provenance_summary
-                    .as_ref()
-                    .and_then(|summary| summary.blocked_reason.clone())
-            }),
-        parse_status: formula_edit_result
-            .document
-            .parse_summary
-            .as_ref()
-            .map(|summary| summary.status.clone()),
-        green_tree_key: Some(
+            .editor_syntax_snapshot
+            .green_tree_key
+            .clone(),
+    );
+    let bridge_blocked_reason = formula_edit_result
+        .document
+        .value_presentation
+        .as_ref()
+        .and_then(|value| value.blocked_reason.clone())
+        .or_else(|| {
             formula_edit_result
                 .document
-                .editor_syntax_snapshot
-                .green_tree_key
-                .clone(),
-        ),
-    };
+                .provenance_summary
+                .as_ref()
+                .and_then(|summary| summary.blocked_reason.clone())
+        });
 
-    Ok(OxfmlCaseArtifacts {
-        summary,
-        replay_projection_json: serialize_replay_projection(&projection),
-    })
+    match runtime_outcome {
+        Ok(runtime_result) => {
+            let projection = ReplayProjectionService::project(
+                ReplayProjectionRequest::runtime_result(&runtime_result)
+                    .with_source_case_id(case.case_id.clone())
+                    .with_shared_scenario_alias(format!(
+                        "onecalc_verify_{}",
+                        sanitize_case_id(&case.case_id)
+                    )),
+            );
+            let projection_json = serialize_replay_projection(&projection);
+            let summary = OxfmlVerificationSummary {
+                evaluation_summary,
+                comparison_value: projection_comparison_value(&projection_json, "comparison_value"),
+                effective_display_summary: Some(
+                    runtime_result
+                        .verification_publication_surface
+                        .effective_display_text
+                        .clone(),
+                ),
+                blocked_reason: bridge_blocked_reason,
+                parse_status,
+                green_tree_key,
+            };
+            Ok(OxfmlCaseArtifacts {
+                summary,
+                replay_projection_json: projection_json,
+                execution_failure: None,
+            })
+        }
+        Err(error) => {
+            let failure_reason =
+                format!("OxFml runtime execution failed for case `{}`: {error}", case.case_id);
+            let summary = OxfmlVerificationSummary {
+                evaluation_summary,
+                comparison_value: None,
+                effective_display_summary: None,
+                blocked_reason: Some(failure_reason.clone()),
+                parse_status,
+                green_tree_key,
+            };
+            Ok(OxfmlCaseArtifacts {
+                summary,
+                replay_projection_json: Value::Null,
+                execution_failure: Some(failure_reason),
+            })
+        }
+    }
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -1348,9 +1407,254 @@ fn verification_locale_context(
     LocaleFormatContext {
         profile: format_profile(LocaleProfileId::EnUs),
         date_system,
-        parser: &TEST_LOCALE_VALUE_PARSER,
-        formatter: &TEST_FORMAT_CODE_ENGINE,
+        parser: &HOST_TEST_LOCALE_VALUE_PARSER,
+        formatter: &HOST_TEST_FORMAT_CODE_ENGINE,
     }
+}
+
+#[cfg(feature = "oxfml-live")]
+struct HostTestLocaleValueParser;
+
+#[cfg(feature = "oxfml-live")]
+struct HostTestFormatCodeEngine;
+
+#[cfg(feature = "oxfml-live")]
+static HOST_TEST_LOCALE_VALUE_PARSER: HostTestLocaleValueParser = HostTestLocaleValueParser;
+
+#[cfg(feature = "oxfml-live")]
+static HOST_TEST_FORMAT_CODE_ENGINE: HostTestFormatCodeEngine = HostTestFormatCodeEngine;
+
+#[cfg(feature = "oxfml-live")]
+impl LocaleValueParser for HostTestLocaleValueParser {
+    fn parse_value_text(
+        &self,
+        profile: &oxfunc_core::locale_format::FormatProfile,
+        date_system: WorkbookDateSystem,
+        text: &str,
+    ) -> Result<f64, ParseFailure> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(ParseFailure::UnsupportedText(trimmed.to_string()));
+        }
+
+        if let Some(stripped) = trimmed.strip_suffix('%') {
+            return parse_number_with_profile(profile, stripped)
+                .map(|value| value / 100.0)
+                .ok_or_else(|| ParseFailure::UnsupportedText(trimmed.to_string()));
+        }
+
+        let (negative, body) = if let Some(rest) = trimmed.strip_prefix('-') {
+            (true, rest.trim_start())
+        } else {
+            (false, trimmed)
+        };
+
+        if let Some(rest) = body.strip_prefix(profile.currency_symbol) {
+            let parsed = parse_number_with_profile(profile, rest.trim_start())
+                .ok_or_else(|| ParseFailure::UnsupportedText(trimmed.to_string()))?;
+            return Ok(if negative { -parsed } else { parsed });
+        }
+
+        if let Some((year, month, day)) = parse_iso_ymd(trimmed) {
+            return excel_serial_from_ymd(date_system, year, month, day)
+                .ok_or_else(|| ParseFailure::UnsupportedText(trimmed.to_string()));
+        }
+
+        if profile.id == LocaleProfileId::EnUs {
+            if let Some((year, month, day)) = parse_en_us_slash_date(trimmed) {
+                return excel_serial_from_ymd(date_system, year, month, day)
+                    .ok_or_else(|| ParseFailure::UnsupportedText(trimmed.to_string()));
+            }
+        }
+
+        parse_number_with_profile(profile, trimmed)
+            .ok_or_else(|| ParseFailure::UnsupportedText(trimmed.to_string()))
+    }
+}
+
+#[cfg(feature = "oxfml-live")]
+impl FormatCodeEngine for HostTestFormatCodeEngine {
+    fn render_with_code(
+        &self,
+        profile: &oxfunc_core::locale_format::FormatProfile,
+        date_system: WorkbookDateSystem,
+        value: f64,
+        code: &str,
+    ) -> Result<ExcelText, FormatFailure> {
+        let rendered = match code.trim() {
+            "0" => render_fixed_common(profile, value, 0, false, ""),
+            "0.00" => render_fixed_common(profile, value, 2, false, ""),
+            "0%" => {
+                let body = render_fixed_common(profile, value * 100.0, 0, false, "");
+                format!("{body}%")
+            }
+            "yyyy-mm-dd" => {
+                let Some((year, month, day)) = ymd_from_excel_serial(date_system, value) else {
+                    return Err(FormatFailure::InvalidDateSerial);
+                };
+                format!("{year:04}-{month:02}-{day:02}")
+            }
+            other => return Err(FormatFailure::UnsupportedCode(other.to_string())),
+        };
+        Ok(excel_text_from_string(rendered))
+    }
+
+    fn render_currency(
+        &self,
+        profile: &oxfunc_core::locale_format::FormatProfile,
+        value: f64,
+        decimals: i32,
+    ) -> Result<ExcelText, FormatFailure> {
+        Ok(excel_text_from_string(render_fixed_common(
+            profile,
+            value,
+            decimals,
+            true,
+            profile.currency_symbol,
+        )))
+    }
+
+    fn render_fixed(
+        &self,
+        profile: &oxfunc_core::locale_format::FormatProfile,
+        value: f64,
+        decimals: i32,
+        no_commas: bool,
+    ) -> Result<ExcelText, FormatFailure> {
+        Ok(excel_text_from_string(render_fixed_common(
+            profile, value, decimals, !no_commas, "",
+        )))
+    }
+}
+
+#[cfg(feature = "oxfml-live")]
+fn excel_text_from_string(value: String) -> ExcelText {
+    ExcelText::from_utf16_code_units(value.encode_utf16().collect())
+}
+
+#[cfg(feature = "oxfml-live")]
+fn normalize_numeric_text(
+    profile: &oxfunc_core::locale_format::FormatProfile,
+    raw: &str,
+) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let (negative, body) = if let Some(rest) = trimmed.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, trimmed)
+    };
+
+    let mut normalized = body.replace(profile.thousands_separator, "");
+    if profile.decimal_separator != "." {
+        normalized = normalized.replace(profile.decimal_separator, ".");
+    }
+
+    if normalized.matches('.').count() > 1 {
+        return None;
+    }
+
+    if negative {
+        normalized.insert(0, '-');
+    }
+    Some(normalized)
+}
+
+#[cfg(feature = "oxfml-live")]
+fn parse_number_with_profile(
+    profile: &oxfunc_core::locale_format::FormatProfile,
+    raw: &str,
+) -> Option<f64> {
+    normalize_numeric_text(profile, raw)?.parse().ok()
+}
+
+#[cfg(feature = "oxfml-live")]
+fn parse_iso_ymd(text: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = text.split('-');
+    let year = parts.next()?.parse().ok()?;
+    let month = parts.next()?.parse().ok()?;
+    let day = parts.next()?.parse().ok()?;
+    (parts.next().is_none()).then_some((year, month, day))
+}
+
+#[cfg(feature = "oxfml-live")]
+fn parse_en_us_slash_date(text: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = text.split('/');
+    let month = parts.next()?.parse().ok()?;
+    let day = parts.next()?.parse().ok()?;
+    let year = parts.next()?.parse().ok()?;
+    (parts.next().is_none()).then_some((year, month, day))
+}
+
+#[cfg(feature = "oxfml-live")]
+fn render_fixed_common(
+    profile: &oxfunc_core::locale_format::FormatProfile,
+    value: f64,
+    decimals: i32,
+    use_grouping: bool,
+    prefix: &str,
+) -> String {
+    let frac_digits = decimals.max(0) as usize;
+    let rounded = if frac_digits == 0 {
+        value.round()
+    } else {
+        let scale = 10f64.powi(frac_digits as i32);
+        (value * scale).round() / scale
+    };
+    let is_negative = rounded.is_sign_negative() && rounded != 0.0;
+    let abs_value = rounded.abs();
+    let base = format!("{:.*}", frac_digits, abs_value);
+    let (int_part, frac_part) = match base.split_once('.') {
+        Some((lhs, rhs)) => (lhs.to_string(), Some(rhs.to_string())),
+        None => (base, None),
+    };
+    let grouped = if use_grouping {
+        grouped_integer_string(&int_part, profile.thousands_separator)
+    } else {
+        int_part
+    };
+
+    let mut rendered = String::new();
+    if is_negative {
+        rendered.push('-');
+    }
+    rendered.push_str(prefix);
+    rendered.push_str(&grouped);
+    if let Some(frac) = frac_part {
+        if frac_digits > 0 {
+            rendered.push_str(profile.decimal_separator);
+            rendered.push_str(&frac);
+        }
+    }
+    rendered
+}
+
+#[cfg(feature = "oxfml-live")]
+fn grouped_integer_string(int_part: &str, sep: &str) -> String {
+    if int_part.len() <= 3 || sep.is_empty() {
+        return int_part.to_string();
+    }
+    let mut out = String::new();
+    let bytes = int_part.as_bytes();
+    let first = int_part.len() % 3;
+    let mut index = 0;
+    if first > 0 {
+        out.push_str(&int_part[..first]);
+        index = first;
+    }
+    while index < bytes.len() {
+        if !out.is_empty() {
+            out.push_str(sep);
+        }
+        out.push_str(&int_part[index..index + 3]);
+        index += 3;
+    }
+    out
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -1482,7 +1786,7 @@ fn build_observation_gap_report(
         .cloned()
         .collect::<Vec<_>>();
     let oxreplay_current_bundle_views = vec![
-        "visible_value".to_string(),
+        "comparison_value".to_string(),
         "effective_display_text".to_string(),
         "formatting_view".to_string(),
         "conditional_formatting_view".to_string(),
@@ -1637,9 +1941,8 @@ pub fn replay_display_comparison_summary(
     }
 
     if let Some(value_record) = replay_mismatch_records.iter().find(|record| {
-        record.view_family.as_deref() == Some("visible_value")
-            || record.mismatch_kind == "visible_value"
-            || record.mismatch_kind == "view_value"
+        record.view_family.as_deref() == Some("comparison_value")
+            || record.mismatch_kind == "comparison_value"
     }) {
         let left = value_record
             .left_value_repr
@@ -1652,7 +1955,7 @@ pub fn replay_display_comparison_summary(
             .or_else(|| fallback_right.map(ToOwned::to_owned))
             .unwrap_or_else(|| "<unavailable>".to_string());
         return Some(format!(
-            "Visible value divergence: OxFml {left} vs Excel {right}"
+            "Comparison value divergence: OxFml {left} vs Excel {right}"
         ));
     }
 
@@ -1662,6 +1965,42 @@ pub fn replay_display_comparison_summary(
         }
         _ => None,
     }
+}
+
+pub fn value_comparison_summary(
+    value_match: Option<bool>,
+    left_value: Option<&Value>,
+    right_value: Option<&Value>,
+) -> Option<String> {
+    if value_match != Some(false) {
+        return None;
+    }
+
+    Some(format!(
+        "Value divergence: OxFml {} vs Excel {}",
+        left_value
+            .map(render_comparison_value)
+            .unwrap_or_else(|| "<unavailable>".to_string()),
+        right_value
+            .map(render_comparison_value)
+            .unwrap_or_else(|| "<unavailable>".to_string())
+    ))
+}
+
+pub fn display_comparison_summary(
+    display_match: Option<bool>,
+    left_display: Option<&str>,
+    right_display: Option<&str>,
+) -> Option<String> {
+    if display_match != Some(false) {
+        return None;
+    }
+
+    Some(format!(
+        "Display divergence: OxFml {} vs Excel {}",
+        left_display.unwrap_or("<unavailable>"),
+        right_display.unwrap_or("<unavailable>")
+    ))
 }
 
 pub fn replay_projection_coverage_gap_summaries(
@@ -1699,6 +2038,7 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
             )
         })?;
 
+    let mut comparison_value = None;
     let mut observed_value_repr = None;
     let mut effective_display_text = None;
     let mut observed_formula_repr = None;
@@ -1718,10 +2058,12 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
             .get("value_repr")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
+        let comparison_surface_value = observed_surface_comparison_value(surface);
 
         match surface_kind {
             "cell_value" => {
-                observed_value_repr = value_repr;
+                comparison_value = comparison_surface_value;
+                observed_value_repr = comparison_value.as_ref().map(render_comparison_value);
                 if status != "direct" && capture_status == "captured" {
                     capture_status = status.to_string();
                 }
@@ -1740,6 +2082,7 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
     }
 
     Ok(ExcelObservationSummary {
+        comparison_value,
         observed_value_repr,
         effective_display_text,
         observed_formula_repr,
@@ -1748,10 +2091,7 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
 }
 
 fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&str> {
-    summary
-        .effective_display_text
-        .as_deref()
-        .or(summary.observed_value_repr.as_deref())
+    summary.effective_display_text.as_deref()
 }
 
 #[cfg(feature = "oxfml-live")]
@@ -1810,13 +2150,10 @@ fn serialize_comparison_views(
 fn serialize_verification_publication_surface(surface: &VerificationPublicationSurface) -> Value {
     json!({
         "entered_cell_text": surface.entered_cell_text,
-        "typed_value": {
-            "value_kind": surface.typed_value.value_kind,
-            "worksheet_value_class": format!("{:?}", surface.typed_value.worksheet_value_class),
-            "payload": format!("{:?}", surface.typed_value.payload),
-            "error_kind": surface.typed_value.error_kind,
+        "published_value": {
+            "worksheet_value_class": format!("{:?}", surface.published_value_class),
+            "payload": format!("{:?}", surface.published_value),
         },
-        "visible_value_text": surface.visible_value_text,
         "effective_display_text": surface.effective_display_text,
         "format_profile": surface.format_profile,
         "locale_format_context": surface.locale_format_context.as_ref().map(serialize_locale_format_context_surface),
@@ -1879,7 +2216,8 @@ fn serialize_verification_conditional_formatting_rule(
 #[cfg(feature = "oxfml-live")]
 fn build_discrepancy_summary(
     comparison_status: ProgrammaticComparisonStatus,
-    visible_output_match: Option<bool>,
+    value_match: Option<bool>,
+    display_match: Option<bool>,
     replay_mismatch_records: &[OxReplayMismatchRecord],
     oxfml_summary: &OxfmlVerificationSummary,
     excel_summary: &ExcelObservationSummary,
@@ -1890,27 +2228,32 @@ fn build_discrepancy_summary(
             oxfml_summary
                 .blocked_reason
                 .clone()
-                .unwrap_or_else(|| "comparison blocked before both lanes completed".to_string()),
+                .unwrap_or_else(|| {
+                    "comparison blocked before both value and display axes completed".to_string()
+                }),
         ),
         ProgrammaticComparisonStatus::Mismatched => {
-            let oxfml_value = oxfml_summary
-                .effective_display_summary
-                .clone()
-                .unwrap_or_else(|| "<unavailable>".to_string());
-            let excel_value = excel_summary
-                .observed_value_repr
-                .clone()
-                .unwrap_or_else(|| "<unavailable>".to_string());
-            let display_summary = replay_display_comparison_summary(
-                replay_mismatch_records,
-                Some(&oxfml_value),
-                Some(&excel_value),
+            let value_summary = value_comparison_summary(
+                value_match,
+                oxfml_summary.comparison_value.as_ref(),
+                excel_summary.comparison_value.as_ref(),
+            );
+            let display_summary = display_comparison_summary(
+                display_match,
+                oxfml_summary.effective_display_summary.as_deref(),
+                preferred_excel_display_repr(excel_summary),
             );
             let projection_gap_summary =
                 replay_projection_coverage_gap_summaries(replay_mismatch_records);
 
-            if display_summary.is_some() || !projection_gap_summary.is_empty() {
+            if value_summary.is_some()
+                || display_summary.is_some()
+                || !projection_gap_summary.is_empty()
+            {
                 let mut parts = Vec::new();
+                if let Some(value_summary) = value_summary {
+                    parts.push(value_summary);
+                }
                 if let Some(display_summary) = display_summary {
                     parts.push(display_summary);
                 }
@@ -1920,7 +2263,7 @@ fn build_discrepancy_summary(
                 return Some(parts.join(" | "));
             }
 
-            if visible_output_match == Some(true) {
+            if value_match == Some(true) && display_match == Some(true) {
                 let mismatch_kinds = if replay_mismatch_records.is_empty() {
                     "unknown_replay_mismatch".to_string()
                 } else {
@@ -1931,12 +2274,61 @@ fn build_discrepancy_summary(
                         .join(", ")
                 };
                 Some(format!(
-                    "Visible outputs matched at `{oxfml_value}`, but replay comparison still diverged ({mismatch_kinds}). This points to an OxFml/OxReplay normalization seam, not a visible value disagreement."
+                    "Replay diverged even though value and display matched ({mismatch_kinds})"
                 ))
             } else {
-                Some(format!("OxFml={oxfml_value} / Excel={excel_value}"))
+                Some("comparison diverged".to_string())
             }
         }
+    }
+}
+
+fn derive_comparison_status(
+    value_match: Option<bool>,
+    display_match: Option<bool>,
+) -> ProgrammaticComparisonStatus {
+    match (value_match, display_match) {
+        (Some(true), Some(true)) => ProgrammaticComparisonStatus::Matched,
+        (Some(false), _) | (_, Some(false)) => ProgrammaticComparisonStatus::Mismatched,
+        _ => ProgrammaticComparisonStatus::Blocked,
+    }
+}
+
+fn projection_comparison_value(projection: &Value, family: &str) -> Option<Value> {
+    projection
+        .get("comparison_views")
+        .and_then(Value::as_array)
+        .and_then(|views| {
+            views.iter().find_map(|view| {
+                let current_family = view.get("view_family").and_then(Value::as_str)?;
+                (current_family == family)
+                    .then(|| view.get("value").cloned())
+                    .flatten()
+            })
+        })
+}
+
+fn observed_surface_comparison_value(surface: &Value) -> Option<Value> {
+    surface.get("comparison_value").cloned()
+}
+
+fn render_comparison_value(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| "<unavailable>".to_string()),
+    }
+}
+
+fn append_replay_diagnostic_summary(
+    discrepancy_summary: Option<String>,
+    diagnostic: String,
+) -> Option<String> {
+    match discrepancy_summary {
+        Some(summary) => Some(format!("{summary} | {diagnostic}")),
+        None => Some(diagnostic),
     }
 }
 
@@ -2224,12 +2616,12 @@ mod consumer_shape_tests {
     }
 
     #[test]
-    fn replay_display_comparison_summary_keeps_legacy_view_value_fallback() {
+    fn replay_display_comparison_summary_reads_comparison_value_family() {
         let summary = replay_display_comparison_summary(
             &[OxReplayMismatchRecord {
-                mismatch_kind: "view_value".to_string(),
+                mismatch_kind: "comparison_value".to_string(),
                 severity: Some("semantic".to_string()),
-                view_family: None,
+                view_family: Some("comparison_value".to_string()),
                 left_value_repr: None,
                 right_value_repr: None,
                 detail: None,
@@ -2240,7 +2632,7 @@ mod consumer_shape_tests {
 
         assert_eq!(
             summary.as_deref(),
-            Some("Visible value divergence: OxFml 6 vs Excel 7")
+            Some("Comparison value divergence: OxFml 6 vs Excel 7")
         );
     }
 
@@ -2371,12 +2763,13 @@ mod tests {
                                     "surface_id": "sheet1_a1_value",
                                     "surface_kind": "cell_value",
                                     "locator": "Sheet1!A1",
-                                    "required": true
-                                },
-                                "status": "direct",
-                                "value_repr": if self.diff_equivalent { "6" } else { "7" },
-                                "capture_loss": "none",
-                                "uncertainty": "none"
+                            "required": true
+                        },
+                        "status": "direct",
+                        "comparison_value": 6,
+                        "value_repr": if self.diff_equivalent { "6" } else { "7" },
+                        "capture_loss": "none",
+                        "uncertainty": "none"
                             },
                             {
                                 "surface": {
@@ -2747,6 +3140,58 @@ mod tests {
     }
 
     #[test]
+    fn verification_batch_surfaces_validate_bundle_failure_as_replay_diagnostic() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-1".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            validate_exit_code: 1,
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Mismatched
+        );
+        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.display_match, Some(false));
+        assert_eq!(case_report.replay_equivalent, None);
+        assert_eq!(case_report.replay_mismatch_records.len(), 0);
+        assert!(case_report
+            .discrepancy_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("Replay validate-bundle failed (exit code 1)")));
+        assert_eq!(
+            runner.calls.lock().expect("calls").clone(),
+            vec![
+                "oxxlplay_capture_batch".to_string(),
+                "validate_bundle".to_string()
+            ]
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn replay_display_comparison_summary_prefers_effective_display_family() {
         let summary = replay_display_comparison_summary(
             &[OxReplayMismatchRecord {
@@ -2805,12 +3250,12 @@ mod tests {
     }
 
     #[test]
-    fn replay_display_comparison_summary_keeps_legacy_view_value_fallback() {
+    fn replay_display_comparison_summary_reads_comparison_value_family() {
         let summary = replay_display_comparison_summary(
             &[OxReplayMismatchRecord {
-                mismatch_kind: "view_value".to_string(),
+                mismatch_kind: "comparison_value".to_string(),
                 severity: Some("semantic".to_string()),
-                view_family: None,
+                view_family: Some("comparison_value".to_string()),
                 left_value_repr: None,
                 right_value_repr: None,
                 detail: None,
@@ -2821,7 +3266,7 @@ mod tests {
 
         assert_eq!(
             summary.as_deref(),
-            Some("Visible value divergence: OxFml 6 vs Excel 7")
+            Some("Comparison value divergence: OxFml 6 vs Excel 7")
         );
     }
 
@@ -2829,6 +3274,7 @@ mod tests {
     fn discrepancy_summary_combines_display_divergence_and_projection_gaps() {
         let summary = build_discrepancy_summary(
             ProgrammaticComparisonStatus::Mismatched,
+            Some(true),
             Some(false),
             &[
                 OxReplayMismatchRecord {
@@ -2853,12 +3299,14 @@ mod tests {
             ],
             &OxfmlVerificationSummary {
                 evaluation_summary: Some("Number · 6".to_string()),
+                comparison_value: Some(json!(6)),
                 effective_display_summary: Some("6".to_string()),
                 blocked_reason: None,
                 parse_status: Some("Valid".to_string()),
                 green_tree_key: Some("green-1".to_string()),
             },
             &ExcelObservationSummary {
+                comparison_value: Some(json!(6)),
                 observed_value_repr: Some("$6.00".to_string()),
                 effective_display_text: Some("$6.00".to_string()),
                 observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
@@ -2868,7 +3316,7 @@ mod tests {
 
         assert_eq!(
             summary.as_deref(),
-            Some("Display divergence (effective_display_text): OxFml 6 vs Excel $6.00 | Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side")
+            Some("Display divergence: OxFml 6 vs Excel $6.00 | Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side")
         );
     }
 
@@ -2979,6 +3427,7 @@ mod tests {
                             "required": true
                         },
                         "status": "direct",
+                        "comparison_value": 6,
                         "value_repr": "6",
                         "capture_loss": "none",
                         "uncertainty": "none"
@@ -3003,6 +3452,7 @@ mod tests {
         let summary = summarize_excel_capture(path.clone()).expect("capture summary");
 
         assert_eq!(summary.observed_value_repr.as_deref(), Some("6"));
+        assert_eq!(summary.comparison_value, Some(json!(6)));
         assert_eq!(summary.effective_display_text.as_deref(), Some("$6.00"));
 
         let _ = fs::remove_file(path);
@@ -3011,6 +3461,7 @@ mod tests {
     #[test]
     fn preferred_excel_display_repr_uses_effective_display_text_before_observed_value() {
         let summary = ExcelObservationSummary {
+            comparison_value: Some(json!(6)),
             observed_value_repr: Some("6".to_string()),
             effective_display_text: Some("$6.00".to_string()),
             observed_formula_repr: Some("=SUM(1,2,3)".to_string()),

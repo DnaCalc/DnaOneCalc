@@ -43,12 +43,15 @@ pub fn import_programmatic_artifact(
         case_output_dir: None,
         xml_extraction: None,
         upstream_gap_report: None,
-        visible_output_match: None,
+        oxfml_comparison_value: None,
+        excel_comparison_value: None,
+        value_match: None,
+        display_match: None,
         replay_equivalent: None,
         replay_mismatch_records: Vec::new(),
         replay_explain_records: Vec::new(),
         oxfml_effective_display_summary: None,
-        excel_observed_value_repr: None,
+        excel_effective_display_text: None,
     };
 
     state
@@ -204,7 +207,13 @@ pub fn import_verification_bundle_report_json(
             case_output_dir: Some(case_report.case_output_dir.clone()),
             xml_extraction: case_report.spreadsheet_xml_extraction.clone(),
             upstream_gap_report: case_report.upstream_gap_report.clone(),
-            visible_output_match: case_report.visible_output_match,
+            oxfml_comparison_value: case_report.oxfml_summary.comparison_value.clone(),
+            excel_comparison_value: case_report
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.comparison_value.clone()),
+            value_match: case_report.value_match,
+            display_match: case_report.display_match,
             replay_equivalent: case_report.replay_equivalent,
             replay_mismatch_records: case_report.replay_mismatch_records.clone(),
             replay_explain_records: case_report.replay_explain_records.clone(),
@@ -212,12 +221,10 @@ pub fn import_verification_bundle_report_json(
                 .oxfml_summary
                 .effective_display_summary
                 .clone(),
-            excel_observed_value_repr: case_report.excel_summary.as_ref().and_then(|summary| {
-                summary
-                    .effective_display_text
-                    .clone()
-                    .or(summary.observed_value_repr.clone())
-            }),
+            excel_effective_display_text: case_report
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.effective_display_text.clone()),
         };
         state
             .retained_artifacts
@@ -270,6 +277,7 @@ fn sanitize_case_id(case_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use crate::services::programmatic_testing::{
         ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
     };
@@ -471,7 +479,8 @@ mod tests {
                     open_mode_hint: ProgrammaticOpenModeHint::Workbench,
                 },
                 comparison_status: ProgrammaticComparisonStatus::Mismatched,
-                visible_output_match: Some(false),
+                value_match: Some(true),
+                display_match: Some(false),
                 replay_equivalent: Some(false),
                 replay_mismatch_kinds: vec![
                     "effective_display_text".to_string(),
@@ -522,12 +531,14 @@ mod tests {
                 ),
                 oxfml_summary: OxfmlVerificationSummary {
                     evaluation_summary: Some("Number · 6".to_string()),
+                    comparison_value: Some(json!(6)),
                     effective_display_summary: Some("6".to_string()),
                     blocked_reason: None,
                     parse_status: Some("Valid".to_string()),
                     green_tree_key: Some("green-1".to_string()),
                 },
                 excel_summary: Some(ExcelObservationSummary {
+                    comparison_value: Some(json!(6)),
                     observed_value_repr: Some("$6.00".to_string()),
                     effective_display_text: Some("$6.00".to_string()),
                     observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
@@ -565,7 +576,7 @@ mod tests {
                         "formatting_view".to_string(),
                         "conditional_formatting_view".to_string(),
                     ],
-                    oxreplay_current_bundle_views: vec!["visible_value".to_string()],
+                    oxreplay_current_bundle_views: vec!["comparison_value".to_string()],
                     oxreplay_missing_views: vec![
                         "formatting_view".to_string(),
                         "conditional_formatting_view".to_string(),
@@ -596,7 +607,7 @@ mod tests {
             artifact.bundle_report_path.as_deref(),
             Some("target/onecalc-verification/bundle-1")
         );
-        assert_eq!(artifact.excel_observed_value_repr.as_deref(), Some("$6.00"));
+        assert_eq!(artifact.excel_effective_display_text.as_deref(), Some("$6.00"));
         assert_eq!(
             state.active_formula_space_view.active_mode,
             crate::state::AppMode::Workbench

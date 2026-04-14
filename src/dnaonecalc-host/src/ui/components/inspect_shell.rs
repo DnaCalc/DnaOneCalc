@@ -245,11 +245,18 @@ pub fn InspectShell(
                                             </div>
                                             <div class="onecalc-inspect-shell__retained-context-badges">
                                                 <span data-role="inspect-retained-comparison-status">{context.comparison_status.clone()}</span>
-                                                <span data-role="inspect-retained-visible-output-match">
-                                                    {match context.visible_output_match {
-                                                        Some(true) => "visible output matched".to_string(),
-                                                        Some(false) => "visible output diverged".to_string(),
-                                                        None => "visible output unknown".to_string(),
+                                                <span data-role="inspect-retained-value-match">
+                                                    {match context.value_match {
+                                                        Some(true) => "value matched".to_string(),
+                                                        Some(false) => "value diverged".to_string(),
+                                                        None => "value unknown".to_string(),
+                                                    }}
+                                                </span>
+                                                <span data-role="inspect-retained-display-match">
+                                                    {match context.display_match {
+                                                        Some(true) => "display matched".to_string(),
+                                                        Some(false) => "display diverged".to_string(),
+                                                        None => "display unknown".to_string(),
                                                     }}
                                                 </span>
                                                 <span data-role="inspect-retained-replay-equivalent">
@@ -493,7 +500,8 @@ mod tests {
                 artifact_id: "artifact-1".to_string(),
                 case_id: "case-1".to_string(),
                 comparison_status: "blocked".to_string(),
-                visible_output_match: Some(false),
+                value_match: Some(true),
+                display_match: Some(false),
                 replay_equivalent: Some(false),
                 discrepancy_summary: Some("excel lane unavailable".to_string()),
                 bundle_report_path: Some("target/onecalc-verification/example".to_string()),
@@ -574,7 +582,8 @@ mod tests {
         assert!(html.contains("data-role=\"inspect-explain-board\""));
         assert!(html.contains("data-role=\"inspect-explain-record\""));
         assert!(html.contains("comparison diverged on `effective_display_text`"));
-        assert!(html.contains("data-role=\"inspect-retained-visible-output-match\""));
+        assert!(html.contains("data-role=\"inspect-retained-value-match\""));
+        assert!(html.contains("data-role=\"inspect-retained-display-match\""));
         assert!(html.contains("data-role=\"inspect-retained-replay-equivalent\""));
     }
 }

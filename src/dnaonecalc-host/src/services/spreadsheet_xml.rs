@@ -155,7 +155,7 @@ pub fn extract_cell_from_spreadsheet_xml(
                 "conditional_formatting_effective_style".to_string(),
             ],
             oxreplay_required_views: vec![
-                "visible_value".to_string(),
+                "comparison_value".to_string(),
                 "effective_display_text".to_string(),
                 "formatting_view".to_string(),
                 "conditional_formatting_view".to_string(),

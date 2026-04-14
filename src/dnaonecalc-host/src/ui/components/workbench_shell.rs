@@ -139,7 +139,7 @@ pub fn WorkbenchShell(
                     <article class="onecalc-workbench-shell__overview-card" data-role="workbench-overview-reliability">
                         <div class="onecalc-workbench-shell__eyebrow">"Reliability"</div>
                         <strong>{comparison_badge_text(outcome.replay_equivalent, "Replay equivalent", "Replay diverged", "Replay unknown")}</strong>
-                        <p>{comparison_badge_text(outcome.visible_output_match, "Visible output matched", "Visible output diverged", "Visible output unknown")}</p>
+                        <p>{comparison_badge_text(outcome.value_match, "Value matched", "Value diverged", "Value unknown")}</p>
                     </article>
                     <article class="onecalc-workbench-shell__overview-card" data-role="workbench-overview-capability">
                         <div class="onecalc-workbench-shell__eyebrow">"Capability floor"</div>
@@ -165,9 +165,13 @@ pub fn WorkbenchShell(
                         <strong>{outcome.recommended_action.clone()}</strong>
                     </div>
                     <div class="onecalc-workbench-shell__score-grid">
-                        <div class="onecalc-workbench-shell__score-card" data-role="workbench-visible-output-score">
-                            <span class="onecalc-workbench-shell__comparison-label">"Visible output"</span>
-                            <strong>{comparison_badge_text(outcome.visible_output_match, "matched", "diverged", "unknown")}</strong>
+                        <div class="onecalc-workbench-shell__score-card" data-role="workbench-value-match-score">
+                            <span class="onecalc-workbench-shell__comparison-label">"Value"</span>
+                            <strong>{comparison_badge_text(outcome.value_match, "matched", "diverged", "unknown")}</strong>
+                        </div>
+                        <div class="onecalc-workbench-shell__score-card" data-role="workbench-display-match-score">
+                            <span class="onecalc-workbench-shell__comparison-label">"Display"</span>
+                            <strong>{comparison_badge_text(outcome.display_match, "matched", "diverged", "unknown")}</strong>
                         </div>
                         <div class="onecalc-workbench-shell__score-card" data-role="workbench-replay-equivalent-score">
                             <span class="onecalc-workbench-shell__comparison-label">"Replay equivalence"</span>
@@ -588,7 +592,8 @@ mod tests {
                     retained_artifact_id: Some("artifact-1".to_string()),
                     retained_case_id: Some("case-1".to_string()),
                     comparison_status_summary: Some("mismatched".to_string()),
-                    visible_output_match: Some(false),
+                    value_match: Some(true),
+                    display_match: Some(false),
                     replay_equivalent: Some(false),
                 }
                 evidence=WorkbenchEvidenceClusterViewModel {
@@ -660,7 +665,8 @@ mod tests {
         assert!(html.contains("Twin Oracle Workbench"));
         assert!(html.contains("data-role=\"workbench-truth-source\""));
         assert!(html.contains("data-role=\"workbench-outcome-hero\""));
-        assert!(html.contains("data-role=\"workbench-visible-output-score\""));
+        assert!(html.contains("data-role=\"workbench-value-match-score\""));
+        assert!(html.contains("data-role=\"workbench-display-match-score\""));
         assert!(html.contains("data-role=\"workbench-replay-equivalent-score\""));
         assert!(html.contains("data-role=\"workbench-comparison-grid\""));
         assert!(html.contains("data-role=\"workbench-comparison-record\""));

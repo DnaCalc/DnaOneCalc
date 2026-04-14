@@ -267,7 +267,7 @@ fn print_report(report: &VerificationBundleReport) {
     println!("cases: {}", report.case_reports.len());
     for case in &report.case_reports {
         println!(
-            "- {} | {:?} | OxFml={} | Excel={} | visible_match={} | replay_equivalent={} | artifact={}",
+            "- {} | {:?} | OxFml={} | Excel={} | value_match={} | display_match={} | replay_equivalent={} | artifact={}",
             case.case_id,
             case.comparison_status,
             case.oxfml_summary
@@ -276,14 +276,12 @@ fn print_report(report: &VerificationBundleReport) {
                 .unwrap_or("<unavailable>"),
             case.excel_summary
                 .as_ref()
-                .and_then(|summary| {
-                    summary
-                        .effective_display_text
-                        .as_deref()
-                        .or(summary.observed_value_repr.as_deref())
-                })
+                .and_then(|summary| summary.effective_display_text.as_deref())
                 .unwrap_or("<unavailable>"),
-            case.visible_output_match
+            case.value_match
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            case.display_match
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "n/a".to_string()),
             case.replay_equivalent
