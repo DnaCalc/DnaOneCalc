@@ -16,7 +16,7 @@ use crate::services::programmatic_testing::{
     ProgrammaticHostProfile,
 };
 use crate::services::spreadsheet_xml::{
-    extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction,
+    extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction, VerificationObservationScope,
 };
 
 use crate::adapters::oxfml::{
@@ -688,14 +688,16 @@ fn prepare_verification_case(
     let spreadsheet_xml_extraction = if let Some(source) = &case.spreadsheet_xml_source {
         let extraction = extract_cell_from_spreadsheet_xml(&source.workbook_path, &source.locator)?;
         write_json_file(case_dir.join("xml-cell-extract.json"), &extraction)?;
-        write_json_file(
-            case_dir.join("required-observation-scope.json"),
-            &extraction.observation_scope,
-        )?;
         Some(extraction)
     } else {
         None
     };
+    let requested_observation_scope =
+        effective_requested_observation_scope(case, spreadsheet_xml_extraction.as_ref());
+    write_json_file(
+        case_dir.join("required-observation-scope.json"),
+        &requested_observation_scope,
+    )?;
     let effective_case = ProgrammaticFormulaCase {
         case_id: case.case_id.clone(),
         entered_cell_text: spreadsheet_xml_extraction
@@ -716,6 +718,7 @@ fn prepare_verification_case(
         &json!({
             "requested_case": case,
             "effective_case": &effective_case,
+            "requested_observation_scope": &requested_observation_scope,
             "host_profile": host_profile,
             "capabilities": capabilities,
             "spreadsheet_xml_extraction": spreadsheet_xml_extraction,
@@ -820,6 +823,12 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             .join("views")
             .join("normalized-replay.json"),
     );
+    let compare_ready_replay_path = materialize_compare_ready_normalized_replay(
+        &normalized_replay_path,
+        prepared
+            .oxreplay_dir
+            .join("normalized-replay.compare-ready.json"),
+    )?;
 
     let excel_summary = summarize_excel_capture(capture_path)?;
     write_json_file(
@@ -831,6 +840,11 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         return finish_blocked_case(repo_root, prepared, failure_reason, Some(excel_summary));
     }
 
+    let requested_replay_views = effective_requested_observation_scope(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+    )
+    .oxreplay_required_views;
     let value_match = match (
         prepared.oxfml_result.summary.comparison_value.as_ref(),
         excel_summary.comparison_value.as_ref(),
@@ -919,7 +933,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     let diff_capture = runner.run_oxreplay_diff(
         &prepared.projection_path,
         "oxfml-v1-replay-projection",
-        &normalized_replay_path,
+        &compare_ready_replay_path,
         "normalized-replay",
     )?;
     write_json_file(
@@ -936,7 +950,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     let explain_capture = runner.run_oxreplay_explain(
         &prepared.projection_path,
         "oxfml-v1-replay-projection",
-        &normalized_replay_path,
+        &compare_ready_replay_path,
         "normalized-replay",
     )?;
     write_json_file(
@@ -955,8 +969,14 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         .get("equivalent")
         .and_then(Value::as_bool)
         .ok_or_else(|| "OxReplay diff output did not contain a boolean `equivalent`".to_string())?;
-    let replay_mismatch_records = parse_oxreplay_mismatch_records(&diff_report);
-    let replay_explain_records = parse_oxreplay_explain_records(&explain_capture.stdout)?;
+    let replay_mismatch_records = filter_replay_mismatch_records_to_requested_views(
+        parse_oxreplay_mismatch_records(&diff_report),
+        &requested_replay_views,
+    );
+    let replay_explain_records = filter_replay_explain_records_to_requested_views(
+        parse_oxreplay_explain_records(&explain_capture.stdout)?,
+        &requested_replay_views,
+    );
     let replay_mismatch_kinds = replay_mismatch_records
         .iter()
         .map(|record| record.mismatch_kind.clone())
@@ -1084,21 +1104,25 @@ fn build_oxxlplay_batch_case_manifest(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> Result<OxxlplayBatchCaseManifest, String> {
+    let locator = spreadsheet_xml_extraction
+        .map(|extraction| extraction.locator.clone())
+        .unwrap_or_else(|| "Sheet1!A1".to_string());
     let workbook_kind = if spreadsheet_xml_extraction.is_some() {
         "spreadsheetml-2003-import"
     } else {
         "programmatic-formula"
     };
-    let requested_observation_scope = spreadsheet_xml_extraction
-        .map(|extraction| {
-            serde_json::to_value(&extraction.observation_scope).map_err(|error| {
-                format!(
-                    "failed to serialize requested observation scope for `{}`: {error}",
-                    case.case_id
-                )
-            })
-        })
-        .transpose()?;
+    let requested_observation_scope = serde_json::to_value(effective_requested_observation_scope(
+        case,
+        spreadsheet_xml_extraction,
+    ))
+    .map(Some)
+    .map_err(|error| {
+        format!(
+            "failed to serialize requested observation scope for `{}`: {error}",
+            case.case_id
+        )
+    })?;
 
     Ok(OxxlplayBatchCaseManifest {
         case_id: case.case_id.clone(),
@@ -1111,24 +1135,10 @@ fn build_oxxlplay_batch_case_manifest(
         case_output_dir: absolute_path(oxxlplay_dir)?
             .to_string_lossy()
             .replace('\\', "/"),
-        observable_surfaces: vec![
-            json!({
-                "surface_id": "sheet1_a1_value",
-                "surface_kind": "cell_value",
-                "locator": spreadsheet_xml_extraction
-                    .map(|extraction| extraction.locator.clone())
-                    .unwrap_or_else(|| "Sheet1!A1".to_string()),
-                "required": true
-            }),
-            json!({
-                "surface_id": "sheet1_a1_formula",
-                "surface_kind": "formula_text",
-                "locator": spreadsheet_xml_extraction
-                    .map(|extraction| extraction.locator.clone())
-                    .unwrap_or_else(|| "Sheet1!A1".to_string()),
-                "required": false
-            }),
-        ],
+        observable_surfaces: build_oxxlplay_observable_surfaces(
+            &locator,
+            spreadsheet_xml_extraction.is_none(),
+        ),
         entered_cell_text: if spreadsheet_xml_extraction.is_none() {
             Some(case.entered_cell_text.clone())
         } else {
@@ -1625,6 +1635,8 @@ fn build_oxxlplay_scenario_json(
     } else {
         "programmatic-formula"
     };
+    let requested_observation_scope =
+        effective_requested_observation_scope(case, spreadsheet_xml_extraction);
     let mut scenario = json!({
         "scenario_id": scenario_id,
         "replay_class": "capture_surface_basic",
@@ -1632,21 +1644,8 @@ fn build_oxxlplay_scenario_json(
         "workbook_ref": "./workbook.xml",
         "workbook_kind": workbook_kind,
         "trigger": "open_then_recalc",
-        "observable_surfaces": [
-            {
-                "surface_id": "sheet1_a1_value",
-                "surface_kind": "cell_value",
-                "locator": &locator,
-                "required": true
-            },
-            {
-                "surface_id": "sheet1_a1_formula",
-                "surface_kind": "formula_text",
-                "locator": &locator,
-                "required": false
-            }
-        ],
-        "requested_observation_scope": spreadsheet_xml_extraction.map(|extraction| &extraction.observation_scope),
+        "observable_surfaces": build_oxxlplay_observable_surfaces(&locator, spreadsheet_xml_extraction.is_none()),
+        "requested_observation_scope": requested_observation_scope,
         "source_cell_locator": spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
         "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone())
     });
@@ -1654,6 +1653,62 @@ fn build_oxxlplay_scenario_json(
         scenario["entered_cell_text"] = Value::String(case.entered_cell_text.clone());
     }
     scenario
+}
+
+fn effective_requested_observation_scope(
+    _case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> VerificationObservationScope {
+    spreadsheet_xml_extraction
+        .map(|extraction| extraction.observation_scope.clone())
+        .unwrap_or_else(default_programmatic_formula_observation_scope)
+}
+
+fn default_programmatic_formula_observation_scope() -> VerificationObservationScope {
+    VerificationObservationScope {
+        oxfml_required_scope: vec![
+            "entered_cell_text".to_string(),
+            "returned_value_surface".to_string(),
+            "effective_display_text".to_string(),
+        ],
+        oxxlplay_required_surfaces: vec![
+            "cell_value".to_string(),
+            "effective_display_text".to_string(),
+        ],
+        oxreplay_required_views: vec![
+            "comparison_value".to_string(),
+            "effective_display_text".to_string(),
+        ],
+    }
+}
+
+fn build_oxxlplay_observable_surfaces(
+    locator: &str,
+    include_effective_display: bool,
+) -> Vec<Value> {
+    let mut surfaces = vec![
+        json!({
+            "surface_id": "sheet1_a1_value",
+            "surface_kind": "cell_value",
+            "locator": locator,
+            "required": true
+        }),
+        json!({
+            "surface_id": "sheet1_a1_formula",
+            "surface_kind": "formula_text",
+            "locator": locator,
+            "required": false
+        }),
+    ];
+    if include_effective_display {
+        surfaces.push(json!({
+            "surface_id": "sheet1_a1_display",
+            "surface_kind": "effective_display_text",
+            "locator": locator,
+            "required": true
+        }));
+    }
+    surfaces
 }
 
 fn build_observation_gap_report(
@@ -2018,25 +2073,49 @@ fn serialize_replay_projection(
         "candidate_result_id": projection.candidate_result_id,
         "commit_decision_kind": projection.commit_decision_kind,
         "trace_event_kinds": projection.trace_event_kinds,
-        "comparison_views": projection.comparison_views.as_ref().map(|views| serialize_comparison_views(views)).unwrap_or_default(),
+        "comparison_views": serialize_comparison_views(
+            projection.comparison_views.as_deref().unwrap_or(&[]),
+            projection.verification_publication_surface.as_ref(),
+        ),
         "verification_publication_surface": projection.verification_publication_surface.as_ref().map(serialize_verification_publication_surface),
     })
 }
 
 fn serialize_comparison_views(
     comparison_views: &[oxfml_core::consumer::replay::ReplayComparisonView],
+    verification_publication_surface: Option<&VerificationPublicationSurface>,
 ) -> Value {
-    Value::Array(
-        comparison_views
-            .iter()
-            .map(|view| {
-                json!({
-                    "view_family": view.view_family,
-                    "value": view.value
-                })
+    let mut serialized = comparison_views
+        .iter()
+        .map(|view| {
+            let value = if view.view_family == "comparison_value" {
+                normalize_comparison_value(&view.value)
+            } else {
+                view.value.clone()
+            };
+            json!({
+                "view_family": view.view_family,
+                "value": value
             })
-            .collect(),
-    )
+        })
+        .collect::<Vec<_>>();
+
+    let has_effective_display_text = serialized.iter().any(|view| {
+        view.get("view_family").and_then(Value::as_str) == Some("effective_display_text")
+    });
+    if !has_effective_display_text {
+        if let Some(effective_display_text) = verification_publication_surface
+            .map(|surface| surface.effective_display_text.clone())
+            .filter(|value| !value.is_empty())
+        {
+            serialized.push(json!({
+                "view_family": "effective_display_text",
+                "value": effective_display_text
+            }));
+        }
+    }
+
+    Value::Array(serialized)
 }
 
 fn serialize_verification_publication_surface(surface: &VerificationPublicationSurface) -> Value {
@@ -2188,14 +2267,139 @@ fn projection_comparison_value(projection: &Value, family: &str) -> Option<Value
             views.iter().find_map(|view| {
                 let current_family = view.get("view_family").and_then(Value::as_str)?;
                 (current_family == family)
-                    .then(|| view.get("value").cloned())
+                    .then(|| view.get("value").map(normalize_comparison_value))
                     .flatten()
             })
         })
 }
 
 fn observed_surface_comparison_value(surface: &Value) -> Option<Value> {
-    surface.get("comparison_value").cloned()
+    surface
+        .get("comparison_value")
+        .map(normalize_comparison_value)
+}
+
+fn materialize_compare_ready_normalized_replay(
+    normalized_replay_path: &Path,
+    output_path: impl AsRef<Path>,
+) -> Result<PathBuf, String> {
+    let mut normalized_replay = read_json_file(normalized_replay_path)?;
+    normalize_replay_comparison_views(&mut normalized_replay);
+
+    let output_path = output_path.as_ref();
+    write_json_file(output_path, &normalized_replay)?;
+    Ok(output_path.to_path_buf())
+}
+
+fn normalize_replay_comparison_views(replay: &mut Value) {
+    let Some(comparison_views) = replay
+        .get_mut("comparison_views")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for view in comparison_views {
+        if view.get("view_family").and_then(Value::as_str) != Some("comparison_value") {
+            continue;
+        }
+        if let Some(value) = view.get_mut("value") {
+            *value = normalize_comparison_value(value);
+        }
+    }
+}
+
+fn normalize_comparison_value(value: &Value) -> Value {
+    let mut current = value;
+    loop {
+        let Some(object) = current.as_object() else {
+            break;
+        };
+        if object.get("boundary").and_then(Value::as_str) == Some("published_formula_result")
+            && object.get("value").is_some()
+        {
+            current = object.get("value").expect("checked is_some");
+            continue;
+        }
+        break;
+    }
+
+    let Some(object) = current.as_object() else {
+        return current.clone();
+    };
+    let Some(kind) = object.get("kind").and_then(Value::as_str) else {
+        return current.clone();
+    };
+
+    match kind {
+        "logical" => object
+            .get("logical")
+            .and_then(Value::as_bool)
+            .or_else(|| object.get("value").and_then(Value::as_bool))
+            .map(|logical| json!({ "kind": "logical", "logical": logical }))
+            .unwrap_or_else(|| current.clone()),
+        "number" => object
+            .get("number")
+            .cloned()
+            .or_else(|| object.get("value").cloned())
+            .map(|number| json!({ "kind": "number", "number": number }))
+            .unwrap_or_else(|| current.clone()),
+        "text" => object
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("value").and_then(Value::as_str))
+            .map(|text| json!({ "kind": "text", "text": text }))
+            .unwrap_or_else(|| current.clone()),
+        "error" => object
+            .get("code")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("value").and_then(Value::as_str))
+            .map(|code| json!({ "kind": "error", "code": code }))
+            .unwrap_or_else(|| current.clone()),
+        _ => current.clone(),
+    }
+}
+
+fn replay_projection_gap_is_requested(
+    view_family: Option<&str>,
+    requested_views: &[String],
+) -> bool {
+    match view_family {
+        Some(view_family) => requested_views.iter().any(|view| view == view_family),
+        None => true,
+    }
+}
+
+fn filter_replay_mismatch_records_to_requested_views(
+    records: Vec<OxReplayMismatchRecord>,
+    requested_views: &[String],
+) -> Vec<OxReplayMismatchRecord> {
+    records
+        .into_iter()
+        .filter(|record| {
+            record.mismatch_kind != "projection_coverage_gap"
+                || replay_projection_gap_is_requested(
+                    record.view_family.as_deref(),
+                    requested_views,
+                )
+        })
+        .collect()
+}
+
+fn filter_replay_explain_records_to_requested_views(
+    records: Vec<OxReplayExplainRecord>,
+    requested_views: &[String],
+) -> Vec<OxReplayExplainRecord> {
+    records
+        .into_iter()
+        .filter(|record| {
+            record.mismatch_kind != "projection_coverage_gap"
+                || replay_projection_gap_is_requested(
+                    record.view_family.as_deref(),
+                    requested_views,
+                )
+        })
+        .collect()
 }
 
 fn render_comparison_value(value: &Value) -> String {
@@ -2614,6 +2818,7 @@ mod tests {
         diff_exit_code: i32,
         explain_exit_code: i32,
         diff_equivalent: bool,
+        assert_compare_inputs_ready: bool,
         calls: Mutex<Vec<String>>,
     }
 
@@ -2704,7 +2909,24 @@ mod tests {
                                 "normalized_family": "excel.surface.cell_value.direct:Sheet1!A1=6"
                             }
                         ],
-                        "registry_refs": []
+                        "registry_refs": [],
+                        "comparison_views": [
+                            {
+                                "view_family": "comparison_value",
+                                "value": {
+                                    "boundary": "published_formula_result",
+                                    "value": {
+                                        "kind": "number",
+                                        "number": 6.0
+                                    },
+                                    "wire_schema": "oxfunc_value_types.aligned_json.v1"
+                                }
+                            },
+                            {
+                                "view_family": "effective_display_text",
+                                "value": if self.diff_equivalent { "6" } else { "$7.00" }
+                            }
+                        ]
                     }),
                 )
                 .expect("normalized replay should write");
@@ -2749,12 +2971,24 @@ mod tests {
 
         fn run_oxreplay_diff(
             &self,
-            _left_path: &Path,
+            left_path: &Path,
             _left_kind: &str,
-            _right_path: &Path,
+            right_path: &Path,
             _right_kind: &str,
         ) -> Result<VerificationCommandCapture, String> {
             self.calls.lock().expect("calls").push("diff".to_string());
+            if self.assert_compare_inputs_ready {
+                let left = read_json_file(left_path).expect("left projection json");
+                let right = read_json_file(right_path).expect("right replay json");
+                assert!(projection_comparison_value(&left, "effective_display_text").is_some());
+                assert_eq!(
+                    projection_comparison_value(&right, "comparison_value"),
+                    Some(json!({
+                        "kind": "number",
+                        "number": 6.0
+                    }))
+                );
+            }
             Ok(VerificationCommandCapture {
                 command_label: "oxreplay-diff".to_string(),
                 exit_code: self.diff_exit_code,
@@ -2882,6 +3116,56 @@ mod tests {
             "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))"
         );
         assert_eq!(scenario["workbook_ref"], "./workbook.xml");
+        assert_eq!(
+            scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
+            json!(["cell_value", "effective_display_text"])
+        );
+        assert_eq!(
+            scenario["requested_observation_scope"]["oxreplay_required_views"],
+            json!(["comparison_value", "effective_display_text"])
+        );
+        assert!(scenario["observable_surfaces"]
+            .as_array()
+            .expect("observable surfaces")
+            .iter()
+            .any(|surface| {
+                surface["surface_kind"] == "effective_display_text"
+                    && surface["required"] == json!(true)
+            }));
+        let requested_scope: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("required-observation-scope.json"))
+                .expect("requested observation scope json"),
+        )
+        .expect("requested observation scope parse");
+        assert_eq!(
+            requested_scope["oxxlplay_required_surfaces"],
+            json!(["cell_value", "effective_display_text"])
+        );
+        let batch_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(
+                output_root
+                    .join("commands")
+                    .join("oxxlplay-capture-batch.manifest.json"),
+            )
+            .expect("batch manifest json"),
+        )
+        .expect("batch manifest parse");
+        let manifest_case = batch_manifest["cases"]
+            .as_array()
+            .and_then(|cases| cases.first())
+            .expect("manifest case");
+        assert_eq!(
+            manifest_case["requested_observation_scope"]["oxxlplay_required_surfaces"],
+            json!(["cell_value", "effective_display_text"])
+        );
+        assert!(manifest_case["observable_surfaces"]
+            .as_array()
+            .expect("manifest observable surfaces")
+            .iter()
+            .any(|surface| {
+                surface["surface_kind"] == "effective_display_text"
+                    && surface["required"] == json!(true)
+            }));
         assert!(case_dir.join("workbook.xml").is_file());
 
         let _ = fs::remove_dir_all(temp_root);
@@ -3019,9 +3303,51 @@ mod tests {
         .expect("scenario parse");
         assert_eq!(scenario["workbook_kind"], "spreadsheetml-2003-import");
         assert!(scenario.get("entered_cell_text").is_none());
+        assert_eq!(
+            scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
+            json!([
+                "formula_text",
+                "cell_value",
+                "effective_display_text",
+                "number_format_code",
+                "style_id",
+                "font_color",
+                "fill_color",
+                "conditional_formatting_rules",
+                "conditional_formatting_effective_style"
+            ])
+        );
         assert!(case_dir.join("workbook.xml").is_file());
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn programmatic_formula_observation_scope_requests_display_surface_explicitly() {
+        let scope = default_programmatic_formula_observation_scope();
+
+        assert_eq!(
+            scope.oxfml_required_scope,
+            vec![
+                "entered_cell_text".to_string(),
+                "returned_value_surface".to_string(),
+                "effective_display_text".to_string(),
+            ]
+        );
+        assert_eq!(
+            scope.oxxlplay_required_surfaces,
+            vec![
+                "cell_value".to_string(),
+                "effective_display_text".to_string(),
+            ]
+        );
+        assert_eq!(
+            scope.oxreplay_required_views,
+            vec![
+                "comparison_value".to_string(),
+                "effective_display_text".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -3266,6 +3592,223 @@ mod tests {
     }
 
     #[test]
+    fn summarize_excel_capture_normalizes_published_formula_result_wrapper() {
+        let path = std::env::temp_dir().join(format!(
+            "dnaonecalc-capture-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+
+        write_json_file(
+            &path,
+            &json!({
+                "surfaces": [
+                    {
+                        "surface": {
+                            "surface_id": "sheet1_a1_value",
+                            "surface_kind": "cell_value",
+                            "locator": "Input!A1",
+                            "required": true
+                        },
+                        "status": "direct",
+                        "comparison_value": {
+                            "boundary": "published_formula_result",
+                            "value": {
+                                "kind": "logical",
+                                "logical": false
+                            },
+                            "wire_schema": "oxfunc_value_types.aligned_json.v1"
+                        },
+                        "value_repr": "FALSE",
+                        "capture_loss": "none",
+                        "uncertainty": "none"
+                    }
+                ]
+            }),
+        )
+        .expect("capture json");
+
+        let summary = summarize_excel_capture(path.clone()).expect("capture summary");
+
+        assert_eq!(
+            summary.comparison_value,
+            Some(json!({
+                "kind": "logical",
+                "logical": false
+            }))
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn materialize_compare_ready_normalized_replay_normalizes_comparison_value_wrapper() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-compare-ready-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let input_path = temp_root.join("normalized-replay.json");
+        let output_path = temp_root.join("normalized-replay.compare-ready.json");
+        write_json_file(
+            &input_path,
+            &json!({
+                "comparison_views": [
+                    {
+                        "view_family": "comparison_value",
+                        "value": {
+                            "boundary": "published_formula_result",
+                            "value": {
+                                "kind": "number",
+                                "number": 55.0
+                            },
+                            "wire_schema": "oxfunc_value_types.aligned_json.v1"
+                        }
+                    },
+                    {
+                        "view_family": "effective_display_text",
+                        "value": "55"
+                    }
+                ]
+            }),
+        )
+        .expect("input replay json");
+
+        let compare_ready_path =
+            materialize_compare_ready_normalized_replay(&input_path, &output_path)
+                .expect("compare-ready replay");
+        let compare_ready = read_json_file(compare_ready_path).expect("compare-ready json");
+
+        assert_eq!(
+            projection_comparison_value(&compare_ready, "comparison_value"),
+            Some(json!({
+                "kind": "number",
+                "number": 55.0
+            }))
+        );
+        assert_eq!(
+            projection_comparison_value(&compare_ready, "effective_display_text"),
+            Some(json!("55"))
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn normalize_comparison_value_coalesces_logical_aliases() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "logical",
+                "value": true
+            })),
+            json!({
+                "kind": "logical",
+                "logical": true
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "boundary": "published_formula_result",
+                "value": {
+                    "kind": "logical",
+                    "logical": false
+                },
+                "wire_schema": "oxfunc_value_types.aligned_json.v1"
+            })),
+            json!({
+                "kind": "logical",
+                "logical": false
+            })
+        );
+    }
+
+    #[test]
+    fn default_programmatic_lane_filters_stale_visible_value_projection_gap() {
+        let requested_views =
+            default_programmatic_formula_observation_scope().oxreplay_required_views;
+        let mismatch_records = filter_replay_mismatch_records_to_requested_views(
+            vec![
+                OxReplayMismatchRecord {
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("visible_value_text".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: None,
+                    detail: Some(
+                        "comparison view family `visible_value_text` is missing on one side"
+                            .to_string(),
+                    ),
+                },
+                OxReplayMismatchRecord {
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("effective_display_text".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: None,
+                    detail: Some(
+                        "comparison view family `effective_display_text` is missing on one side"
+                            .to_string(),
+                    ),
+                },
+            ],
+            &requested_views,
+        );
+        let explain_records = filter_replay_explain_records_to_requested_views(
+            vec![
+                OxReplayExplainRecord {
+                    query_id: Some("q-visible".to_string()),
+                    summary: Some(
+                        "comparison view family `visible_value_text` is missing on one side"
+                            .to_string(),
+                    ),
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("visible_value_text".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: None,
+                    detail: Some(
+                        "comparison view family `visible_value_text` is missing on one side"
+                            .to_string(),
+                    ),
+                },
+                OxReplayExplainRecord {
+                    query_id: Some("q-display".to_string()),
+                    summary: Some(
+                        "comparison view family `effective_display_text` is missing on one side"
+                            .to_string(),
+                    ),
+                    mismatch_kind: "projection_coverage_gap".to_string(),
+                    severity: Some("coverage".to_string()),
+                    view_family: Some("effective_display_text".to_string()),
+                    left_value_repr: None,
+                    right_value_repr: None,
+                    detail: Some(
+                        "comparison view family `effective_display_text` is missing on one side"
+                            .to_string(),
+                    ),
+                },
+            ],
+            &requested_views,
+        );
+
+        assert_eq!(mismatch_records.len(), 1);
+        assert_eq!(
+            mismatch_records[0].view_family.as_deref(),
+            Some("effective_display_text")
+        );
+        assert_eq!(explain_records.len(), 1);
+        assert_eq!(
+            explain_records[0].view_family.as_deref(),
+            Some("effective_display_text")
+        );
+    }
+
+    #[test]
     fn preferred_excel_display_repr_uses_effective_display_text_before_observed_value() {
         let summary = ExcelObservationSummary {
             comparison_value: Some(json!(6)),
@@ -3276,5 +3819,47 @@ mod tests {
         };
 
         assert_eq!(preferred_excel_display_repr(&summary), Some("$6.00"));
+    }
+
+    #[test]
+    fn verification_batch_prepares_compare_inputs_for_programmatic_formula_cases() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-compare-ready".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            assert_compare_inputs_ready: true,
+            diff_equivalent: false,
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_dir = output_root.join("cases").join("case-compare-ready");
+        let projection = read_json_file(case_dir.join("oxfml-v1-replay-projection.json"))
+            .expect("projection json");
+
+        assert_eq!(report.case_reports.len(), 1);
+        assert!(projection_comparison_value(&projection, "comparison_value").is_some());
+        assert_eq!(
+            projection_comparison_value(&projection, "effective_display_text"),
+            Some(json!("6"))
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 }
