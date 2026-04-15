@@ -4,7 +4,10 @@ use serde_json::Value;
 
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
-use crate::extensions::{frozen_extension_host_contract, FrozenExtensionHostContract};
+use crate::extensions::{
+    default_extension_provider_catalog, frozen_extension_host_contract, ExtensionProviderCatalog,
+    FrozenExtensionHostContract,
+};
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
@@ -264,12 +267,14 @@ impl Default for CapabilityAndEnvironmentState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionSurfaceState {
     pub admitted_contract: FrozenExtensionHostContract,
+    pub provider_catalog: ExtensionProviderCatalog,
 }
 
 impl Default for ExtensionSurfaceState {
     fn default() -> Self {
         Self {
             admitted_contract: frozen_extension_host_contract(),
+            provider_catalog: default_extension_provider_catalog(),
         }
     }
 }
@@ -359,5 +364,10 @@ mod tests {
             surface.admitted_contract.platforms[0].platform.slug(),
             "windows-desktop"
         );
+        assert_eq!(
+            surface.provider_catalog.runtime_platform,
+            crate::extensions::current_extension_runtime_platform()
+        );
+        assert!(surface.provider_catalog.providers.is_empty());
     }
 }

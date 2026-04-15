@@ -419,6 +419,15 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
             value: workspace_summary.clone(),
             tone: "muted",
         },
+        ShellChromeFactViewModel {
+            label: "Extensions",
+            value: state
+                .extension_surface
+                .provider_catalog
+                .load_report()
+                .summary(),
+            tone: "muted",
+        },
     ];
     if let Some(blocked_reason) = active_formula_space.context.blocked_reason.as_ref() {
         footer_facts.push(ShellChromeFactViewModel {
@@ -944,6 +953,10 @@ fn capability_baseline_rows(
 mod tests {
     use super::*;
     use crate::domain::ids::FormulaSpaceId;
+    use crate::extensions::{
+        frozen_extension_host_contract, ExtensionPackagingKind, ExtensionPlatform,
+        ExtensionProviderManifest,
+    };
     use crate::services::programmatic_testing::{
         ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
     };
@@ -1087,6 +1100,49 @@ mod tests {
                 .get(&FormulaSpaceId::new("space-1")),
             Some(&AppMode::Inspect)
         );
+    }
+
+    #[test]
+    fn shell_frame_footer_reports_extension_lifecycle_counts() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        let contract = frozen_extension_host_contract();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        assert!(state.extension_surface.provider_catalog.discover_provider(
+            ExtensionProviderManifest::native(
+                "active",
+                "Active Provider",
+                ExtensionPlatform::WindowsDesktop,
+                ExtensionPackagingKind::Xll,
+                &contract,
+            )
+        ));
+        assert!(state
+            .extension_surface
+            .provider_catalog
+            .validate_provider(&contract, "active"));
+        assert!(state
+            .extension_surface
+            .provider_catalog
+            .set_provider_enabled("active", true));
+        assert!(state
+            .extension_surface
+            .provider_catalog
+            .set_provider_active("active", true));
+
+        let frame = build_shell_frame_view_model(&state).expect("frame should exist");
+        assert!(frame
+            .footer_facts
+            .iter()
+            .any(|fact| { fact.label == "Extensions" && fact.value.contains("1 active") }));
     }
 
     #[test]

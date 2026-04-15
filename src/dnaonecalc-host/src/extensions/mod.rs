@@ -1,3 +1,11 @@
+mod runtime_catalog;
+
+pub use runtime_catalog::{
+    current_extension_runtime_platform, default_extension_provider_catalog,
+    platform_support_for_extension_platform, ExtensionLoadReport, ExtensionProviderCatalog,
+    ExtensionProviderLifecycleState, ExtensionProviderManifest, ExtensionProviderRecord,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtensionAbiVersion {
     V0,
