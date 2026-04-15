@@ -61,6 +61,8 @@ fn ex_10_real_explore_render_path_projects_mode_and_panel_models_into_html() {
     assert!(html.contains("data-selected=\"true\""));
     assert!(html.contains("data-role=\"value-panel-effective-display\""));
     assert!(html.contains("Number"));
+    assert!(!html.contains("data-role=\"explore-effective-display\""));
+    assert!(!html.contains("data-role=\"explore-evaluation-summary\""));
     // Explore layout discipline: no hero header, no overview deck, no panel chrome above the editor.
     assert!(!html.contains("Formula Explorer"));
     assert!(!html.contains("data-role=\"explore-panel-intro\""));

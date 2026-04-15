@@ -712,7 +712,7 @@ async fn tab_and_shift_tab_stay_in_editor_focus_and_prevent_browser_focus_escape
 
     let textarea_after_tab = wait_for_textarea_value(&document, "    =SUM(1,2)").await;
     let html_after_tab = wait_for_host_html(&document, |html| {
-        html.contains("data-role=\"explore-effective-display\"")
+        html.contains("data-role=\"value-panel-effective-display\"")
             && html.contains("data-role=\"editor-diagnostic-band\"")
     })
     .await;
@@ -745,7 +745,7 @@ async fn tab_and_shift_tab_stay_in_editor_focus_and_prevent_browser_focus_escape
 
     let textarea_after_shift_tab = wait_for_textarea_value(&document, "=SUM(1,2)").await;
     let html_after_shift_tab = wait_for_host_html(&document, |html| {
-        html.contains("data-role=\"explore-effective-display\"")
+        html.contains("data-role=\"value-panel-effective-display\"")
             && html.contains("data-role=\"editor-diagnostic-band\"")
     })
     .await;
@@ -826,7 +826,7 @@ async fn ctrl_x_cuts_selection_without_leaving_the_editor_surface() {
     let textarea_after_cut = wait_for_textarea_value(&document, "=(1,2)").await;
     let html = wait_for_host_html(&document, |html| {
         html.contains("data-role=\"editor-input\"")
-            && html.contains("data-role=\"explore-evaluation-summary\"")
+            && html.contains("data-role=\"value-panel-effective-display\"")
     })
     .await;
     assert!(

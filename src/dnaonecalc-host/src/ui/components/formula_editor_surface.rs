@@ -29,7 +29,6 @@ pub fn FormulaEditorSurface(
         .result_value_summary
         .clone()
         .unwrap_or_else(|| "Unevaluated".to_string());
-    let effective_display_label = editor.effective_display_summary.clone().unwrap_or_default();
     let bracket_pair = editor.bracket_pair;
     let editor_settings = editor.editor_settings;
     let settings_popover_open = editor.editor_settings_popover_open;
@@ -136,60 +135,64 @@ pub fn FormulaEditorSurface(
                         <span>{function_count} " functions"</span>
                     </div>
                 </div>
-                <div class="onecalc-formula-editor-surface__toolbar-pills" data-role="editor-toolbar-pills">
-                    <span
-                        class="onecalc-formula-editor-surface__entry-mode-pill"
-                        data-role="editor-entry-mode-pill"
-                        data-entry-mode=entry_mode.slug()
-                    >
-                        {entry_mode.label()}
-                    </span>
-                    <span
-                        class="onecalc-formula-editor-surface__result-class-pill"
-                        data-role="editor-result-class-pill"
-                        data-has-result=if editor.result_value_summary.is_some() { "true" } else { "false" }
-                    >
-                        {result_class_label.clone()}
-                    </span>
-                    <span
-                        class="onecalc-formula-editor-surface__live-state-pill"
-                        data-role="editor-live-state-pill"
-                        data-live-state=live_state.slug()
-                        title=live_state.label()
-                    >
-                        <span data-role="editor-live-state-glyph">{live_state.glyph()}</span>
-                        <span data-role="editor-live-state-label">{live_state.label()}</span>
-                    </span>
-                </div>
-                <div class="onecalc-formula-editor-surface__toolbar-state" data-role="editor-toolbar-state">
-                    {if editor.diagnostics.is_empty() { "Clean" } else { "Review" }}
-                </div>
-                {{
-                    let toggle_callback = on_command.clone();
-                    view! {
-                        <button
-                            type="button"
-                            class="onecalc-formula-editor-surface__settings-gear"
-                            data-role="editor-settings-gear"
-                            data-open=if settings_popover_open { "true" } else { "false" }
-                            aria-label="Editor settings"
-                            aria-expanded=if settings_popover_open { "true" } else { "false" }
-                            on:click=move |_| {
-                                if let Some(command_callback) = toggle_callback.as_ref() {
-                                    command_callback.run(EditorCommand::ToggleEditorSettingsPopover);
-                                }
-                            }
+                <div class="onecalc-formula-editor-surface__toolbar-meta">
+                    <div class="onecalc-formula-editor-surface__toolbar-pills" data-role="editor-toolbar-pills">
+                        <span
+                            class="onecalc-formula-editor-surface__entry-mode-pill"
+                            data-role="editor-entry-mode-pill"
+                            data-entry-mode=entry_mode.slug()
                         >
-                            "⚙"
-                        </button>
-                    }
-                }}
+                            {entry_mode.label()}
+                        </span>
+                        <span
+                            class="onecalc-formula-editor-surface__result-class-pill"
+                            data-role="editor-result-class-pill"
+                            data-has-result=if editor.result_value_summary.is_some() { "true" } else { "false" }
+                        >
+                            {result_class_label.clone()}
+                        </span>
+                        <span
+                            class="onecalc-formula-editor-surface__live-state-pill"
+                            data-role="editor-live-state-pill"
+                            data-live-state=live_state.slug()
+                            title=live_state.label()
+                        >
+                            <span data-role="editor-live-state-glyph">{live_state.glyph()}</span>
+                            <span data-role="editor-live-state-label">{live_state.label()}</span>
+                        </span>
+                    </div>
+                    <div class="onecalc-formula-editor-surface__toolbar-actions">
+                        <div class="onecalc-formula-editor-surface__toolbar-state" data-role="editor-toolbar-state">
+                            {if editor.diagnostics.is_empty() { "Clean" } else { "Review" }}
+                        </div>
+                        {{
+                            let toggle_callback = on_command.clone();
+                            view! {
+                                <button
+                                    type="button"
+                                    class="onecalc-formula-editor-surface__settings-gear"
+                                    data-role="editor-settings-gear"
+                                    data-open=if settings_popover_open { "true" } else { "false" }
+                                    aria-label="Editor settings"
+                                    aria-expanded=if settings_popover_open { "true" } else { "false" }
+                                    on:click=move |_| {
+                                        if let Some(command_callback) = toggle_callback.as_ref() {
+                                            command_callback.run(EditorCommand::ToggleEditorSettingsPopover);
+                                        }
+                                    }
+                                >
+                                    "⚙"
+                                </button>
+                            }
+                        }}
+                        {if settings_popover_open {
+                            render_editor_settings_popover(editor_settings, on_command.clone()).into_any()
+                        } else {
+                            view! { <></> }.into_any()
+                        }}
+                    </div>
+                </div>
             </header>
-            {if settings_popover_open {
-                render_editor_settings_popover(editor_settings, on_command.clone()).into_any()
-            } else {
-                view! { <></> }.into_any()
-            }}
 
             <div class="onecalc-formula-editor-surface__body">
                 <div class="onecalc-formula-editor-surface__line-rail" data-role="editor-line-rail">
@@ -680,20 +683,6 @@ pub fn FormulaEditorSurface(
                         <strong>{diagnostics_state_label}</strong>
                         <div>{diagnostics_state_detail}</div>
                     </div>
-                </div>
-                <div
-                    class="onecalc-formula-editor-surface__diagnostic-band-effective-display"
-                    data-role="editor-effective-display"
-                    data-has-display=if editor.effective_display_summary.is_some() { "true" } else { "false" }
-                >
-                    <span data-role="editor-effective-display-label">"Effective display: "</span>
-                    <span data-role="editor-effective-display-value">
-                        {if effective_display_label.is_empty() {
-                            "—".to_string()
-                        } else {
-                            effective_display_label.clone()
-                        }}
-                    </span>
                 </div>
                 <div class="onecalc-formula-editor-surface__diagnostic-band-action">
                     {if editor.has_signature_help { "Signature help ready" } else { "Assist idle" }}
@@ -1297,7 +1286,7 @@ mod tests {
         assert!(html.contains("data-has-result=\"true\""));
         assert!(html.contains("data-role=\"editor-live-state-pill\""));
         assert!(html.contains("data-live-state=\"editing-live\""));
-        assert!(html.contains("data-role=\"editor-effective-display\""));
+        assert!(!html.contains("data-role=\"editor-effective-display\""));
         assert!(html.contains("data-role=\"bracket-pair-layer\""));
         assert!(html.contains("data-role=\"bracket-pair-open\""));
         assert!(html.contains("data-bracket-offset=\"4\""));

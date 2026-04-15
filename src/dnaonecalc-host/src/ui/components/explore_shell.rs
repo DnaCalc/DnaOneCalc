@@ -33,14 +33,6 @@ fn ExploreEditorPanel(
 
 #[component]
 fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
-    let effective_display = result
-        .effective_display_summary
-        .clone()
-        .unwrap_or_else(|| "Unavailable".to_string());
-    let evaluation_summary = result
-        .latest_evaluation_summary
-        .clone()
-        .unwrap_or_else(|| "Unavailable".to_string());
     let has_array_preview = result.array_preview.is_some();
     let value_panel = result.value_panel.clone();
 
@@ -52,21 +44,11 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
                     <h2>"Result"</h2>
                     <div class="onecalc-explore-shell__eyebrow">"Runtime view"</div>
                 </div>
-                <div class="onecalc-explore-shell__result-state-chip" data-role="explore-result-state-chip">
-                    {if has_array_preview { "Array" } else { "Scalar" }}
-                </div>
+            <div class="onecalc-explore-shell__result-state-chip" data-role="explore-result-state-chip">
+                {if has_array_preview { "Array" } else { "Scalar" }}
+            </div>
             </div>
             <crate::ui::components::value_panel::ValuePanel panel=value_panel />
-            <div class="onecalc-explore-shell__result-grid">
-                <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
-                    <span class="onecalc-explore-shell__metric-label">"Effective display"</span>
-                    <strong>{effective_display}</strong>
-                </div>
-                <div class="onecalc-explore-shell__result-metric" data-role="explore-evaluation-summary">
-                    <span class="onecalc-explore-shell__metric-label">"Evaluation summary"</span>
-                    <strong>{evaluation_summary}</strong>
-                </div>
-            </div>
             {result.array_preview.as_ref().map(|array_preview| view! {
                 <section class="onecalc-explore-shell__array-preview" data-role="explore-array-preview">
                     <header class="onecalc-explore-shell__array-preview-header">
