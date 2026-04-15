@@ -428,6 +428,11 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                 .summary(),
             tone: "muted",
         },
+        ShellChromeFactViewModel {
+            label: "RTD",
+            value: state.extension_surface.rtd_host.host_report().summary(),
+            tone: "muted",
+        },
     ];
     if let Some(blocked_reason) = active_formula_space.context.blocked_reason.as_ref() {
         footer_facts.push(ShellChromeFactViewModel {
@@ -955,7 +960,7 @@ mod tests {
     use crate::domain::ids::FormulaSpaceId;
     use crate::extensions::{
         frozen_extension_host_contract, ExtensionPackagingKind, ExtensionPlatform,
-        ExtensionProviderManifest,
+        ExtensionProviderManifest, RtdTopicRequest, RtdTopicRequestKey, RtdTopicRequestOutcome,
     };
     use crate::services::programmatic_testing::{
         ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
@@ -1107,6 +1112,14 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         let contract = frozen_extension_host_contract();
+        let mut manifest = ExtensionProviderManifest::native(
+            "active",
+            "Active Provider",
+            ExtensionPlatform::WindowsDesktop,
+            ExtensionPackagingKind::Xll,
+            &contract,
+        );
+        manifest.requires_rtd_contract = true;
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
         state
             .workspace_shell
@@ -1116,15 +1129,10 @@ mod tests {
             .formula_spaces
             .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
 
-        assert!(state.extension_surface.provider_catalog.discover_provider(
-            ExtensionProviderManifest::native(
-                "active",
-                "Active Provider",
-                ExtensionPlatform::WindowsDesktop,
-                ExtensionPackagingKind::Xll,
-                &contract,
-            )
-        ));
+        assert!(state
+            .extension_surface
+            .provider_catalog
+            .discover_provider(manifest));
         assert!(state
             .extension_surface
             .provider_catalog
@@ -1137,12 +1145,31 @@ mod tests {
             .extension_surface
             .provider_catalog
             .set_provider_active("active", true));
+        let request = RtdTopicRequest {
+            provider_id: "active".to_string(),
+            prog_id: "Vendor.Rtd".to_string(),
+            server_name: "".to_string(),
+            topic_strings: vec!["ticker".to_string(), "MSFT".to_string()],
+        };
+        let key = RtdTopicRequestKey::from_request(&request);
+        assert!(state
+            .extension_surface
+            .rtd_host
+            .declare_topic(&state.extension_surface.provider_catalog, request));
+        assert!(state
+            .extension_surface
+            .rtd_host
+            .resolve_topic(&key, RtdTopicRequestOutcome::Value("42".to_string())));
 
         let frame = build_shell_frame_view_model(&state).expect("frame should exist");
         assert!(frame
             .footer_facts
             .iter()
             .any(|fact| { fact.label == "Extensions" && fact.value.contains("1 active") }));
+        assert!(frame
+            .footer_facts
+            .iter()
+            .any(|fact| fact.label == "RTD" && fact.value.contains("1 active")));
     }
 
     #[test]

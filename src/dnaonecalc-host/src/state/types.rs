@@ -5,8 +5,8 @@ use serde_json::Value;
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
 use crate::extensions::{
-    default_extension_provider_catalog, frozen_extension_host_contract, ExtensionProviderCatalog,
-    FrozenExtensionHostContract,
+    default_extension_provider_catalog, default_extension_rtd_host, frozen_extension_host_contract,
+    ExtensionProviderCatalog, ExtensionRtdHostState, FrozenExtensionHostContract,
 };
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
@@ -268,6 +268,7 @@ impl Default for CapabilityAndEnvironmentState {
 pub struct ExtensionSurfaceState {
     pub admitted_contract: FrozenExtensionHostContract,
     pub provider_catalog: ExtensionProviderCatalog,
+    pub rtd_host: ExtensionRtdHostState,
 }
 
 impl Default for ExtensionSurfaceState {
@@ -275,6 +276,7 @@ impl Default for ExtensionSurfaceState {
         Self {
             admitted_contract: frozen_extension_host_contract(),
             provider_catalog: default_extension_provider_catalog(),
+            rtd_host: default_extension_rtd_host(),
         }
     }
 }
@@ -369,5 +371,6 @@ mod tests {
             crate::extensions::current_extension_runtime_platform()
         );
         assert!(surface.provider_catalog.providers.is_empty());
+        assert!(surface.rtd_host.topics.is_empty());
     }
 }

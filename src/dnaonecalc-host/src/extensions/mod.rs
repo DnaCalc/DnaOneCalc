@@ -1,5 +1,10 @@
+mod rtd_runtime;
 mod runtime_catalog;
 
+pub use rtd_runtime::{
+    default_extension_rtd_host, ExtensionRtdHostState, RtdHostReport, RtdTopicLifecycleState,
+    RtdTopicRecord, RtdTopicRequest, RtdTopicRequestKey, RtdTopicRequestOutcome,
+};
 pub use runtime_catalog::{
     current_extension_runtime_platform, default_extension_provider_catalog,
     platform_support_for_extension_platform, ExtensionLoadReport, ExtensionProviderCatalog,
