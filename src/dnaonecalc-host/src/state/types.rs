@@ -5,8 +5,10 @@ use serde_json::Value;
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
 use crate::extensions::{
-    default_extension_provider_catalog, default_extension_rtd_host, frozen_extension_host_contract,
-    ExtensionProviderCatalog, ExtensionRtdHostState, FrozenExtensionHostContract,
+    default_extension_provider_catalog, default_extension_rtd_host,
+    default_extension_upstream_pressure_register, frozen_extension_host_contract,
+    ExtensionProviderCatalog, ExtensionRtdHostState, ExtensionUpstreamPressureRegister,
+    FrozenExtensionHostContract,
 };
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
@@ -269,14 +271,17 @@ pub struct ExtensionSurfaceState {
     pub admitted_contract: FrozenExtensionHostContract,
     pub provider_catalog: ExtensionProviderCatalog,
     pub rtd_host: ExtensionRtdHostState,
+    pub upstream_pressure: ExtensionUpstreamPressureRegister,
 }
 
 impl Default for ExtensionSurfaceState {
     fn default() -> Self {
+        let admitted_contract = frozen_extension_host_contract();
         Self {
-            admitted_contract: frozen_extension_host_contract(),
             provider_catalog: default_extension_provider_catalog(),
             rtd_host: default_extension_rtd_host(),
+            upstream_pressure: default_extension_upstream_pressure_register(&admitted_contract),
+            admitted_contract,
         }
     }
 }
@@ -372,5 +377,10 @@ mod tests {
         );
         assert!(surface.provider_catalog.providers.is_empty());
         assert!(surface.rtd_host.topics.is_empty());
+        assert_eq!(surface.upstream_pressure.records.len(), 3);
+        assert_eq!(
+            surface.upstream_pressure.report().summary(),
+            "3 open / 1 draft / 1 planned / 1 windows-only"
+        );
     }
 }

@@ -433,6 +433,11 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
             value: state.extension_surface.rtd_host.host_report().summary(),
             tone: "muted",
         },
+        ShellChromeFactViewModel {
+            label: "Pressure",
+            value: state.extension_surface.upstream_pressure.report().summary(),
+            tone: "muted",
+        },
     ];
     if let Some(blocked_reason) = active_formula_space.context.blocked_reason.as_ref() {
         footer_facts.push(ShellChromeFactViewModel {
@@ -1170,6 +1175,10 @@ mod tests {
             .footer_facts
             .iter()
             .any(|fact| fact.label == "RTD" && fact.value.contains("1 active")));
+        assert!(frame.footer_facts.iter().any(|fact| {
+            fact.label == "Pressure"
+                && fact.value == "3 open / 1 draft / 1 planned / 1 windows-only"
+        }));
     }
 
     #[test]

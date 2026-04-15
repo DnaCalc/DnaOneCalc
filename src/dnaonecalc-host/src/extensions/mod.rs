@@ -1,6 +1,7 @@
 mod packaging_conformance;
 mod rtd_runtime;
 mod runtime_catalog;
+mod upstream_pressure;
 
 pub use packaging_conformance::{
     build_packaging_conformance_harnesses, verify_packaging_parity,
@@ -14,6 +15,11 @@ pub use runtime_catalog::{
     current_extension_runtime_platform, default_extension_provider_catalog,
     platform_support_for_extension_platform, ExtensionLoadReport, ExtensionProviderCatalog,
     ExtensionProviderLifecycleState, ExtensionProviderManifest, ExtensionProviderRecord,
+};
+pub use upstream_pressure::{
+    default_extension_upstream_pressure_register, ExtensionUpstreamPressureOwner,
+    ExtensionUpstreamPressureRecord, ExtensionUpstreamPressureRegister,
+    ExtensionUpstreamPressureReport, ExtensionUpstreamPressureStatus,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
