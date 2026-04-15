@@ -5,7 +5,7 @@ use web_sys::{ClipboardEvent, HtmlTextAreaElement, InputEvent as WebInputEvent, 
 #[cfg(target_arch = "wasm32")]
 use crate::ui::editor::browser_measurement::capture_overlay_measurement_event;
 use crate::ui::editor::commands::{
-    classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent,
+    classify_dom_input, keydown_to_command, EditorCommand, EditorInputEvent, EditorKeyContext,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::ui::editor::geometry::derive_overlay_snapshot;
@@ -23,6 +23,24 @@ pub fn FormulaEditorSurface(
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
     #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
+    let entry_mode = editor.entry_mode;
+    let live_state = editor.live_state;
+    let result_class_label = editor
+        .result_value_summary
+        .clone()
+        .unwrap_or_else(|| "Unevaluated".to_string());
+    let effective_display_label = editor
+        .effective_display_summary
+        .clone()
+        .unwrap_or_default();
+    let bracket_pair = editor.bracket_pair;
+    let editor_settings = editor.editor_settings;
+    let settings_popover_open = editor.editor_settings_popover_open;
+    let fallback_mode = editor_settings.reduce_motion;
+    let auto_proof_interval_ms = editor_settings.auto_proof_quiet_interval_ms;
+    let auto_proof_epoch: StoredValue<u32> = StoredValue::new(0);
+    let auto_proof_command = on_command.clone();
+    let textarea_ref: NodeRef<leptos::html::Textarea> = NodeRef::new();
     let line_count = editor.raw_entered_cell_text.lines().count().max(1);
     let function_count = editor
         .syntax_runs
@@ -42,6 +60,16 @@ pub fn FormulaEditorSurface(
     let editor_state = editor.editor_surface_state.clone();
     let selection_start = editor_state.selection.start();
     let selection_end = editor_state.selection.end();
+    // Sync the DOM textarea's selectionStart/selectionEnd from logical state
+    // after each render. Native keys (arrows, backspace, delete, plain Enter)
+    // do not go through the reducer — the textarea owns them — so on:input's
+    // selection reporting keeps the DOM and logical selection aligned for
+    // those paths. This post-render sync covers the rarer reducer-driven
+    // mutations (Tab indent, completion accept, F4 reference cycle,
+    // CancelEntry revert) where the reducer rewrites both text and
+    // selection; without the sync, the textarea's prop:value reassignment
+    // would reset the DOM cursor to offset 0.
+    schedule_textarea_selection_sync(textarea_ref, selection_start, selection_end);
     let selection_label = if editor_state.selection.is_collapsed() {
         "collapsed"
     } else {
@@ -76,6 +104,7 @@ pub fn FormulaEditorSurface(
     let editor_for_click_measurement = editor.clone();
     let editor_for_input_measurement = editor.clone();
     let editor_for_keyup_measurement = editor.clone();
+    let editor_state_for_keydown = editor_state.clone();
     let diagnostics_state_label = if editor.diagnostics.is_empty() {
         "Ready to evaluate".to_string()
     } else {
@@ -88,7 +117,14 @@ pub fn FormulaEditorSurface(
     };
 
     view! {
-        <section class="onecalc-formula-editor-surface" data-component="formula-editor-surface">
+        <section
+            class="onecalc-formula-editor-surface"
+            data-component="formula-editor-surface"
+            data-entry-mode=entry_mode.slug()
+            data-live-state=live_state.slug()
+            data-expanded-editor=if editor.expanded_editor { "true" } else { "false" }
+            data-fallback-mode=if fallback_mode { "true" } else { "false" }
+        >
             <header class="onecalc-formula-editor-surface__toolbar">
                 <div class="onecalc-formula-editor-surface__toolbar-copy">
                     <div>
@@ -103,10 +139,60 @@ pub fn FormulaEditorSurface(
                         <span>{function_count} " functions"</span>
                     </div>
                 </div>
+                <div class="onecalc-formula-editor-surface__toolbar-pills" data-role="editor-toolbar-pills">
+                    <span
+                        class="onecalc-formula-editor-surface__entry-mode-pill"
+                        data-role="editor-entry-mode-pill"
+                        data-entry-mode=entry_mode.slug()
+                    >
+                        {entry_mode.label()}
+                    </span>
+                    <span
+                        class="onecalc-formula-editor-surface__result-class-pill"
+                        data-role="editor-result-class-pill"
+                        data-has-result=if editor.result_value_summary.is_some() { "true" } else { "false" }
+                    >
+                        {result_class_label.clone()}
+                    </span>
+                    <span
+                        class="onecalc-formula-editor-surface__live-state-pill"
+                        data-role="editor-live-state-pill"
+                        data-live-state=live_state.slug()
+                        title=live_state.label()
+                    >
+                        <span data-role="editor-live-state-glyph">{live_state.glyph()}</span>
+                        <span data-role="editor-live-state-label">{live_state.label()}</span>
+                    </span>
+                </div>
                 <div class="onecalc-formula-editor-surface__toolbar-state" data-role="editor-toolbar-state">
                     {if editor.diagnostics.is_empty() { "Clean" } else { "Review" }}
                 </div>
+                {{
+                    let toggle_callback = on_command.clone();
+                    view! {
+                        <button
+                            type="button"
+                            class="onecalc-formula-editor-surface__settings-gear"
+                            data-role="editor-settings-gear"
+                            data-open=if settings_popover_open { "true" } else { "false" }
+                            aria-label="Editor settings"
+                            aria-expanded=if settings_popover_open { "true" } else { "false" }
+                            on:click=move |_| {
+                                if let Some(command_callback) = toggle_callback.as_ref() {
+                                    command_callback.run(EditorCommand::ToggleEditorSettingsPopover);
+                                }
+                            }
+                        >
+                            "⚙"
+                        </button>
+                    }
+                }}
             </header>
+            {if settings_popover_open {
+                render_editor_settings_popover(editor_settings, on_command.clone()).into_any()
+            } else {
+                view! { <></> }.into_any()
+            }}
 
             <div class="onecalc-formula-editor-surface__body">
                 <div class="onecalc-formula-editor-surface__line-rail" data-role="editor-line-rail">
@@ -130,6 +216,9 @@ pub fn FormulaEditorSurface(
                     <textarea
                         class="onecalc-formula-editor-surface__textarea"
                         data-role="editor-input"
+                        node_ref=textarea_ref
+                        spellcheck="false"
+                        autocomplete="off"
                         prop:value=editor.raw_entered_cell_text.clone()
                         on:click=move |ev| {
                             #[cfg(not(target_arch = "wasm32"))]
@@ -150,6 +239,11 @@ pub fn FormulaEditorSurface(
                         }
                         on:input=move |ev| {
                             let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                            schedule_auto_proof(
+                                auto_proof_interval_ms,
+                                auto_proof_epoch,
+                                auto_proof_command.clone(),
+                            );
                             if let Some(callback) = on_input_event.as_ref() {
                                 let web_input_event = ev.dyn_ref::<WebInputEvent>();
                                 callback.run(EditorInputEvent {
@@ -230,10 +324,17 @@ pub fn FormulaEditorSurface(
                         }
                         on:keydown=move |ev: KeyboardEvent| {
                             let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                            let key_context = EditorKeyContext {
+                                completion_active: editor_state_for_keydown
+                                    .completion_anchor_offset
+                                    .is_some(),
+                            };
                             if let Some(command) = keydown_to_command(
                                 &ev.key(),
                                 ev.shift_key(),
                                 ev.ctrl_key() || ev.meta_key(),
+                                ev.alt_key(),
+                                key_context,
                             ) {
                                 ev.prevent_default();
                                 ev.stop_propagation();
@@ -270,6 +371,7 @@ pub fn FormulaEditorSurface(
                     data-measurement-source=measurement_source
                     data-char-width-px=overlay_measurement.char_width_px
                     data-line-height-px=overlay_measurement.line_height_px
+                    data-fallback-mode=if fallback_mode { "true" } else { "false" }
                 >
                     <div class="onecalc-formula-editor-surface__syntax-layer" data-role="syntax-layer">
                         {editor
@@ -338,6 +440,41 @@ pub fn FormulaEditorSurface(
                         ".."
                         {selection_end}
                     </div>
+                    {bracket_pair.map(|pair| {
+                        let open_box = overlay_measurement.span_box(
+                            &editor.raw_entered_cell_text,
+                            crate::adapters::oxfml::FormulaTextSpan {
+                                start: pair.open_offset,
+                                len: 1,
+                            },
+                        );
+                        let close_box = overlay_measurement.span_box(
+                            &editor.raw_entered_cell_text,
+                            crate::adapters::oxfml::FormulaTextSpan {
+                                start: pair.close_offset,
+                                len: 1,
+                            },
+                        );
+                        view! {
+                            <div
+                                class="onecalc-formula-editor-surface__bracket-pair-layer"
+                                data-role="bracket-pair-layer"
+                            >
+                                <span
+                                    class="onecalc-formula-editor-surface__bracket-pair"
+                                    data-role="bracket-pair-open"
+                                    data-bracket-offset=pair.open_offset
+                                    style=bracket_pair_style(open_box)
+                                />
+                                <span
+                                    class="onecalc-formula-editor-surface__bracket-pair"
+                                    data-role="bracket-pair-close"
+                                    data-bracket-offset=pair.close_offset
+                                    style=bracket_pair_style(close_box)
+                                />
+                            </div>
+                        }
+                    })}
                     <div
                         class="onecalc-formula-editor-surface__caret-indicator"
                         data-role="caret-indicator"
@@ -496,7 +633,7 @@ pub fn FormulaEditorSurface(
                                     data-focused-assist="signature"
                                     data-popup-line=popup_box.start.line_index
                                     data-popup-column=popup_box.start.column_index
-                                    style=overlay_popup_style(popup_box)
+                                    style=overlay_signature_popup_style(popup_box)
                                 >
                                     <div
                                         class="onecalc-formula-editor-surface__signature-help-popup"
@@ -546,6 +683,20 @@ pub fn FormulaEditorSurface(
                         <strong>{diagnostics_state_label}</strong>
                         <div>{diagnostics_state_detail}</div>
                     </div>
+                </div>
+                <div
+                    class="onecalc-formula-editor-surface__diagnostic-band-effective-display"
+                    data-role="editor-effective-display"
+                    data-has-display=if editor.effective_display_summary.is_some() { "true" } else { "false" }
+                >
+                    <span data-role="editor-effective-display-label">"Effective display: "</span>
+                    <span data-role="editor-effective-display-value">
+                        {if effective_display_label.is_empty() {
+                            "—".to_string()
+                        } else {
+                            effective_display_label.clone()
+                        }}
+                    </span>
                 </div>
                 <div class="onecalc-formula-editor-surface__diagnostic-band-action">
                     {if editor.has_signature_help { "Signature help ready" } else { "Assist idle" }}
@@ -599,6 +750,231 @@ fn overlay_popup_style(box_geometry: crate::ui::editor::geometry::EditorOverlayB
         "position:absolute;top:{}px;left:{}px;",
         box_geometry.top_px + box_geometry.height_px,
         box_geometry.left_px
+    )
+}
+
+fn schedule_textarea_selection_sync(
+    textarea_ref: NodeRef<leptos::html::Textarea>,
+    selection_start: usize,
+    selection_end: usize,
+) {
+    let _ = textarea_ref;
+    let _ = selection_start;
+    let _ = selection_end;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let start = selection_start as u32;
+        let end = selection_end as u32;
+        leptos::prelude::set_timeout(
+            move || {
+                if let Some(element) = textarea_ref.get() {
+                    let current_start = element.selection_start().ok().flatten();
+                    let current_end = element.selection_end().ok().flatten();
+                    if current_start != Some(start) || current_end != Some(end) {
+                        let _ = element.set_selection_range(start, end);
+                    }
+                }
+            },
+            std::time::Duration::from_millis(0),
+        );
+    }
+}
+
+fn schedule_auto_proof(
+    interval_ms: Option<u32>,
+    epoch: StoredValue<u32>,
+    on_command: Option<Callback<EditorCommand>>,
+) {
+    let Some(ms) = interval_ms else {
+        return;
+    };
+    let next_epoch = epoch.with_value(|current| current.wrapping_add(1));
+    epoch.set_value(next_epoch);
+    let _ = on_command;
+    let _ = ms;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let command = on_command;
+        leptos::prelude::set_timeout(
+            move || {
+                if epoch.with_value(|current| *current) != next_epoch {
+                    return;
+                }
+                if let Some(callback) = command.as_ref() {
+                    callback.run(EditorCommand::RequestProof);
+                }
+            },
+            std::time::Duration::from_millis(ms as u64),
+        );
+    }
+}
+
+fn render_editor_settings_popover(
+    settings: crate::ui::editor::state::EditorSettings,
+    on_command: Option<Callback<EditorCommand>>,
+) -> impl IntoView {
+    use crate::ui::editor::state::{
+        CompletionAggressiveness, EditorSettingUpdate, HelpPlacement,
+    };
+    let toggle = |update: EditorSettingUpdate, on_command: Option<Callback<EditorCommand>>| {
+        move |_| {
+            if let Some(callback) = on_command.as_ref() {
+                callback.run(EditorCommand::UpdateEditorSetting(update));
+            }
+        }
+    };
+    let completion_slug = settings.completion_aggressiveness.slug();
+    let help_slug = settings.help_placement.slug();
+    let auto_proof_enabled = settings.auto_proof_quiet_interval_ms.is_some();
+    let auto_proof_value = settings
+        .auto_proof_quiet_interval_ms
+        .map(|ms| ms.to_string())
+        .unwrap_or_else(|| "off".to_string());
+    view! {
+        <div
+            class="onecalc-formula-editor-surface__settings-popover"
+            data-role="editor-settings-popover"
+            role="dialog"
+            aria-label="Editor settings"
+        >
+            <div class="onecalc-formula-editor-surface__settings-popover-grid">
+                <button
+                    type="button"
+                    class="onecalc-formula-editor-surface__settings-toggle"
+                    data-role="setting-toggle-auto-close-brackets"
+                    data-checked=if settings.auto_close_brackets { "true" } else { "false" }
+                    on:click=toggle(EditorSettingUpdate::ToggleAutoCloseBrackets, on_command.clone())
+                >
+                    <span>"Auto-close brackets"</span>
+                    <span>{if settings.auto_close_brackets { "on" } else { "off" }}</span>
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-formula-editor-surface__settings-toggle"
+                    data-role="setting-toggle-highlight-bracket-pairs"
+                    data-checked=if settings.highlight_bracket_pairs { "true" } else { "false" }
+                    on:click=toggle(EditorSettingUpdate::ToggleHighlightBracketPairs, on_command.clone())
+                >
+                    <span>"Highlight bracket pairs"</span>
+                    <span>{if settings.highlight_bracket_pairs { "on" } else { "off" }}</span>
+                </button>
+                <div
+                    class="onecalc-formula-editor-surface__settings-choice"
+                    data-role="setting-completion-aggressiveness"
+                    data-value=completion_slug
+                >
+                    <span>"Completion"</span>
+                    <div class="onecalc-formula-editor-surface__settings-choice-buttons">
+                        {[
+                            CompletionAggressiveness::Manual,
+                            CompletionAggressiveness::OnIdentifier,
+                            CompletionAggressiveness::Always,
+                        ]
+                        .iter()
+                        .map(|choice| {
+                            let choice = *choice;
+                            let is_active = settings.completion_aggressiveness == choice;
+                            let handler = toggle(
+                                EditorSettingUpdate::SetCompletionAggressiveness(choice),
+                                on_command.clone(),
+                            );
+                            view! {
+                                <button
+                                    type="button"
+                                    class="onecalc-formula-editor-surface__settings-choice-button"
+                                    data-value=choice.slug()
+                                    data-active=if is_active { "true" } else { "false" }
+                                    on:click=handler
+                                >
+                                    {choice.label()}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                    </div>
+                </div>
+                <div
+                    class="onecalc-formula-editor-surface__settings-choice"
+                    data-role="setting-help-placement"
+                    data-value=help_slug
+                >
+                    <span>"Help placement"</span>
+                    <div class="onecalc-formula-editor-surface__settings-choice-buttons">
+                        {[HelpPlacement::Inline, HelpPlacement::Sidecar]
+                            .iter()
+                            .map(|choice| {
+                                let choice = *choice;
+                                let is_active = settings.help_placement == choice;
+                                let handler = toggle(
+                                    EditorSettingUpdate::SetHelpPlacement(choice),
+                                    on_command.clone(),
+                                );
+                                view! {
+                                    <button
+                                        type="button"
+                                        class="onecalc-formula-editor-surface__settings-choice-button"
+                                        data-value=choice.slug()
+                                        data-active=if is_active { "true" } else { "false" }
+                                        on:click=handler
+                                    >
+                                        {choice.label()}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    class="onecalc-formula-editor-surface__settings-toggle"
+                    data-role="setting-toggle-reuse-timing-badge"
+                    data-checked=if settings.reuse_timing_badge_visible { "true" } else { "false" }
+                    on:click=toggle(EditorSettingUpdate::ToggleReuseTimingBadge, on_command.clone())
+                >
+                    <span>"Show reuse/timing badge"</span>
+                    <span>{if settings.reuse_timing_badge_visible { "on" } else { "off" }}</span>
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-formula-editor-surface__settings-toggle"
+                    data-role="setting-toggle-reduce-motion"
+                    data-checked=if settings.reduce_motion { "true" } else { "false" }
+                    on:click=toggle(EditorSettingUpdate::ToggleReduceMotion, on_command.clone())
+                >
+                    <span>"Reduce motion / overlays"</span>
+                    <span>{if settings.reduce_motion { "on" } else { "off" }}</span>
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-formula-editor-surface__settings-toggle"
+                    data-role="setting-toggle-auto-proof"
+                    data-checked=if auto_proof_enabled { "true" } else { "false" }
+                    data-value=auto_proof_value
+                    on:click=toggle(EditorSettingUpdate::ToggleAutoProofQuietInterval, on_command.clone())
+                >
+                    <span>"Auto-proof quiet interval"</span>
+                    <span>{if auto_proof_enabled { "600 ms" } else { "off" }}</span>
+                </button>
+            </div>
+        </div>
+    }
+}
+
+fn bracket_pair_style(box_geometry: crate::ui::editor::geometry::EditorOverlayBox) -> String {
+    format!(
+        "position:absolute;top:{}px;left:{}px;width:{}px;height:{}px;",
+        box_geometry.top_px, box_geometry.left_px, box_geometry.width_px, box_geometry.height_px
+    )
+}
+
+fn overlay_signature_popup_style(
+    box_geometry: crate::ui::editor::geometry::EditorOverlayBox,
+) -> String {
+    // Anchor at the top of the call span; CSS transform shifts the popup above
+    // the line so it reads like a classic ScreenTip hovering over the caret.
+    format!(
+        "position:absolute;top:{}px;left:{}px;transform:translateY(calc(-100% - 6px));",
+        box_geometry.top_px, box_geometry.left_px
     )
 }
 
@@ -842,6 +1218,18 @@ mod tests {
                     }),
                     green_tree_key: Some("green-1".to_string()),
                     reused_green_tree: false,
+                    entry_mode: crate::ui::editor::state::EditorEntryMode::Formula,
+                    live_state: crate::ui::editor::state::EditorLiveState::EditingLive,
+                    expanded_editor: false,
+                    result_value_summary: Some("Number".to_string()),
+                    effective_display_summary: Some("3".to_string()),
+                    bracket_pair: Some(crate::ui::editor::bracket_matcher::BracketPairHighlight {
+                        open_offset: 4,
+                        close_offset: 8,
+                    }),
+                    editor_settings: crate::ui::editor::state::EditorSettings::default(),
+                    editor_settings_popover_open: true,
+                    configure_drawer_open: false,
                     editor_surface_state: EditorSurfaceState {
                         caret: EditorCaret { offset: 4 },
                         selection: EditorSelection { anchor: 1, focus: 4 },
@@ -860,6 +1248,8 @@ mod tests {
 
         assert!(html.contains("data-component=\"formula-editor-surface\""));
         assert!(html.contains("data-role=\"editor-input\""));
+        assert!(html.contains("spellcheck=\"false\""));
+        assert!(html.contains("autocomplete=\"off\""));
         assert!(html.contains("data-role=\"native-input-layer\""));
         assert!(html.contains("data-role=\"overlay-layer\""));
         assert!(html.contains("data-measurement-source=\"mixed\""));
@@ -884,6 +1274,7 @@ mod tests {
         assert!(html.contains("position:absolute;"));
         assert!(html.contains("top:86px;"));
         assert!(html.contains("left:24px;"));
+        assert!(html.contains("transform:translateY(calc(-100% - 6px))"));
         assert!(html.contains("data-role=\"completion-popup-container\""));
         assert!(html.contains("data-role=\"signature-help-anchor-indicator\""));
         assert!(html.contains("data-role=\"signature-help-popup-container\""));
@@ -905,5 +1296,77 @@ mod tests {
         assert!(html.contains("data-active=\"true\""));
         assert!(html.contains("data-anchor-span-start=\"1\""));
         assert!(html.contains("data-anchor-span-len=\"3\""));
+        assert!(html.contains("data-role=\"editor-entry-mode-pill\""));
+        assert!(html.contains("data-entry-mode=\"formula\""));
+        assert!(html.contains("data-role=\"editor-result-class-pill\""));
+        assert!(html.contains("data-has-result=\"true\""));
+        assert!(html.contains("data-role=\"editor-live-state-pill\""));
+        assert!(html.contains("data-live-state=\"editing-live\""));
+        assert!(html.contains("data-role=\"editor-effective-display\""));
+        assert!(html.contains("data-role=\"bracket-pair-layer\""));
+        assert!(html.contains("data-role=\"bracket-pair-open\""));
+        assert!(html.contains("data-bracket-offset=\"4\""));
+        assert!(html.contains("data-role=\"bracket-pair-close\""));
+        assert!(html.contains("data-bracket-offset=\"8\""));
+        assert!(html.contains("data-role=\"editor-settings-gear\""));
+        assert!(html.contains("data-role=\"editor-settings-popover\""));
+        assert!(html.contains("data-role=\"setting-toggle-auto-close-brackets\""));
+        assert!(html.contains("data-role=\"setting-completion-aggressiveness\""));
+        assert!(html.contains("data-role=\"setting-help-placement\""));
+        assert!(html.contains("data-role=\"setting-toggle-auto-proof\""));
+        assert!(html.contains("data-fallback-mode=\"false\""));
+    }
+
+    #[test]
+    fn formula_editor_surface_renders_fallback_mode_when_reduce_motion_enabled() {
+        let fallback_settings = crate::ui::editor::state::EditorSettings {
+            reduce_motion: true,
+            ..crate::ui::editor::state::EditorSettings::default()
+        };
+        let html = view! {
+            <FormulaEditorSurface
+                editor=ExploreEditorClusterViewModel {
+                    raw_entered_cell_text: "=1+1".to_string(),
+                    scenario_label: "fallback".to_string(),
+                    truth_source_label: "local-fallback".to_string(),
+                    host_profile_summary: "headless".to_string(),
+                    packet_kind_summary: "preview".to_string(),
+                    capability_floor_summary: "Explore".to_string(),
+                    mode_availability_summary: "Explore".to_string(),
+                    trace_summary: None,
+                    blocked_reason: None,
+                    syntax_runs: vec![],
+                    diagnostics: vec![],
+                    completion_count: 0,
+                    completion_items: vec![],
+                    selected_completion_proposal_id: None,
+                    selected_completion_item: None,
+                    help_sync_lookup_key: None,
+                    has_signature_help: false,
+                    signature_help: None,
+                    function_help: None,
+                    function_help_lookup_key: None,
+                    completion_anchor_span: None,
+                    overlay_geometry: None,
+                    green_tree_key: None,
+                    reused_green_tree: false,
+                    entry_mode: crate::ui::editor::state::EditorEntryMode::Formula,
+                    live_state: crate::ui::editor::state::EditorLiveState::Idle,
+                    expanded_editor: false,
+                    result_value_summary: None,
+                    effective_display_summary: None,
+                    bracket_pair: None,
+                    editor_settings: fallback_settings,
+                    editor_settings_popover_open: false,
+                    configure_drawer_open: false,
+                    editor_surface_state: EditorSurfaceState::for_text("=1+1"),
+                }
+            />
+        }
+        .to_html();
+
+        assert!(html.contains("data-fallback-mode=\"true\""));
+        assert!(html.contains("data-component=\"formula-editor-surface\""));
+        assert!(html.contains("data-role=\"editor-input\""));
     }
 }

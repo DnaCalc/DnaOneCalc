@@ -1,3 +1,9 @@
+// TODO(dno-yjk.A5): this file exercises the archived rich Leptos surface
+// and must move to `tests/ui_archive_2026_04/` under
+// `#[cfg(feature = "ui-archive-2026-04")]` when `dno-yjk.A5` archives the
+// rich shell components. Until the archive destination exists, the test
+// stays here as a reference pin for the rich surface.
+
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::state::FormulaSpaceState;
 use dnaonecalc_host::test_support::sample_editor_document;
@@ -187,5 +193,6 @@ fn multiline_signature_popup_uses_measured_box_position() {
 
     assert!(html.contains("data-role=\"signature-help-popup-container\""));
     assert!(html.contains("data-popup-line=\"0\""));
-    assert!(html.contains("top:154px;left:6px;"));
+    assert!(html.contains("top:132px;left:6px;"));
+    assert!(html.contains("transform:translateY(calc(-100% - 6px))"));
 }

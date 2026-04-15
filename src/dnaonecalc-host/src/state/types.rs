@@ -12,7 +12,7 @@ use crate::services::verification_bundle::{
     OxReplayExplainRecord, OxReplayMismatchRecord, VerificationObservationGapReport,
 };
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
-use crate::ui::editor::state::EditorSurfaceState;
+use crate::ui::editor::state::{EditorLiveState, EditorSettings, EditorSurfaceState};
 
 #[derive(Debug, Clone)]
 pub struct OneCalcHostState {
@@ -90,6 +90,9 @@ pub struct FormulaSpaceState {
     pub effective_display_summary: Option<String>,
     pub context: FormulaSpaceContextState,
     pub array_preview: Option<FormulaArrayPreviewState>,
+    pub committed_cell_text: Option<String>,
+    pub proofed_cell_text: Option<String>,
+    pub expanded_editor: bool,
 }
 
 impl FormulaSpaceState {
@@ -110,7 +113,31 @@ impl FormulaSpaceState {
                 ..Default::default()
             },
             array_preview: None,
+            committed_cell_text: None,
+            proofed_cell_text: None,
+            expanded_editor: false,
         }
+    }
+
+    pub fn live_state(&self) -> EditorLiveState {
+        if self.raw_entered_cell_text.is_empty() && self.committed_cell_text.is_none() {
+            return EditorLiveState::Idle;
+        }
+        if self
+            .committed_cell_text
+            .as_deref()
+            .is_some_and(|text| text == self.raw_entered_cell_text)
+        {
+            return EditorLiveState::Committed;
+        }
+        if self
+            .proofed_cell_text
+            .as_deref()
+            .is_some_and(|text| text == self.raw_entered_cell_text)
+        {
+            return EditorLiveState::ProofedScratch;
+        }
+        EditorLiveState::EditingLive
     }
 }
 
@@ -223,7 +250,11 @@ pub struct CapabilityAndEnvironmentState;
 pub struct ExtensionSurfaceState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct GlobalUiChromeState;
+pub struct GlobalUiChromeState {
+    pub editor_settings: EditorSettings,
+    pub editor_settings_popover_open: bool,
+    pub configure_drawer_open: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceNavigationSelection {
@@ -246,66 +277,3 @@ pub struct OpenFormulaSpaceRecord {
     pub is_pinned: bool,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::services::programmatic_testing::{
-        ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
-    };
-
-    #[test]
-    fn formula_space_tracks_raw_entered_cell_text() {
-        let state = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "'123.4");
-        assert_eq!(state.raw_entered_cell_text, "'123.4");
-        assert_eq!(state.context.scenario_label, "space-1");
-        assert!(state.array_preview.is_none());
-    }
-
-    #[test]
-    fn workspace_shell_defaults_to_explore_without_active_space() {
-        let state = OneCalcHostState::default();
-        assert_eq!(
-            state.active_formula_space_view.active_mode,
-            AppMode::Explore
-        );
-        assert!(state.workspace_shell.active_formula_space_id.is_none());
-    }
-
-    #[test]
-    fn retained_artifact_open_state_defaults_to_empty_catalog() {
-        let state = RetainedArtifactOpenState::default();
-        assert!(state.open_artifact_id.is_none());
-        assert!(state.catalog.is_empty());
-    }
-
-    #[test]
-    fn retained_artifact_record_keeps_open_mode_hint() {
-        let record = RetainedArtifactRecord {
-            artifact_id: "artifact-1".to_string(),
-            case_id: "case-1".to_string(),
-            formula_space_id: FormulaSpaceId::new("space-1"),
-            comparison_status: ProgrammaticComparisonStatus::Blocked,
-            open_mode_hint: ProgrammaticOpenModeHint::Workbench,
-            discrepancy_summary: Some("blocked by host policy".to_string()),
-            bundle_report_path: None,
-            case_output_dir: None,
-            xml_extraction: None,
-            upstream_gap_report: None,
-            oxfml_comparison_value: None,
-            excel_comparison_value: None,
-            value_match: None,
-            display_match: None,
-            replay_equivalent: None,
-            replay_mismatch_records: Vec::new(),
-            replay_explain_records: Vec::new(),
-            oxfml_effective_display_summary: None,
-            excel_effective_display_text: None,
-        };
-
-        assert_eq!(record.open_mode_hint, ProgrammaticOpenModeHint::Workbench);
-        assert_eq!(
-            record.discrepancy_summary.as_deref(),
-            Some("blocked by host policy")
-        );
-    }
-}

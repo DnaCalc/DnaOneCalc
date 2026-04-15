@@ -1,3 +1,9 @@
+// TODO(dno-yjk.A5): this file exercises the archived rich Leptos surface
+// and must move to `tests/ui_archive_2026_04/` under
+// `#[cfg(feature = "ui-archive-2026-04")]` when `dno-yjk.A5` archives the
+// rich shell components. Until the archive destination exists, the test
+// stays here as a reference pin for the rich surface.
+
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::services::programmatic_testing::{
     ProgrammaticArtifactCatalogEntry, ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
@@ -29,8 +35,10 @@ fn ex_01_shell_render_path_wraps_explore_mode_inside_shared_frame() {
     assert!(html.contains("data-theme=\"onecalc-theme\""));
     assert!(html.contains("data-host-app=\"onecalc\""));
     assert!(html.contains("DNA OneCalc"));
-    assert!(html.contains("Formula Explorer"));
     assert!(html.contains("data-mode=\"Explore\""));
+    assert!(html.contains("data-role=\"shell-frame-configure-toggle\""));
+    assert!(html.contains("data-component=\"formula-editor-surface\""));
+    assert!(!html.contains("Formula Explorer"));
 }
 
 #[test]

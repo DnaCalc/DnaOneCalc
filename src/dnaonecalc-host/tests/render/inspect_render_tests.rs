@@ -1,3 +1,9 @@
+// TODO(dno-yjk.A5): this file exercises the archived rich Leptos surface
+// and must move to `tests/ui_archive_2026_04/` under
+// `#[cfg(feature = "ui-archive-2026-04")]` when `dno-yjk.A5` archives the
+// rich shell components. Until the archive destination exists, the test
+// stays here as a reference pin for the rich surface.
+
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
 use dnaonecalc_host::services::inspect_mode::build_inspect_view_model;
 use dnaonecalc_host::state::FormulaSpaceState;

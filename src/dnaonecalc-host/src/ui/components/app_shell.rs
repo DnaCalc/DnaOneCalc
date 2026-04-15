@@ -44,6 +44,29 @@ pub fn OneCalcShellApp(
     let on_formula_space_select = Callback::new(move |formula_space_id: String| {
         state.update(|state| select_active_formula_space(state, &formula_space_id));
     });
+    let on_new_formula_space = Callback::new(move |_: ()| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::new_formula_space(state);
+        });
+    });
+    let on_close_formula_space = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::close_formula_space(state, &formula_space_id);
+        });
+    });
+    let on_toggle_pin_formula_space = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::toggle_pin_formula_space(state, &formula_space_id);
+        });
+    });
+    let on_configure_toggle = Callback::new(move |_: ()| {
+        state.update(|state| {
+            let _ = apply_editor_command_to_active_formula_space(
+                state,
+                EditorCommand::ToggleConfigureDrawer,
+            );
+        });
+    });
     let editor_bridge_for_input = editor_bridge.clone();
     let on_editor_input = Callback::new(move |event: EditorInputEvent| {
         state.update(|state| {
@@ -113,6 +136,11 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_new_formula_space=Some(on_new_formula_space)
+                                on_close_formula_space=Some(on_close_formula_space)
+                                on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
+                                on_configure_toggle=Some(on_configure_toggle)
+                                configure_drawer_open=current_state.global_ui_chrome.configure_drawer_open
                             >
                                 <ExploreShell
                                     editor=build_explore_editor_cluster(&view_model)
@@ -131,6 +159,11 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_new_formula_space=Some(on_new_formula_space)
+                                on_close_formula_space=Some(on_close_formula_space)
+                                on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
+                                on_configure_toggle=Some(on_configure_toggle)
+                                configure_drawer_open=current_state.global_ui_chrome.configure_drawer_open
                             >
                                 <InspectShell
                                     walk=build_inspect_walk_cluster(&view_model)
@@ -146,6 +179,11 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_new_formula_space=Some(on_new_formula_space)
+                                on_close_formula_space=Some(on_close_formula_space)
+                                on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
+                                on_configure_toggle=Some(on_configure_toggle)
+                                configure_drawer_open=current_state.global_ui_chrome.configure_drawer_open
                             >
                                 <WorkbenchShell
                                     outcome=build_workbench_outcome_cluster(&view_model)
@@ -200,8 +238,12 @@ mod tests {
 
         assert!(html.contains("data-theme=\"onecalc-theme\""));
         assert!(html.contains("DNA OneCalc"));
-        assert!(html.contains("Formula Explorer"));
         assert!(html.contains("data-mode=\"Explore\""));
+        assert!(html.contains("data-role=\"shell-frame-configure-toggle\""));
+        assert!(html.contains("data-component=\"formula-editor-surface\""));
+        // Explore layout discipline: no Formula Explorer hero, no overview deck.
+        assert!(!html.contains("Formula Explorer"));
+        assert!(!html.contains("data-role=\"explore-overview-deck\""));
     }
 
     #[test]

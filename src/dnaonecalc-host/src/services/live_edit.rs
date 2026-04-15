@@ -47,6 +47,15 @@ pub fn apply_live_editor_command(
         EditorCommand::SelectPreviousCompletion
             | EditorCommand::SelectNextCompletion
             | EditorCommand::SelectCompletionByIndex(_)
+            | EditorCommand::CommitEntry
+            | EditorCommand::RequestProof
+            | EditorCommand::ForceShowCompletion
+            | EditorCommand::DismissCompletion
+            | EditorCommand::ToggleExpandedHeight
+            | EditorCommand::SendSelectionToInspect
+            | EditorCommand::ToggleEditorSettingsPopover
+            | EditorCommand::UpdateEditorSetting(_)
+            | EditorCommand::ToggleConfigureDrawer
     ) {
         return Ok(true);
     }
@@ -212,6 +221,56 @@ mod tests {
             active.editor_surface_state.completion_selected_index,
             Some(0)
         );
+    }
+
+    /// §11.2 invariant 4: `apply_live_editor_command` skips bridge
+    /// refresh for every command in the skip list. A bridge that panics
+    /// on any call fails the test the moment a non-skipped command is
+    /// dispatched, which makes this test a precise pin of the skip list.
+    #[test]
+    fn bridge_refresh_skip_list_covers_full_command_set() {
+        use crate::ui::editor::state::{CompletionAggressiveness, EditorSettingUpdate};
+
+        struct PanicBridge;
+        impl OxfmlEditorBridge for PanicBridge {
+            fn apply_formula_edit(
+                &self,
+                _request: FormulaEditRequest,
+            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+                panic!("bridge refresh should be skipped for this command");
+            }
+        }
+
+        let skip_list = [
+            EditorCommand::SelectPreviousCompletion,
+            EditorCommand::SelectNextCompletion,
+            EditorCommand::SelectCompletionByIndex(0),
+            EditorCommand::CommitEntry,
+            EditorCommand::RequestProof,
+            EditorCommand::ForceShowCompletion,
+            EditorCommand::DismissCompletion,
+            EditorCommand::ToggleExpandedHeight,
+            EditorCommand::SendSelectionToInspect,
+            EditorCommand::ToggleEditorSettingsPopover,
+            EditorCommand::UpdateEditorSetting(EditorSettingUpdate::SetCompletionAggressiveness(
+                CompletionAggressiveness::Always,
+            )),
+            EditorCommand::ToggleConfigureDrawer,
+        ];
+
+        for command in skip_list {
+            let formula_space_id = FormulaSpaceId::new("space-1");
+            let mut state = OneCalcHostState::default();
+            state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+            let mut formula_space =
+                FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+            formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+            formula_space.editor_surface_state.completion_selected_index = Some(0);
+            state.formula_spaces.insert(formula_space);
+
+            let _ = apply_live_editor_command(&PanicBridge, &mut state, command.clone())
+                .expect("skip-listed command should not touch the bridge");
+        }
     }
 
     #[test]

@@ -2,9 +2,12 @@ use crate::services::explore_mode::{
     ExploreCompletionItemView, ExploreDiagnosticView, ExploreFunctionHelpView,
     ExploreSignatureHelpView, ExploreViewModel,
 };
+use crate::ui::editor::bracket_matcher::BracketPairHighlight;
 use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::render_projection::SyntaxRun;
-use crate::ui::editor::state::EditorSurfaceState;
+use crate::ui::editor::state::{
+    EditorEntryMode, EditorLiveState, EditorSettings, EditorSurfaceState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreEditorClusterViewModel {
@@ -33,14 +36,24 @@ pub struct ExploreEditorClusterViewModel {
     pub mode_availability_summary: String,
     pub trace_summary: Option<String>,
     pub blocked_reason: Option<String>,
+    pub entry_mode: EditorEntryMode,
+    pub live_state: EditorLiveState,
+    pub expanded_editor: bool,
+    pub result_value_summary: Option<String>,
+    pub effective_display_summary: Option<String>,
+    pub bracket_pair: Option<BracketPairHighlight>,
+    pub editor_settings: EditorSettings,
+    pub editor_settings_popover_open: bool,
+    pub configure_drawer_open: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExploreResultClusterViewModel {
     pub result_value_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub latest_evaluation_summary: Option<String>,
     pub array_preview: Option<crate::services::explore_mode::ExploreArrayPreviewView>,
+    pub value_panel: crate::ui::panels::value_panel_model::ValuePanelViewModel,
 }
 
 pub fn build_explore_editor_cluster(
@@ -51,6 +64,14 @@ pub fn build_explore_editor_cluster(
         .completion_selected_index
         .and_then(|index| view_model.completion_items.get(index))
         .cloned();
+    let bracket_pair = if view_model.editor_settings.highlight_bracket_pairs {
+        crate::ui::editor::bracket_matcher::bracket_pair_for_caret(
+            &view_model.raw_entered_cell_text,
+            view_model.editor_surface_state.caret.offset,
+        )
+    } else {
+        None
+    };
 
     ExploreEditorClusterViewModel {
         raw_entered_cell_text: view_model.raw_entered_cell_text.clone(),
@@ -96,17 +117,33 @@ pub fn build_explore_editor_cluster(
         mode_availability_summary: view_model.mode_availability_summary.clone(),
         trace_summary: view_model.trace_summary.clone(),
         blocked_reason: view_model.blocked_reason.clone(),
+        entry_mode: view_model.entry_mode,
+        live_state: view_model.live_state,
+        expanded_editor: view_model.expanded_editor,
+        result_value_summary: view_model.result_value_summary.clone(),
+        effective_display_summary: view_model.effective_display_summary.clone(),
+        bracket_pair,
+        editor_settings: view_model.editor_settings,
+        editor_settings_popover_open: view_model.editor_settings_popover_open,
+        configure_drawer_open: view_model.configure_drawer_open,
     }
 }
 
 pub fn build_explore_result_cluster(
     view_model: &ExploreViewModel,
 ) -> ExploreResultClusterViewModel {
+    let value_panel = crate::ui::panels::value_panel_model::build_value_panel_from_explore_strings(
+        view_model.result_value_summary.as_deref(),
+        view_model.effective_display_summary.as_deref(),
+        view_model.green_tree_key.as_deref(),
+        view_model.live_state,
+    );
     ExploreResultClusterViewModel {
         result_value_summary: view_model.result_value_summary.clone(),
         effective_display_summary: view_model.effective_display_summary.clone(),
         latest_evaluation_summary: view_model.latest_evaluation_summary.clone(),
         array_preview: view_model.array_preview.clone(),
+        value_panel,
     }
 }
 
@@ -191,6 +228,12 @@ mod tests {
             }),
             green_tree_key: Some("green-1".to_string()),
             reused_green_tree: true,
+            entry_mode: EditorEntryMode::Formula,
+            live_state: EditorLiveState::EditingLive,
+            expanded_editor: false,
+            editor_settings: crate::ui::editor::state::EditorSettings::default(),
+            editor_settings_popover_open: false,
+            configure_drawer_open: false,
         };
 
         let cluster = build_explore_editor_cluster(&view_model);
@@ -266,6 +309,12 @@ mod tests {
             }),
             green_tree_key: None,
             reused_green_tree: false,
+            entry_mode: EditorEntryMode::Formula,
+            live_state: EditorLiveState::Idle,
+            expanded_editor: false,
+            editor_settings: crate::ui::editor::state::EditorSettings::default(),
+            editor_settings_popover_open: false,
+            configure_drawer_open: false,
         };
 
         let cluster = build_explore_result_cluster(&view_model);

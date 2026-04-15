@@ -3,6 +3,7 @@ use crate::ui::editor::state::{EditorCaret, EditorSelection, EditorSurfaceState}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
     InsertText(String),
+    InsertNewline,
     CutSelection,
     MoveCaretLeft,
     MoveCaretRight,
@@ -17,6 +18,22 @@ pub enum EditorCommand {
     Delete,
     IndentWithSpaces,
     OutdentWithSpaces,
+    CommitEntry,
+    CancelEntry,
+    RequestProof,
+    ForceShowCompletion,
+    DismissCompletion,
+    CycleReferenceForm,
+    ToggleExpandedHeight,
+    SendSelectionToInspect,
+    ToggleEditorSettingsPopover,
+    UpdateEditorSetting(crate::ui::editor::state::EditorSettingUpdate),
+    ToggleConfigureDrawer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditorKeyContext {
+    pub completion_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +67,7 @@ pub fn apply_editor_command(
 ) -> EditorCommandResult {
     match command {
         EditorCommand::InsertText(inserted_text) => insert_text(text, state, &inserted_text),
+        EditorCommand::InsertNewline => insert_text(text, state, "\n"),
         EditorCommand::CutSelection => cut_selection(text, state),
         EditorCommand::MoveCaretLeft => {
             let next = state.caret.offset.saturating_sub(1);
@@ -103,7 +121,18 @@ pub fn apply_editor_command(
         | EditorCommand::SelectNextCompletion
         | EditorCommand::SelectCompletionByIndex(_)
         | EditorCommand::AcceptSelectedCompletion
-        | EditorCommand::AcceptCompletionByIndex(_) => EditorCommandResult {
+        | EditorCommand::AcceptCompletionByIndex(_)
+        | EditorCommand::CommitEntry
+        | EditorCommand::CancelEntry
+        | EditorCommand::RequestProof
+        | EditorCommand::ForceShowCompletion
+        | EditorCommand::DismissCompletion
+        | EditorCommand::CycleReferenceForm
+        | EditorCommand::ToggleExpandedHeight
+        | EditorCommand::SendSelectionToInspect
+        | EditorCommand::ToggleEditorSettingsPopover
+        | EditorCommand::UpdateEditorSetting(_)
+        | EditorCommand::ToggleConfigureDrawer => EditorCommandResult {
             text: text.to_string(),
             state: state.clone(),
         },
@@ -114,20 +143,54 @@ pub fn apply_editor_command(
     }
 }
 
-pub fn keydown_to_command(key: &str, shift_key: bool, shortcut_key: bool) -> Option<EditorCommand> {
-    match (key, shift_key, shortcut_key) {
-        ("x" | "X", _, true) => Some(EditorCommand::CutSelection),
-        ("ArrowUp", false, false) => Some(EditorCommand::SelectPreviousCompletion),
-        ("ArrowDown", false, false) => Some(EditorCommand::SelectNextCompletion),
-        ("Enter", false, false) => Some(EditorCommand::AcceptSelectedCompletion),
-        ("ArrowLeft", false, false) => Some(EditorCommand::MoveCaretLeft),
-        ("ArrowRight", false, false) => Some(EditorCommand::MoveCaretRight),
-        ("ArrowLeft", true, false) => Some(EditorCommand::ExtendSelectionLeft),
-        ("ArrowRight", true, false) => Some(EditorCommand::ExtendSelectionRight),
-        ("Backspace", false, false) => Some(EditorCommand::Backspace),
-        ("Delete", false, false) => Some(EditorCommand::Delete),
-        ("Tab", false, false) => Some(EditorCommand::IndentWithSpaces),
-        ("Tab", true, false) => Some(EditorCommand::OutdentWithSpaces),
+/// Map a keydown event to an editor command if — and only if — the editor
+/// needs to re-own that key. Native textarea behaviour handles everything
+/// else: ArrowLeft/Right/Up/Down, Home, End, PageUp/Down, Backspace, Delete,
+/// plain Enter (inserts newline), plain character entry, IME, clipboard
+/// shortcuts, native undo/redo. The editor only intercepts keys where native
+/// behaviour is wrong or absent: Tab (indent / completion accept), Shift+Tab
+/// (outdent), Ctrl+Space (force completion), Escape (cancel or dismiss
+/// popup), F4 (cycle reference), Ctrl+Enter (request proof), Ctrl+Shift+U
+/// (toggle expanded height), Ctrl+Alt+I (send selection to Inspect), and —
+/// only while the completion popup is visible — ArrowUp/Down and Enter to
+/// navigate and accept proposals.
+pub fn keydown_to_command(
+    key: &str,
+    shift_key: bool,
+    shortcut_key: bool,
+    alt_key: bool,
+    context: EditorKeyContext,
+) -> Option<EditorCommand> {
+    match (key, shift_key, shortcut_key, alt_key) {
+        // Completion popup navigation and accept — only when popup visible.
+        ("ArrowUp", false, false, false) if context.completion_active => {
+            Some(EditorCommand::SelectPreviousCompletion)
+        }
+        ("ArrowDown", false, false, false) if context.completion_active => {
+            Some(EditorCommand::SelectNextCompletion)
+        }
+        ("Enter", false, false, false) if context.completion_active => {
+            Some(EditorCommand::AcceptSelectedCompletion)
+        }
+        ("Tab", false, false, false) if context.completion_active => {
+            Some(EditorCommand::AcceptSelectedCompletion)
+        }
+        ("Escape", false, false, false) if context.completion_active => {
+            Some(EditorCommand::DismissCompletion)
+        }
+        // Editor-owned chords (regardless of completion state).
+        (" ", false, true, false) => Some(EditorCommand::ForceShowCompletion),
+        ("Enter", false, true, false) => Some(EditorCommand::RequestProof),
+        ("Escape", false, false, false) => Some(EditorCommand::CancelEntry),
+        ("Tab", false, false, false) => Some(EditorCommand::IndentWithSpaces),
+        ("Tab", true, false, false) => Some(EditorCommand::OutdentWithSpaces),
+        ("F4", false, false, false) => Some(EditorCommand::CycleReferenceForm),
+        ("U" | "u", true, true, false) => Some(EditorCommand::ToggleExpandedHeight),
+        ("I" | "i", false, true, true) => Some(EditorCommand::SendSelectionToInspect),
+        // Everything else — ArrowKeys, Backspace, Delete, plain Enter (newline),
+        // character entry, clipboard, undo/redo — falls through to the native
+        // textarea. The editor observes the resulting state via the input
+        // event, not via prevent_default.
         _ => None,
     }
 }
@@ -487,54 +550,112 @@ mod tests {
     }
 
     #[test]
-    fn keydown_mapping_recognizes_tab_and_arrow_commands() {
+    fn keydown_mapping_only_intercepts_editor_owned_keys() {
+        let with_completion = EditorKeyContext {
+            completion_active: true,
+        };
+        let no_completion = EditorKeyContext::default();
+
+        // Completion popup navigation intercepts only while the popup is visible.
         assert_eq!(
-            keydown_to_command("ArrowUp", false, false),
+            keydown_to_command("ArrowUp", false, false, false, with_completion),
             Some(EditorCommand::SelectPreviousCompletion)
         );
         assert_eq!(
-            keydown_to_command("ArrowDown", false, false),
+            keydown_to_command("ArrowDown", false, false, false, with_completion),
             Some(EditorCommand::SelectNextCompletion)
         );
         assert_eq!(
-            keydown_to_command("Enter", false, false),
+            keydown_to_command("Enter", false, false, false, with_completion),
             Some(EditorCommand::AcceptSelectedCompletion)
         );
         assert_eq!(
-            keydown_to_command("ArrowLeft", false, false),
-            Some(EditorCommand::MoveCaretLeft)
+            keydown_to_command("Tab", false, false, false, with_completion),
+            Some(EditorCommand::AcceptSelectedCompletion)
         );
         assert_eq!(
-            keydown_to_command("ArrowRight", false, false),
-            Some(EditorCommand::MoveCaretRight)
+            keydown_to_command("Escape", false, false, false, with_completion),
+            Some(EditorCommand::DismissCompletion)
+        );
+
+        // Editor-owned chords (independent of completion state).
+        assert_eq!(
+            keydown_to_command("Enter", false, true, false, no_completion),
+            Some(EditorCommand::RequestProof)
         );
         assert_eq!(
-            keydown_to_command("ArrowLeft", true, false),
-            Some(EditorCommand::ExtendSelectionLeft)
+            keydown_to_command("Escape", false, false, false, no_completion),
+            Some(EditorCommand::CancelEntry)
         );
         assert_eq!(
-            keydown_to_command("ArrowRight", true, false),
-            Some(EditorCommand::ExtendSelectionRight)
-        );
-        assert_eq!(
-            keydown_to_command("Backspace", false, false),
-            Some(EditorCommand::Backspace)
-        );
-        assert_eq!(
-            keydown_to_command("Delete", false, false),
-            Some(EditorCommand::Delete)
-        );
-        assert_eq!(
-            keydown_to_command("Tab", false, false),
+            keydown_to_command("Tab", false, false, false, no_completion),
             Some(EditorCommand::IndentWithSpaces)
         );
         assert_eq!(
-            keydown_to_command("Tab", true, false),
+            keydown_to_command("Tab", true, false, false, no_completion),
             Some(EditorCommand::OutdentWithSpaces)
         );
         assert_eq!(
-            keydown_to_command("x", false, true),
-            Some(EditorCommand::CutSelection)
+            keydown_to_command(" ", false, true, false, no_completion),
+            Some(EditorCommand::ForceShowCompletion)
+        );
+        assert_eq!(
+            keydown_to_command("F4", false, false, false, no_completion),
+            Some(EditorCommand::CycleReferenceForm)
+        );
+        assert_eq!(
+            keydown_to_command("U", true, true, false, no_completion),
+            Some(EditorCommand::ToggleExpandedHeight)
+        );
+        assert_eq!(
+            keydown_to_command("i", false, true, true, no_completion),
+            Some(EditorCommand::SendSelectionToInspect)
+        );
+
+        // Native-handled keys must fall through (return None) so the textarea
+        // keeps ownership of caret movement, deletion, and newline insertion.
+        assert_eq!(
+            keydown_to_command("ArrowLeft", false, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("ArrowRight", false, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("ArrowLeft", true, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("ArrowRight", true, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("ArrowUp", false, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("ArrowDown", false, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("Backspace", false, false, false, no_completion),
+            None
+        );
+        assert_eq!(
+            keydown_to_command("Delete", false, false, false, no_completion),
+            None
+        );
+        // Plain Enter without an open completion popup inserts a newline natively
+        // (textarea default), so it must not map to any command.
+        assert_eq!(
+            keydown_to_command("Enter", false, false, false, no_completion),
+            None
+        );
+        // Ctrl+X is handled natively by the textarea and its on:cut handler.
+        assert_eq!(
+            keydown_to_command("x", false, true, false, no_completion),
+            None
         );
     }
 
@@ -624,6 +745,25 @@ mod tests {
         let delete = apply_editor_command(text, &collapsed, EditorCommand::Delete);
         assert_eq!(delete.text, "=UM(1,2)");
         assert_eq!(delete.state.caret.offset, 1);
+    }
+
+    #[test]
+    fn insert_newline_inserts_line_feed_at_caret() {
+        let text = "=SUM(1,2)";
+        let state = EditorSurfaceState {
+            caret: EditorCaret { offset: 5 },
+            selection: EditorSelection::collapsed(5),
+            scroll_window: EditorScrollWindow {
+                first_visible_line: 0,
+                visible_line_count: 4,
+            },
+            completion_anchor_offset: None,
+            completion_selected_index: None,
+            signature_help_anchor_offset: None,
+        };
+        let result = apply_editor_command(text, &state, EditorCommand::InsertNewline);
+        assert_eq!(result.text, "=SUM(\n1,2)");
+        assert_eq!(result.state.caret.offset, 6);
     }
 
     #[test]

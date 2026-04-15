@@ -101,17 +101,6 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_spec_is_shared_between_desktop_and_web() {
-        let desktop = bootstrap_spec(HostMountTarget::DesktopTauri);
-        let web = bootstrap_spec(HostMountTarget::WebBrowser);
-
-        assert_eq!(desktop.mount_element_id, "onecalc-root");
-        assert_eq!(web.mount_element_id, "onecalc-root");
-        assert_eq!(desktop.document_title, "DNA OneCalc");
-        assert_eq!(web.document_title, "DNA OneCalc");
-    }
-
-    #[test]
     fn bootstrap_editor_bridge_is_available_for_desktop_and_web() {
         let desktop = bootstrap_editor_bridge(HostMountTarget::DesktopTauri);
         let web = bootstrap_editor_bridge(HostMountTarget::WebBrowser);

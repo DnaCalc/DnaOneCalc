@@ -1,6 +1,7 @@
 use leptos::prelude::*;
 
 use crate::ui::components::formula_editor_surface::FormulaEditorSurface;
+use crate::ui::components::shell_drawer::ShellDrawer;
 use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
 use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::panels::explore::{ExploreEditorClusterViewModel, ExploreResultClusterViewModel};
@@ -12,73 +13,26 @@ fn ExploreEditorPanel(
     on_command: Option<Callback<EditorCommand>>,
     on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
-    let function_help = editor
-        .function_help_lookup_key
-        .clone()
-        .unwrap_or_else(|| "None".to_string());
-    let diagnostics_label = if editor.diagnostics.is_empty() {
-        "Clean".to_string()
-    } else {
-        format!("{} issue(s)", editor.diagnostics.len())
-    };
-
+    let blocked_reason = editor.blocked_reason.clone();
     view! {
         <section class="onecalc-explore-shell__editor-panel" data-panel="explore-editor">
-            <div class="onecalc-explore-shell__panel-header">
-                <div>
-                    <div class="onecalc-explore-shell__section-accent"></div>
-                    <h2>"Editor"</h2>
-                    <div class="onecalc-explore-shell__eyebrow">"Primary authoring surface"</div>
-                </div>
-            </div>
-            <div class="onecalc-explore-shell__panel-intro" data-role="explore-panel-intro">
-                <div class="onecalc-explore-shell__eyebrow">"Formula authoring"</div>
-                <p>
-                    "Keep the cell entry dominant. Diagnostics stay close to the formula, while result and guided help remain visible without competing for focus."
-                </p>
-            </div>
-            <div class="onecalc-explore-shell__editor-summary-row" data-role="explore-editor-summary">
-                <div class="onecalc-explore-shell__status-card" data-role="explore-diagnostics-summary">
-                    <span class="onecalc-explore-shell__status-label">"Diagnostics"</span>
-                    <strong>{diagnostics_label}</strong>
-                </div>
-                <div class="onecalc-explore-shell__status-card" data-role="explore-completion-summary">
-                    <span class="onecalc-explore-shell__status-label">"Assist"</span>
-                    <strong>{format!("{} proposal(s)", editor.completion_count)}</strong>
-                </div>
-                <div class="onecalc-explore-shell__status-card" data-role="explore-authoring-summary">
-                    <span class="onecalc-explore-shell__status-label">"Authoring state"</span>
-                    <strong>{if editor.reused_green_tree { "Incremental reuse" } else { "Fresh analysis" }}</strong>
-                </div>
-            </div>
-            <div class="onecalc-explore-shell__editor-note" data-role="explore-editor-note">
-                <span class="onecalc-explore-shell__metric-label">"Current help target"</span>
-                <strong>{function_help.clone()}</strong>
-                {editor.trace_summary.as_ref().map(|trace_summary| view! {
-                    <span class="onecalc-explore-shell__editor-note-detail">{trace_summary.clone()}</span>
-                })}
-            </div>
-            {editor.blocked_reason.as_ref().map(|blocked_reason| view! {
-                <div class="onecalc-explore-shell__blocked-reason" data-role="explore-blocked-reason">
-                    {blocked_reason.clone()}
-                </div>
-            })}
             <FormulaEditorSurface
-                editor=editor.clone()
+                editor=editor
                 on_input_event=on_input_event
                 on_command=on_command
                 on_overlay_measurement=on_overlay_measurement
             />
+            {blocked_reason.map(|reason| view! {
+                <div class="onecalc-explore-shell__blocked-reason" data-role="explore-blocked-reason">
+                    {reason}
+                </div>
+            })}
         </section>
     }
 }
 
 #[component]
 fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
-    let result_value = result
-        .result_value_summary
-        .clone()
-        .unwrap_or_else(|| "Unavailable".to_string());
     let effective_display = result
         .effective_display_summary
         .clone()
@@ -88,6 +42,7 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
         .clone()
         .unwrap_or_else(|| "Unavailable".to_string());
     let has_array_preview = result.array_preview.is_some();
+    let value_panel = result.value_panel.clone();
 
     view! {
         <section class="onecalc-explore-shell__result-panel" data-panel="explore-result">
@@ -101,27 +56,7 @@ fn ExploreResultPanel(result: ExploreResultClusterViewModel) -> impl IntoView {
                     {if has_array_preview { "Array" } else { "Scalar" }}
                 </div>
             </div>
-            <section class="onecalc-explore-shell__hero-result" data-role="explore-hero-result">
-                <div class="onecalc-explore-shell__hero-result-copy">
-                    <div class="onecalc-explore-shell__hero-result-label">"Calculated value"</div>
-                    <div class="onecalc-explore-shell__hero-result-value" data-role="explore-result-value">
-                        {result_value}
-                    </div>
-                    <p class="onecalc-explore-shell__hero-result-caption">
-                        "This is the current OxFml-visible result surface for the active cell entry."
-                    </p>
-                </div>
-                <div class="onecalc-explore-shell__hero-result-sidecar">
-                    <div class="onecalc-explore-shell__hero-pill">
-                        <span>"Display"</span>
-                        <strong>{effective_display.clone()}</strong>
-                    </div>
-                    <div class="onecalc-explore-shell__hero-pill">
-                        <span>"Evaluation"</span>
-                        <strong>{evaluation_summary.clone()}</strong>
-                    </div>
-                </div>
-            </section>
+            <crate::ui::components::value_panel::ValuePanel panel=value_panel />
             <div class="onecalc-explore-shell__result-grid">
                 <div class="onecalc-explore-shell__result-metric" data-role="explore-effective-display">
                     <span class="onecalc-explore-shell__metric-label">"Effective display"</span>
@@ -395,49 +330,10 @@ pub fn ExploreShell(
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
     #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
+    let configure_drawer_open = editor.configure_drawer_open;
+    let configure_close_command = on_command.clone();
     view! {
         <section class="onecalc-explore-shell" data-screen="explore">
-            <header class="onecalc-explore-shell__header">
-                <div class="onecalc-explore-shell__header-copy">
-                    <div>
-                        <div class="onecalc-explore-shell__eyebrow">"Explore"</div>
-                        <h1>"Formula Explorer"</h1>
-                    </div>
-                    <div class="onecalc-explore-shell__hero-badges">
-                        <span>{editor.scenario_label.clone()}</span>
-                        <span>{editor.truth_source_label.clone()}</span>
-                    </div>
-                </div>
-                <p class="onecalc-explore-shell__lead">
-                    "Author the cell entry on the left, read the evaluated result in the center, and keep guided help on the right. The screen should support sustained formula work without making you hunt for truth."
-                </p>
-                <section class="onecalc-explore-shell__overview-deck" data-role="explore-overview-deck">
-                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-primary">
-                        <div class="onecalc-explore-shell__eyebrow">"Current formula space"</div>
-                        <strong>{editor.scenario_label.clone()}</strong>
-                        <p>
-                            "The left surface is the primary authoring space for the active scenario."
-                        </p>
-                    </article>
-                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-result">
-                        <div class="onecalc-explore-shell__eyebrow">"Visible display"</div>
-                        <strong>{result.effective_display_summary.clone().unwrap_or_else(|| "Unavailable".to_string())}</strong>
-                        <p>{result.result_value_summary.clone().unwrap_or_else(|| "No result surface yet".to_string())}</p>
-                    </article>
-                    <article class="onecalc-explore-shell__overview-card" data-role="explore-overview-capability">
-                        <div class="onecalc-explore-shell__eyebrow">"Authoring posture"</div>
-                        <strong>{if editor.diagnostics.is_empty() { "Ready to iterate" } else { "Needs repair" }}</strong>
-                        <p>
-                            {format!(
-                                "{} diagnostic(s), {} completion proposal(s)",
-                                editor.diagnostics.len(),
-                                editor.completion_count
-                            )}
-                        </p>
-                    </article>
-                </section>
-            </header>
-
             <div class="onecalc-explore-shell__body">
                 <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--editor">
                     <ExploreEditorPanel
@@ -450,8 +346,45 @@ pub fn ExploreShell(
                 <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--result">
                     <ExploreResultPanel result=result />
                 </div>
-                <div class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--help">
-                    <ExploreHelpPanel editor=editor />
+                <div
+                    class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--help"
+                    data-role="explore-assist-column"
+                    data-drawer-open=if configure_drawer_open { "true" } else { "false" }
+                >
+                    {if configure_drawer_open {
+                        let close_callback = configure_close_command.clone();
+                        let close = Callback::new(move |_: ()| {
+                            if let Some(callback) = close_callback.as_ref() {
+                                callback.run(EditorCommand::ToggleConfigureDrawer);
+                            }
+                        });
+                        view! {
+                            <ShellDrawer
+                                drawer_kind="configure".to_string()
+                                title="Configure".to_string()
+                                subtitle=Some(
+                                    "Cell format · Scenario policy · Host bindings — placeholder until WS-13 children land"
+                                        .to_string(),
+                                )
+                                is_open=true
+                                on_close=Some(close)
+                            >
+                                <div class="onecalc-explore-shell__configure-placeholder" data-role="explore-configure-placeholder">
+                                    <p>
+                                        "The Configure drawer will host the full Excel Format Cells parity tabs, scenario policy flags, host bindings, and calc options. Coming with WS-13 children dno-yjk.2 and dno-yjk.3."
+                                    </p>
+                                    <ul>
+                                        <li>"Number · Alignment · Font · Border · Fill · Protection"</li>
+                                        <li>"Conditional formatting rules manager"</li>
+                                        <li>"Scenario policy · Host bindings · Calc options"</li>
+                                    </ul>
+                                </div>
+                            </ShellDrawer>
+                        }
+                        .into_any()
+                    } else {
+                        view! { <ExploreHelpPanel editor=editor /> }.into_any()
+                    }}
                 </div>
             </div>
         </section>
@@ -544,6 +477,12 @@ mod tests {
             }),
             green_tree_key: Some("green-1".to_string()),
             reused_green_tree: true,
+            entry_mode: crate::ui::editor::state::EditorEntryMode::Formula,
+            live_state: crate::ui::editor::state::EditorLiveState::Committed,
+            expanded_editor: false,
+            editor_settings: crate::ui::editor::state::EditorSettings::default(),
+            editor_settings_popover_open: false,
+            configure_drawer_open: false,
         };
 
         let html = view! {
@@ -554,10 +493,7 @@ mod tests {
         }
         .to_html();
 
-        assert!(html.contains("Formula Explorer"));
         assert!(html.contains("data-panel=\"explore-editor\""));
-        assert!(html.contains("data-role=\"explore-editor-summary\""));
-        assert!(html.contains("data-role=\"explore-editor-note\""));
         assert!(html.contains("data-component=\"formula-editor-surface\""));
         assert!(html.contains("data-role=\"editor-input\""));
         assert!(html.contains("data-token-role=\"function\""));
@@ -575,11 +511,73 @@ mod tests {
         assert!(html.contains("Completion entries"));
         assert!(html.contains("data-role=\"explore-array-preview\""));
         assert!(html.contains("2x2 spill preview"));
-        assert!(html.contains("data-role=\"explore-result-value\""));
-        assert!(html.contains("data-role=\"explore-hero-result\""));
+        assert!(html.contains("data-component=\"value-panel\""));
+        assert!(html.contains("data-role=\"value-panel-effective-display\""));
+        assert!(html.contains("data-role=\"value-panel-header\""));
         assert!(html.contains("data-role=\"function-help-card\""));
         assert!(html.contains("data-role=\"function-help-signature\""));
         assert!(html.contains("data-role=\"function-help-signature-argument\""));
         assert!(html.contains("data-active=\"true\""));
+        // Explore layout discipline: no hero header, no overview deck, no panel chrome
+        // above the editor, and no Explore-level Configure button (context bar owns it).
+        assert!(!html.contains("Formula Explorer"));
+        assert!(!html.contains("data-role=\"explore-overview-deck\""));
+        assert!(!html.contains("data-role=\"explore-panel-intro\""));
+        assert!(!html.contains("data-role=\"explore-editor-summary\""));
+        assert!(!html.contains("data-role=\"explore-editor-note\""));
+        assert!(!html.contains("data-role=\"explore-configure-toggle\""));
+    }
+
+    #[test]
+    fn explore_shell_mounts_configure_drawer_when_flag_is_open() {
+        let view_model = ExploreViewModel {
+            scenario_label: "drawer demo".to_string(),
+            truth_source_label: "preview-backed".to_string(),
+            host_profile_summary: "preview".to_string(),
+            packet_kind_summary: "preview".to_string(),
+            capability_floor_summary: "Explore".to_string(),
+            mode_availability_summary: "Explore".to_string(),
+            trace_summary: None,
+            blocked_reason: None,
+            raw_entered_cell_text: "=1".to_string(),
+            editor_surface_state: crate::ui::editor::state::EditorSurfaceState::for_text("=1"),
+            overlay_geometry: None,
+            syntax_runs: vec![],
+            diagnostics: vec![],
+            completion_count: 0,
+            completion_items: vec![],
+            has_signature_help: false,
+            signature_help: None,
+            function_help: None,
+            function_help_lookup_key: None,
+            result_value_summary: None,
+            effective_display_summary: None,
+            latest_evaluation_summary: None,
+            array_preview: None,
+            green_tree_key: None,
+            reused_green_tree: false,
+            entry_mode: crate::ui::editor::state::EditorEntryMode::Formula,
+            live_state: crate::ui::editor::state::EditorLiveState::Idle,
+            expanded_editor: false,
+            editor_settings: crate::ui::editor::state::EditorSettings::default(),
+            editor_settings_popover_open: false,
+            configure_drawer_open: true,
+        };
+
+        let html = view! {
+            <ExploreShell
+                editor=build_explore_editor_cluster(&view_model)
+                result=build_explore_result_cluster(&view_model)
+            />
+        }
+        .to_html();
+
+        assert!(html.contains("data-component=\"shell-drawer\""));
+        assert!(html.contains("data-drawer-kind=\"configure\""));
+        assert!(html.contains("data-role=\"shell-drawer-title\""));
+        assert!(html.contains("data-role=\"explore-configure-placeholder\""));
+        assert!(html.contains("data-open=\"true\""));
+        // Configure toggle lives on the shell context bar now, not Explore itself.
+        assert!(!html.contains("data-role=\"explore-configure-toggle\""));
     }
 }

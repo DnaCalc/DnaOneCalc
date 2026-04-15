@@ -171,35 +171,84 @@ fn blocked_formula_space(formula_space_id: FormulaSpaceId) -> FormulaSpaceState 
 mod tests {
     use super::*;
 
+    /// Pins the fixture shape of `preview_host_state` exactly. If a future
+    /// change reorders or relabels the seeded spaces and catalog entries,
+    /// this test catches it — the preview fixture is documented here.
     #[test]
     fn preview_host_state_seeds_multiple_demo_scenarios() {
         let state = preview_host_state();
 
-        assert_eq!(state.workspace_shell.open_formula_space_order.len(), 3);
+        // Three seeded formula spaces in a specific order.
+        let open_ids: Vec<&str> = state
+            .workspace_shell
+            .open_formula_space_order
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+        assert_eq!(
+            open_ids,
+            vec!["preview-success", "preview-diagnostic", "preview-array"]
+        );
+        // Active space is the first one, and it's the only pinned space.
         assert_eq!(
             state
-                .formula_spaces
-                .get(&FormulaSpaceId::new("preview-success"))
-                .expect("success space")
-                .context
-                .scenario_label,
-            "Success · SUM result"
+                .workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .map(|id| id.as_str()),
+            Some("preview-success"),
         );
         assert!(state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .contains(&FormulaSpaceId::new("preview-success")));
+
+        // Success space fixture content.
+        let success = state
+            .formula_spaces
+            .get(&FormulaSpaceId::new("preview-success"))
+            .expect("success space");
+        assert_eq!(success.raw_entered_cell_text, "=SUM(1,2)");
+        assert_eq!(success.effective_display_summary.as_deref(), Some("3"));
+        assert_eq!(success.context.scenario_label, "Success · SUM result");
+        assert_eq!(success.context.truth_source, ProjectionTruthSource::LocalFallback);
+
+        // Diagnostic space fixture content.
+        let diagnostic = state
+            .formula_spaces
+            .get(&FormulaSpaceId::new("preview-diagnostic"))
+            .expect("diagnostic space");
+        assert_eq!(diagnostic.raw_entered_cell_text, "=SUM(1,)");
+        assert_eq!(
+            diagnostic.effective_display_summary.as_deref(),
+            Some("Input incomplete")
+        );
+
+        // Array space fixture content.
+        let array = state
             .formula_spaces
             .get(&FormulaSpaceId::new("preview-array"))
-            .expect("array space")
+            .expect("array space");
+        assert_eq!(array.raw_entered_cell_text, "=SEQUENCE(2,2)");
+        let preview = array
             .array_preview
-            .is_some());
+            .as_ref()
+            .expect("array preview populated");
+        assert_eq!(preview.rows.len(), 2);
+        assert_eq!(preview.rows[0], vec!["1".to_string(), "2".to_string()]);
+
+        // Retained artifact catalog carries exactly three entries keyed by
+        // the expected artifact ids.
         assert_eq!(state.retained_artifacts.catalog.len(), 3);
-        assert_eq!(
-            state
-                .formula_spaces
-                .get(&FormulaSpaceId::new("preview-success"))
-                .expect("success space")
-                .context
-                .truth_source,
-            ProjectionTruthSource::LocalFallback
-        );
+        for expected_id in [
+            "preview-artifact-mismatch",
+            "preview-artifact-blocked",
+            "preview-artifact-match",
+        ] {
+            assert!(
+                state.retained_artifacts.catalog.contains_key(expected_id),
+                "retained catalog missing {expected_id}",
+            );
+        }
     }
 }

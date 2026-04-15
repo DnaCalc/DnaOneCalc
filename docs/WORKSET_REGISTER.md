@@ -300,3 +300,34 @@ It does mean:
    ABI subset register and safety model, provider loading and RTD lifecycle, XLL and
    `.so` packaging, platform honesty and later-OxVba pressure, extension conformance
    and test harness
+
+### WS-13 DNA OneCalc UX Revamp Across Editor, Case Management, Host Config, And Value / Parity Surfaces
+1. purpose:
+   land a coordinated UX improvement wave across the formula editor, case /
+   formula-space lifecycle, host/caller configuration (full Excel `Format Cells`
+   and `Conditional Formatting` surface), and the cross-mode Value Panel and
+   Workbench Parity Matrix surfaces, so the full intended UX is visible to users
+   with every engine-dependent control either live or explicitly marked
+   `<NOT IMPLEMENTED>` with a `SEAM-*` id that names the required engine work.
+2. depends_on:
+   `WS-02`, `WS-05`, `WS-08`, `WS-11`
+3. parent_spec_sections:
+   `3`, `4.2`, `5`, `5.3`, `6.0` through `6.10`, `7.1`, `7.2`, `8`, `9.1`,
+   `9.3`, `9.4`, `9.6`, `10`, `11`, `16`
+4. upstream_dependencies:
+   `OxFml`, `OxFunc` (including the `oxfunc_value_types` crate and the
+   `oxfunc_core` locale/format-code engine), `OxXlPlay`, `OxReplay` trace events
+5. closure_condition:
+   the Explore / Inspect / Workbench shells expose every surface named in
+   [worksets/WS-13_dna_onecalc_ux_revamp.md](worksets/WS-13_dna_onecalc_ux_revamp.md);
+   every engine-dependent control renders with a visible `<NOT IMPLEMENTED>`
+   badge carrying its `SEAM-*` id until the corresponding engine work lands;
+   workspace JSON v1 round-trips every affected field; and the seam status
+   board on the workspace settings page enumerates the live pending-seams set.
+6. initial_epic_lanes:
+   formula editor control, case / formula-space lifecycle, configure drawer
+   chrome plus the six Excel `Format Cells` parity tabs and the CF rules
+   manager, scenario policy / host bindings / calc options tabs, workspace
+   settings page and seam status board, Value Panel component and cross-mode
+   integration, Workbench Parity Matrix and trace consumption, Excel parity
+   test harness

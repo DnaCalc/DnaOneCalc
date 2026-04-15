@@ -28,21 +28,102 @@ pub struct ShellFormulaSpaceListItemViewModel {
     pub packet_kind_summary: String,
     pub is_active: bool,
     pub is_pinned: bool,
+    pub is_dirty: bool,
+    pub section: ShellRailSection,
+    pub retained_verdicts: Option<ShellRetainedVerdictsViewModel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellRailSection {
+    Pinned,
+    Open,
+}
+
+impl ShellRailSection {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Pinned => "pinned",
+            Self::Open => "open",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pinned => "Pinned",
+            Self::Open => "Open",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellRetainedVerdictsViewModel {
+    pub value_match: Option<bool>,
+    pub display_match: Option<bool>,
+    pub replay_equivalent: Option<bool>,
+    pub comparison_lane_label: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellFrameViewModel {
+    pub active_mode: AppMode,
     pub active_formula_space_label: String,
     pub active_mode_label: &'static str,
     pub active_truth_source_label: String,
     pub active_host_profile_summary: String,
     pub active_packet_kind_summary: String,
     pub active_capability_floor_summary: String,
+    pub breadcrumb: ShellBreadcrumbViewModel,
+    pub scope_strip: Vec<ShellScopeSegmentViewModel>,
     pub context_facts: Vec<ShellChromeFactViewModel>,
     pub footer_facts: Vec<ShellChromeFactViewModel>,
     pub workspace_summary: String,
     pub mode_tabs: Vec<ShellModeTabViewModel>,
     pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellBreadcrumbViewModel {
+    pub workspace_label: String,
+    pub space_label: String,
+    pub mode_label: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellScopeSegmentViewModel {
+    pub slug: &'static str,
+    pub label: &'static str,
+    pub value: String,
+    pub status: ShellScopeSegmentStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellScopeSegmentStatus {
+    Live,
+    NotImplemented { seam_id: &'static str },
+}
+
+impl ShellScopeSegmentStatus {
+    pub fn slug(&self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::NotImplemented { .. } => "not-implemented",
+        }
+    }
+
+    pub fn seam_id(&self) -> Option<&'static str> {
+        match self {
+            Self::Live => None,
+            Self::NotImplemented { seam_id } => Some(*seam_id),
+        }
+    }
+}
+
+pub fn mode_accent_slug(mode: AppMode) -> &'static str {
+    match mode {
+        AppMode::Explore => "explore",
+        AppMode::Inspect => "inspect",
+        AppMode::Workbench => "workbench",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +150,9 @@ pub fn build_active_mode_projection(state: &OneCalcHostState) -> Option<ActiveMo
     match state.active_formula_space_view.active_mode {
         AppMode::Explore => Some(ActiveModeProjection::Explore(build_explore_view_model(
             formula_space,
+            state.global_ui_chrome.editor_settings,
+            state.global_ui_chrome.editor_settings_popover_open,
+            state.global_ui_chrome.configure_drawer_open,
         ))),
         AppMode::Inspect => Some(ActiveModeProjection::Inspect(build_inspect_view_model(
             formula_space,
@@ -107,7 +191,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         })
         .collect();
 
-    let formula_spaces = state
+    let formula_spaces: Vec<ShellFormulaSpaceListItemViewModel> = state
         .workspace_shell
         .open_formula_space_order
         .iter()
@@ -115,16 +199,51 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
             state
                 .formula_spaces
                 .get(formula_space_id)
-                .map(|formula_space| ShellFormulaSpaceListItemViewModel {
-                    formula_space_id: formula_space.formula_space_id.as_str().to_string(),
-                    label: formula_space.context.scenario_label.clone(),
-                    truth_source_label: formula_space.context.truth_source.label().to_string(),
-                    packet_kind_summary: formula_space.context.packet_kind.clone(),
-                    is_active: &formula_space.formula_space_id == active_formula_space_id,
-                    is_pinned: state
+                .map(|formula_space| {
+                    let is_pinned = state
                         .workspace_shell
                         .pinned_formula_space_ids
-                        .contains(&formula_space.formula_space_id),
+                        .contains(&formula_space.formula_space_id);
+                    let section = if is_pinned {
+                        ShellRailSection::Pinned
+                    } else {
+                        ShellRailSection::Open
+                    };
+                    let live_state = formula_space.live_state();
+                    let is_dirty = matches!(
+                        live_state,
+                        crate::ui::editor::state::EditorLiveState::EditingLive
+                            | crate::ui::editor::state::EditorLiveState::ProofedScratch
+                    );
+                    let retained_verdicts = state
+                        .retained_artifacts
+                        .catalog
+                        .values()
+                        .find(|artifact| {
+                            artifact.formula_space_id.as_str()
+                                == formula_space.formula_space_id.as_str()
+                        })
+                        .map(|artifact| ShellRetainedVerdictsViewModel {
+                            value_match: artifact.value_match,
+                            display_match: artifact.display_match,
+                            replay_equivalent: artifact.replay_equivalent,
+                            comparison_lane_label: match artifact.comparison_status {
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => "Matched",
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => "Mismatched",
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => "Blocked",
+                            },
+                        });
+                    ShellFormulaSpaceListItemViewModel {
+                        formula_space_id: formula_space.formula_space_id.as_str().to_string(),
+                        label: formula_space.context.scenario_label.clone(),
+                        truth_source_label: formula_space.context.truth_source.label().to_string(),
+                        packet_kind_summary: formula_space.context.packet_kind.clone(),
+                        is_active: &formula_space.formula_space_id == active_formula_space_id,
+                        is_pinned,
+                        is_dirty,
+                        section,
+                        retained_verdicts,
+                    }
                 })
         })
         .collect();
@@ -188,9 +307,59 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         });
     }
 
+    let breadcrumb = ShellBreadcrumbViewModel {
+        workspace_label: "DNA OneCalc".to_string(),
+        space_label: active_formula_space.context.scenario_label.clone(),
+        mode_label: active_mode_label,
+    };
+
+    let scope_strip = vec![
+        ShellScopeSegmentViewModel {
+            slug: "locale",
+            label: "Locale",
+            value: "en-US".to_string(),
+            status: ShellScopeSegmentStatus::NotImplemented {
+                seam_id: "SEAM-OXFUNC-LOCALE-EXPAND",
+            },
+        },
+        ShellScopeSegmentViewModel {
+            slug: "date",
+            label: "Date",
+            value: "1900".to_string(),
+            status: ShellScopeSegmentStatus::NotImplemented {
+                seam_id: "SEAM-ONECALC-CAPABILITY-SNAPSHOT",
+            },
+        },
+        ShellScopeSegmentViewModel {
+            slug: "profile",
+            label: "Profile",
+            value: active_formula_space.context.host_profile.clone(),
+            status: ShellScopeSegmentStatus::Live,
+        },
+        ShellScopeSegmentViewModel {
+            slug: "policy",
+            label: "Policy",
+            value: "Deterministic".to_string(),
+            status: ShellScopeSegmentStatus::NotImplemented {
+                seam_id: "SEAM-ONECALC-CAPABILITY-SNAPSHOT",
+            },
+        },
+        ShellScopeSegmentViewModel {
+            slug: "format",
+            label: "Format",
+            value: "General".to_string(),
+            status: ShellScopeSegmentStatus::NotImplemented {
+                seam_id: "SEAM-ONECALC-EXTENDED-VALUE-ROUTING",
+            },
+        },
+    ];
+
     Some(ShellFrameViewModel {
+        active_mode,
         active_formula_space_label: active_formula_space.context.scenario_label.clone(),
         active_mode_label,
+        breadcrumb,
+        scope_strip,
         active_truth_source_label: active_formula_space
             .context
             .truth_source

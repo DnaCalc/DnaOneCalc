@@ -500,6 +500,70 @@ mod tests {
             updated.context.truth_source,
             ProjectionTruthSource::LocalFallback
         );
+        // §11.3 invariant 4: after a successful bridge round-trip, the
+        // retained editor document's source_text equals the formula
+        // space's raw_entered_cell_text.
+        assert_eq!(
+            updated
+                .editor_document
+                .as_ref()
+                .map(|document| document.source_text.as_str()),
+            Some("=SUM(1,2,3)")
+        );
+    }
+
+    /// §11.3 invariant 2 (LocalFallback arm): a document whose
+    /// `provenance_summary` carries neither `OxFml` nor `PreviewBridge`
+    /// markers must derive `ProjectionTruthSource::LocalFallback`. The
+    /// existing `apply_editor_document_marks_*` tests cover the LiveBacked
+    /// and PreviewBacked arms.
+    #[test]
+    fn apply_editor_document_marks_neutral_provenance_as_local_fallback() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut formula_spaces = FormulaSpaceCollectionState::default();
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
+        let mut document = sample_document("=SUM(1,2,3)");
+        document.provenance_summary = Some(ProvenanceSummary {
+            profile_summary: "OfflineTrace".to_string(),
+            blocked_reason: None,
+        });
+
+        EditorSessionService::apply_editor_document(
+            &mut formula_spaces,
+            &formula_space_id,
+            document,
+        )
+        .expect("known formula space should update");
+
+        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
+        assert_eq!(
+            updated.context.truth_source,
+            ProjectionTruthSource::LocalFallback,
+        );
+    }
+
+    /// §11.3 invariant 3: `derive_formula_presentation` returns
+    /// `Unevaluated` (summary fields are `None`) for text that starts with
+    /// `=`, has no `value_presentation`, no blocked reason, no diagnostic,
+    /// and no hand-evaluator pattern match. This pins the floor of the
+    /// facade so any future seam-routing work has a regression check.
+    #[test]
+    fn derive_formula_presentation_returns_unevaluated_for_unknown_pattern() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut formula_spaces = FormulaSpaceCollectionState::default();
+        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1"));
+
+        EditorSessionService::apply_editor_document(
+            &mut formula_spaces,
+            &formula_space_id,
+            sample_document("=UNKNOWN(1,2)"),
+        )
+        .expect("known formula space should update");
+
+        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
+        assert!(updated.latest_evaluation_summary.is_none());
+        assert!(updated.effective_display_summary.is_none());
+        assert!(updated.array_preview.is_none());
     }
 
     #[test]

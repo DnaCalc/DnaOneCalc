@@ -500,10 +500,12 @@ mod tests {
             vec!["calcBase".to_string(), "calc".to_string()]
         );
         assert_eq!(extraction.conditional_formats.len(), 1);
-        assert_eq!(
-            extraction.conditional_formats[0].formula.as_deref(),
-            Some("=A1>0")
-        );
+        let rule = &extraction.conditional_formats[0];
+        assert_eq!(rule.range, "A1");
+        assert_eq!(rule.formula.as_deref(), Some("=A1>0"));
+        assert_eq!(rule.rule_kind.as_deref(), Some("Expression"));
+        assert_eq!(rule.font_color.as_deref(), Some("#FF0000"));
+        assert_eq!(rule.interior_color.as_deref(), Some("#00FF00"));
 
         let _ = fs::remove_file(temp_path);
     }

@@ -7,7 +7,9 @@ use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
 use crate::ui::editor::render_projection::{
     syntax_runs_from_snapshot, syntax_runs_from_text, SyntaxRun,
 };
-use crate::ui::editor::state::EditorSurfaceState;
+use crate::ui::editor::state::{
+    EditorEntryMode, EditorLiveState, EditorSettings, EditorSurfaceState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExploreViewModel {
@@ -36,6 +38,12 @@ pub struct ExploreViewModel {
     pub array_preview: Option<ExploreArrayPreviewView>,
     pub green_tree_key: Option<String>,
     pub reused_green_tree: bool,
+    pub entry_mode: EditorEntryMode,
+    pub live_state: EditorLiveState,
+    pub expanded_editor: bool,
+    pub editor_settings: EditorSettings,
+    pub editor_settings_popover_open: bool,
+    pub configure_drawer_open: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +107,12 @@ pub struct ExploreFunctionHelpSignatureView {
     pub max_arity: Option<usize>,
 }
 
-pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreViewModel {
+pub fn build_explore_view_model(
+    formula_space: &FormulaSpaceState,
+    editor_settings: EditorSettings,
+    editor_settings_popover_open: bool,
+    configure_drawer_open: bool,
+) -> ExploreViewModel {
     let (
         syntax_runs,
         diagnostics,
@@ -182,6 +195,12 @@ pub fn build_explore_view_model(formula_space: &FormulaSpaceState) -> ExploreVie
         array_preview: formula_space.array_preview.as_ref().map(array_preview_view),
         green_tree_key,
         reused_green_tree,
+        entry_mode: EditorEntryMode::classify(&formula_space.raw_entered_cell_text),
+        live_state: formula_space.live_state(),
+        expanded_editor: formula_space.expanded_editor,
+        editor_settings,
+        editor_settings_popover_open,
+        configure_drawer_open,
     }
 }
 
@@ -366,7 +385,8 @@ mod tests {
             value_presentation: None,
         });
 
-        let view_model = build_explore_view_model(&formula_space);
+        let view_model =
+            build_explore_view_model(&formula_space, EditorSettings::default(), false, false);
         assert_eq!(view_model.scenario_label, "happy-path sum");
         assert_eq!(view_model.truth_source_label, "local-fallback");
         assert_eq!(view_model.host_profile_summary, "Windows desktop preview");
@@ -439,7 +459,8 @@ mod tests {
             value_presentation: None,
         });
 
-        let view_model = build_explore_view_model(&formula_space);
+        let view_model =
+            build_explore_view_model(&formula_space, EditorSettings::default(), false, false);
         assert_eq!(view_model.syntax_runs.len(), 9);
         assert!(view_model.diagnostics.is_empty());
         assert!(view_model.completion_items.is_empty());

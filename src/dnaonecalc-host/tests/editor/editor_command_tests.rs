@@ -1,5 +1,5 @@
 use dnaonecalc_host::ui::editor::commands::{
-    apply_editor_command, keydown_to_command, EditorCommand,
+    apply_editor_command, keydown_to_command, EditorCommand, EditorKeyContext,
 };
 use dnaonecalc_host::ui::editor::state::{
     EditorCaret, EditorScrollWindow, EditorSelection, EditorSurfaceState,
@@ -54,42 +54,56 @@ fn ex_13_outdent_command_removes_spaces_for_multiline_selection() {
 }
 
 #[test]
-fn ex_14_keydown_mapping_covers_tab_and_arrow_navigation() {
+fn ex_14_keydown_mapping_intercepts_only_editor_owned_keys() {
+    let ctx = EditorKeyContext::default();
+    // Caret navigation, deletion, and plain Enter fall through so the native
+    // textarea owns cursor tracking. See ui::editor::commands::keydown_to_command.
     assert_eq!(
-        keydown_to_command("ArrowLeft", false, false),
-        Some(EditorCommand::MoveCaretLeft)
+        keydown_to_command("ArrowLeft", false, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("ArrowRight", false, false),
-        Some(EditorCommand::MoveCaretRight)
+        keydown_to_command("ArrowRight", false, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("ArrowLeft", true, false),
-        Some(EditorCommand::ExtendSelectionLeft)
+        keydown_to_command("ArrowLeft", true, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("ArrowRight", true, false),
-        Some(EditorCommand::ExtendSelectionRight)
+        keydown_to_command("ArrowRight", true, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("Backspace", false, false),
-        Some(EditorCommand::Backspace)
+        keydown_to_command("Backspace", false, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("Delete", false, false),
-        Some(EditorCommand::Delete)
+        keydown_to_command("Delete", false, false, false, ctx),
+        None
     );
     assert_eq!(
-        keydown_to_command("Tab", false, false),
+        keydown_to_command("Enter", false, false, false, ctx),
+        None
+    );
+    assert_eq!(keydown_to_command("x", false, true, false, ctx), None);
+
+    // Editor-owned chords.
+    assert_eq!(
+        keydown_to_command("Tab", false, false, false, ctx),
         Some(EditorCommand::IndentWithSpaces)
     );
     assert_eq!(
-        keydown_to_command("Tab", true, false),
+        keydown_to_command("Tab", true, false, false, ctx),
         Some(EditorCommand::OutdentWithSpaces)
     );
     assert_eq!(
-        keydown_to_command("x", false, true),
-        Some(EditorCommand::CutSelection)
+        keydown_to_command("Escape", false, false, false, ctx),
+        Some(EditorCommand::CancelEntry)
+    );
+    assert_eq!(
+        keydown_to_command("Enter", false, true, false, ctx),
+        Some(EditorCommand::RequestProof)
     );
 }
 
