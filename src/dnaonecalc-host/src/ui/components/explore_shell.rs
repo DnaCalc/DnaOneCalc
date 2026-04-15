@@ -1,7 +1,6 @@
 use leptos::prelude::*;
 
 use crate::ui::components::formula_editor_surface::FormulaEditorSurface;
-use crate::ui::components::shell_drawer::ShellDrawer;
 use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
 use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
 use crate::ui::panels::explore::{ExploreEditorClusterViewModel, ExploreResultClusterViewModel};
@@ -312,8 +311,6 @@ pub fn ExploreShell(
     #[prop(default = None)] on_command: Option<Callback<EditorCommand>>,
     #[prop(default = None)] on_overlay_measurement: Option<Callback<EditorOverlayMeasurementEvent>>,
 ) -> impl IntoView {
-    let configure_drawer_open = editor.configure_drawer_open;
-    let configure_close_command = on_command.clone();
     view! {
         <section class="onecalc-explore-shell" data-screen="explore">
             <div class="onecalc-explore-shell__body">
@@ -331,42 +328,8 @@ pub fn ExploreShell(
                 <div
                     class="onecalc-explore-shell__body-column onecalc-explore-shell__body-column--help"
                     data-role="explore-assist-column"
-                    data-drawer-open=if configure_drawer_open { "true" } else { "false" }
                 >
-                    {if configure_drawer_open {
-                        let close_callback = configure_close_command.clone();
-                        let close = Callback::new(move |_: ()| {
-                            if let Some(callback) = close_callback.as_ref() {
-                                callback.run(EditorCommand::ToggleConfigureDrawer);
-                            }
-                        });
-                        view! {
-                            <ShellDrawer
-                                drawer_kind="configure".to_string()
-                                title="Configure".to_string()
-                                subtitle=Some(
-                                    "Cell format · Scenario policy · Host bindings — placeholder until WS-13 children land"
-                                        .to_string(),
-                                )
-                                is_open=true
-                                on_close=Some(close)
-                            >
-                                <div class="onecalc-explore-shell__configure-placeholder" data-role="explore-configure-placeholder">
-                                    <p>
-                                        "The Configure drawer will host the full Excel Format Cells parity tabs, scenario policy flags, host bindings, and calc options. Coming with WS-13 children dno-yjk.2 and dno-yjk.3."
-                                    </p>
-                                    <ul>
-                                        <li>"Number · Alignment · Font · Border · Fill · Protection"</li>
-                                        <li>"Conditional formatting rules manager"</li>
-                                        <li>"Scenario policy · Host bindings · Calc options"</li>
-                                    </ul>
-                                </div>
-                            </ShellDrawer>
-                        }
-                        .into_any()
-                    } else {
-                        view! { <ExploreHelpPanel editor=editor /> }.into_any()
-                    }}
+                    <ExploreHelpPanel editor=editor />
                 </div>
             </div>
         </section>
@@ -511,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn explore_shell_mounts_configure_drawer_when_flag_is_open() {
+    fn explore_shell_keeps_assist_panel_visible_when_capability_center_is_open() {
         let view_model = ExploreViewModel {
             scenario_label: "drawer demo".to_string(),
             truth_source_label: "preview-backed".to_string(),
@@ -554,12 +517,10 @@ mod tests {
         }
         .to_html();
 
-        assert!(html.contains("data-component=\"shell-drawer\""));
-        assert!(html.contains("data-drawer-kind=\"configure\""));
-        assert!(html.contains("data-role=\"shell-drawer-title\""));
-        assert!(html.contains("data-role=\"explore-configure-placeholder\""));
-        assert!(html.contains("data-open=\"true\""));
-        // Configure toggle lives on the shell context bar now, not Explore itself.
+        assert!(html.contains("data-role=\"explore-assist-column\""));
+        assert!(html.contains("data-role=\"explore-assist-meta\""));
+        assert!(html.contains("Signature help unavailable"));
+        // Capability Center lives on the shared shell frame, not Explore itself.
         assert!(!html.contains("data-role=\"explore-configure-toggle\""));
     }
 }

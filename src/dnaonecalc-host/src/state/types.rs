@@ -247,8 +247,18 @@ pub struct RetainedArtifactRecord {
     pub excel_effective_display_text: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CapabilityAndEnvironmentState;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityAndEnvironmentState {
+    pub selected_diff_target: CapabilityDiffTarget,
+}
+
+impl Default for CapabilityAndEnvironmentState {
+    fn default() -> Self {
+        Self {
+            selected_diff_target: CapabilityDiffTarget::WorkspaceBaseline,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExtensionSurfaceState;
@@ -273,6 +283,40 @@ pub enum AppMode {
     Explore,
     Inspect,
     Workbench,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityDiffTarget {
+    WorkspaceBaseline,
+    OpenFormulaSpace(FormulaSpaceId),
+    RecentFormulaSpace(FormulaSpaceId),
+}
+
+impl CapabilityDiffTarget {
+    pub fn slug(&self) -> String {
+        match self {
+            Self::WorkspaceBaseline => "workspace-baseline".to_string(),
+            Self::OpenFormulaSpace(formula_space_id) => {
+                format!("open:{}", formula_space_id.as_str())
+            }
+            Self::RecentFormulaSpace(formula_space_id) => {
+                format!("recent:{}", formula_space_id.as_str())
+            }
+        }
+    }
+
+    pub fn parse(slug: &str) -> Option<Self> {
+        if slug == "workspace-baseline" {
+            return Some(Self::WorkspaceBaseline);
+        }
+        if let Some(rest) = slug.strip_prefix("open:") {
+            return Some(Self::OpenFormulaSpace(FormulaSpaceId::new(
+                rest.to_string(),
+            )));
+        }
+        slug.strip_prefix("recent:")
+            .map(|rest| Self::RecentFormulaSpace(FormulaSpaceId::new(rest.to_string())))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

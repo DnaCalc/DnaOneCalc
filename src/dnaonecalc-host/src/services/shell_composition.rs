@@ -1,10 +1,12 @@
+use serde_json::json;
+
 use crate::services::explore_mode::{build_explore_view_model, ExploreViewModel};
 use crate::services::inspect_mode::{build_inspect_view_model, InspectViewModel};
 use crate::services::retained_artifacts::{
     active_retained_artifact, retained_artifacts_for_formula_space,
 };
 use crate::services::workbench_mode::{build_workbench_view_model, WorkbenchViewModel};
-use crate::state::{AppMode, FormulaSpaceState, OneCalcHostState};
+use crate::state::{AppMode, CapabilityDiffTarget, FormulaSpaceState, OneCalcHostState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActiveModeProjection {
@@ -69,6 +71,39 @@ pub struct ShellWorkspaceManifestViewModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityCenterFactViewModel {
+    pub label: &'static str,
+    pub value: String,
+    pub tone: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityDiffTargetOptionViewModel {
+    pub slug: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityDiffRowViewModel {
+    pub label: &'static str,
+    pub current_value: String,
+    pub target_value: String,
+    pub status: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityCenterViewModel {
+    pub title: String,
+    pub subtitle: String,
+    pub summary: Vec<CapabilityCenterFactViewModel>,
+    pub snapshot_json: String,
+    pub export_file_name: String,
+    pub diff_target_options: Vec<CapabilityDiffTargetOptionViewModel>,
+    pub selected_diff_target_slug: String,
+    pub diff_rows: Vec<CapabilityDiffRowViewModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellRetainedVerdictsViewModel {
     pub value_match: Option<bool>,
     pub display_match: Option<bool>,
@@ -91,6 +126,7 @@ pub struct ShellFrameViewModel {
     pub footer_facts: Vec<ShellChromeFactViewModel>,
     pub workspace_summary: String,
     pub workspace_manifest: ShellWorkspaceManifestViewModel,
+    pub capability_center: CapabilityCenterViewModel,
     pub mode_tabs: Vec<ShellModeTabViewModel>,
     pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
 }
@@ -444,6 +480,13 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
             },
         },
     ];
+    let capability_center = build_capability_center_view_model(
+        state,
+        active_formula_space,
+        active_mode,
+        &workspace_manifest,
+        &scope_strip,
+    );
 
     Some(ShellFrameViewModel {
         active_mode,
@@ -463,6 +506,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         footer_facts,
         workspace_summary,
         workspace_manifest,
+        capability_center,
         mode_tabs,
         formula_spaces,
     })
@@ -501,12 +545,399 @@ pub fn select_active_formula_space(state: &mut OneCalcHostState, formula_space_i
         crate::state::WorkspaceNavigationSelection::FormulaSpace(formula_space_id);
 }
 
+pub fn select_capability_diff_target(state: &mut OneCalcHostState, slug: &str) {
+    let Some(parsed_target) = CapabilityDiffTarget::parse(slug) else {
+        return;
+    };
+    let is_valid = match &parsed_target {
+        CapabilityDiffTarget::WorkspaceBaseline => true,
+        CapabilityDiffTarget::OpenFormulaSpace(formula_space_id) => state
+            .workspace_shell
+            .open_formula_space_order
+            .iter()
+            .any(|candidate| candidate == formula_space_id),
+        CapabilityDiffTarget::RecentFormulaSpace(formula_space_id) => state
+            .workspace_shell
+            .recent_formula_space_order
+            .iter()
+            .any(|candidate| candidate == formula_space_id),
+    };
+    if is_valid {
+        state.capability_and_environment.selected_diff_target = parsed_target;
+    }
+}
+
 fn mode_label(mode: AppMode) -> &'static str {
     match mode {
         AppMode::Explore => "Explore",
         AppMode::Inspect => "Inspect",
         AppMode::Workbench => "Workbench",
     }
+}
+
+fn build_capability_center_view_model(
+    state: &OneCalcHostState,
+    active_formula_space: &FormulaSpaceState,
+    active_mode: AppMode,
+    workspace_manifest: &ShellWorkspaceManifestViewModel,
+    scope_strip: &[ShellScopeSegmentViewModel],
+) -> CapabilityCenterViewModel {
+    let current_snapshot = capability_snapshot_rows(
+        active_formula_space.context.scenario_label.clone(),
+        active_formula_space,
+        active_mode,
+        workspace_manifest,
+        scope_strip,
+    );
+    let diff_target_options =
+        capability_diff_target_options(state, &active_formula_space.formula_space_id);
+    let selected_diff_target = normalize_capability_diff_target(
+        state,
+        &active_formula_space.formula_space_id,
+        diff_target_options
+            .first()
+            .map(|option| option.slug.as_str()),
+    );
+    let selected_diff_target_slug = selected_diff_target.slug();
+    let selected_diff_target_label = diff_target_options
+        .iter()
+        .find(|option| option.slug == selected_diff_target_slug)
+        .map(|option| option.label.clone())
+        .unwrap_or_else(|| "Workspace baseline".to_string());
+    let target_snapshot = capability_snapshot_for_diff_target(
+        state,
+        &selected_diff_target,
+        workspace_manifest,
+        scope_strip,
+    );
+    let diff_rows = current_snapshot
+        .iter()
+        .map(|current| {
+            let target_value = target_snapshot
+                .iter()
+                .find(|target| target.label == current.label)
+                .map(|target| target.value.clone())
+                .unwrap_or_else(|| "Unavailable".to_string());
+            CapabilityDiffRowViewModel {
+                label: current.label,
+                status: if current.value == target_value {
+                    "same"
+                } else {
+                    "changed"
+                },
+                current_value: current.value.clone(),
+                target_value,
+            }
+        })
+        .collect::<Vec<_>>();
+    let snapshot_json = serde_json::to_string_pretty(&json!({
+        "scenario": active_formula_space.context.scenario_label,
+        "mode": mode_label(active_mode),
+        "truth_source": active_formula_space.context.truth_source.label(),
+        "host_profile": active_formula_space.context.host_profile,
+        "packet_kind": active_formula_space.context.packet_kind,
+        "capability_floor": active_formula_space.context.capability_floor,
+        "mode_availability": active_formula_space.context.mode_availability,
+        "workspace": {
+            "open": workspace_manifest.open_count,
+            "pinned": workspace_manifest.pinned_count,
+            "recent": workspace_manifest.recent_count,
+        },
+        "scope_strip": scope_strip.iter().map(|segment| {
+            json!({
+                "slug": segment.slug,
+                "label": segment.label,
+                "value": segment.value,
+                "status": segment.status.slug(),
+                "seam_id": segment.status.seam_id(),
+            })
+        }).collect::<Vec<_>>(),
+    }))
+    .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"));
+    let summary = vec![
+        CapabilityCenterFactViewModel {
+            label: "Mode",
+            value: mode_label(active_mode).to_string(),
+            tone: "accent",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Floor",
+            value: active_formula_space.context.capability_floor.clone(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Host",
+            value: active_formula_space.context.host_profile.clone(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Diff target",
+            value: selected_diff_target_label.clone(),
+            tone: "muted",
+        },
+    ];
+
+    CapabilityCenterViewModel {
+        title: "Capability Center".to_string(),
+        subtitle:
+            "Supporting honesty surface for capability truth, diff targeting, copy, and export."
+                .to_string(),
+        summary,
+        snapshot_json,
+        export_file_name: format!(
+            "onecalc-capability-{}.json",
+            active_formula_space.formula_space_id.as_str()
+        ),
+        diff_target_options,
+        selected_diff_target_slug,
+        diff_rows,
+    }
+}
+
+fn capability_diff_target_options(
+    state: &OneCalcHostState,
+    active_formula_space_id: &crate::domain::ids::FormulaSpaceId,
+) -> Vec<CapabilityDiffTargetOptionViewModel> {
+    let mut options = vec![CapabilityDiffTargetOptionViewModel {
+        slug: CapabilityDiffTarget::WorkspaceBaseline.slug(),
+        label: "Workspace baseline".to_string(),
+    }];
+
+    for formula_space_id in &state.workspace_shell.open_formula_space_order {
+        if formula_space_id == active_formula_space_id {
+            continue;
+        }
+        if let Some(formula_space) = state.formula_spaces.get(formula_space_id) {
+            options.push(CapabilityDiffTargetOptionViewModel {
+                slug: CapabilityDiffTarget::OpenFormulaSpace(formula_space_id.clone()).slug(),
+                label: format!("Open · {}", formula_space.context.scenario_label),
+            });
+        }
+    }
+
+    for formula_space_id in &state.workspace_shell.recent_formula_space_order {
+        if let Some(record) = state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(formula_space_id)
+        {
+            options.push(CapabilityDiffTargetOptionViewModel {
+                slug: CapabilityDiffTarget::RecentFormulaSpace(formula_space_id.clone()).slug(),
+                label: format!("Recent · {}", record.formula_space.context.scenario_label),
+            });
+        }
+    }
+
+    options
+}
+
+fn normalize_capability_diff_target(
+    state: &OneCalcHostState,
+    active_formula_space_id: &crate::domain::ids::FormulaSpaceId,
+    fallback_slug: Option<&str>,
+) -> CapabilityDiffTarget {
+    let selected = state
+        .capability_and_environment
+        .selected_diff_target
+        .clone();
+    let valid = match &selected {
+        CapabilityDiffTarget::WorkspaceBaseline => true,
+        CapabilityDiffTarget::OpenFormulaSpace(formula_space_id) => {
+            formula_space_id != active_formula_space_id
+                && state
+                    .workspace_shell
+                    .open_formula_space_order
+                    .iter()
+                    .any(|candidate| candidate == formula_space_id)
+        }
+        CapabilityDiffTarget::RecentFormulaSpace(formula_space_id) => state
+            .workspace_shell
+            .recent_formula_space_order
+            .iter()
+            .any(|candidate| candidate == formula_space_id),
+    };
+    if valid {
+        return selected;
+    }
+    fallback_slug
+        .and_then(CapabilityDiffTarget::parse)
+        .unwrap_or(CapabilityDiffTarget::WorkspaceBaseline)
+}
+
+fn capability_snapshot_for_diff_target(
+    state: &OneCalcHostState,
+    diff_target: &CapabilityDiffTarget,
+    workspace_manifest: &ShellWorkspaceManifestViewModel,
+    scope_strip: &[ShellScopeSegmentViewModel],
+) -> Vec<CapabilityCenterFactViewModel> {
+    match diff_target {
+        CapabilityDiffTarget::WorkspaceBaseline => {
+            capability_baseline_rows(workspace_manifest, scope_strip)
+        }
+        CapabilityDiffTarget::OpenFormulaSpace(formula_space_id) => state
+            .formula_spaces
+            .get(formula_space_id)
+            .map(|formula_space| {
+                capability_snapshot_rows(
+                    formula_space.context.scenario_label.clone(),
+                    formula_space,
+                    state
+                        .workspace_shell
+                        .formula_space_modes
+                        .get(formula_space_id)
+                        .copied()
+                        .unwrap_or(AppMode::Explore),
+                    workspace_manifest,
+                    scope_strip,
+                )
+            })
+            .unwrap_or_else(|| capability_baseline_rows(workspace_manifest, scope_strip)),
+        CapabilityDiffTarget::RecentFormulaSpace(formula_space_id) => state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(formula_space_id)
+            .map(|record| {
+                capability_snapshot_rows(
+                    record.formula_space.context.scenario_label.clone(),
+                    &record.formula_space,
+                    record.last_active_mode,
+                    workspace_manifest,
+                    scope_strip,
+                )
+            })
+            .unwrap_or_else(|| capability_baseline_rows(workspace_manifest, scope_strip)),
+    }
+}
+
+fn capability_snapshot_rows(
+    scenario_label: String,
+    formula_space: &FormulaSpaceState,
+    mode: AppMode,
+    workspace_manifest: &ShellWorkspaceManifestViewModel,
+    scope_strip: &[ShellScopeSegmentViewModel],
+) -> Vec<CapabilityCenterFactViewModel> {
+    let scope_summary = scope_strip
+        .iter()
+        .map(|segment| format!("{}={}", segment.label, segment.value))
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    vec![
+        CapabilityCenterFactViewModel {
+            label: "Scenario",
+            value: scenario_label,
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Mode",
+            value: mode_label(mode).to_string(),
+            tone: "accent",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Truth source",
+            value: formula_space.context.truth_source.label().to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Host profile",
+            value: formula_space.context.host_profile.clone(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Packet kind",
+            value: formula_space.context.packet_kind.clone(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Capability floor",
+            value: formula_space.context.capability_floor.clone(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Mode availability",
+            value: formula_space.context.mode_availability.clone(),
+            tone: "muted",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Workspace manifest",
+            value: format!(
+                "{} open · {} pinned · {} recent",
+                workspace_manifest.open_count,
+                workspace_manifest.pinned_count,
+                workspace_manifest.recent_count
+            ),
+            tone: "muted",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Scope strip",
+            value: scope_summary,
+            tone: "muted",
+        },
+    ]
+}
+
+fn capability_baseline_rows(
+    workspace_manifest: &ShellWorkspaceManifestViewModel,
+    scope_strip: &[ShellScopeSegmentViewModel],
+) -> Vec<CapabilityCenterFactViewModel> {
+    let scope_summary = scope_strip
+        .iter()
+        .map(|segment| format!("{}={}", segment.label, segment.value))
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    vec![
+        CapabilityCenterFactViewModel {
+            label: "Scenario",
+            value: "Workspace baseline".to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Mode",
+            value: "Shared".to_string(),
+            tone: "accent",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Truth source",
+            value: "workspace-shared".to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Host profile",
+            value: "Workspace-scoped host truth".to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Packet kind",
+            value: "Workspace ledger".to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Capability floor",
+            value: "Current workspace floor".to_string(),
+            tone: "default",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Mode availability",
+            value: "Explore / Inspect / Workbench".to_string(),
+            tone: "muted",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Workspace manifest",
+            value: format!(
+                "{} open · {} pinned · {} recent",
+                workspace_manifest.open_count,
+                workspace_manifest.pinned_count,
+                workspace_manifest.recent_count
+            ),
+            tone: "muted",
+        },
+        CapabilityCenterFactViewModel {
+            label: "Scope strip",
+            value: scope_summary,
+            tone: "muted",
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -738,6 +1169,119 @@ mod tests {
         assert!(recent.can_reopen);
         assert_eq!(recent.mode_label, "Inspect");
         assert_eq!(frame.workspace_manifest.recent_count, 1);
+    }
+
+    #[test]
+    fn shell_frame_view_model_exposes_capability_center_diff_targets() {
+        let active_id = FormulaSpaceId::new("space-1");
+        let open_id = FormulaSpaceId::new("space-2");
+        let recent_id = FormulaSpaceId::new("space-3");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(active_id.clone());
+        state.workspace_shell.open_formula_space_order = vec![active_id.clone(), open_id.clone()];
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(active_id.clone(), AppMode::Explore);
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(open_id.clone(), AppMode::Workbench);
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(active_id.clone(), "=SUM(1,2)"));
+        let mut open_formula_space = FormulaSpaceState::new(open_id.clone(), "=SEQUENCE(2,2)");
+        open_formula_space.context.scenario_label = "open diff target".to_string();
+        state.formula_spaces.insert(open_formula_space);
+
+        let mut recent_formula_space = FormulaSpaceState::new(recent_id.clone(), "=LET(x,1,x)");
+        recent_formula_space.context.scenario_label = "recent diff target".to_string();
+        state
+            .workspace_shell
+            .recent_formula_space_order
+            .push(recent_id.clone());
+        state.workspace_shell.recent_formula_spaces.insert(
+            recent_id.clone(),
+            crate::state::ClosedFormulaSpaceRecord {
+                formula_space: recent_formula_space,
+                last_active_mode: AppMode::Inspect,
+            },
+        );
+
+        let frame = build_shell_frame_view_model(&state).expect("frame should exist");
+
+        assert_eq!(
+            frame.capability_center.selected_diff_target_slug,
+            "workspace-baseline"
+        );
+        assert_eq!(frame.capability_center.diff_target_options.len(), 3);
+        assert!(frame
+            .capability_center
+            .diff_target_options
+            .iter()
+            .any(|option| option.slug == "workspace-baseline"));
+        assert!(frame
+            .capability_center
+            .diff_target_options
+            .iter()
+            .any(|option| option.label == "Open · open diff target"));
+        assert!(frame
+            .capability_center
+            .diff_target_options
+            .iter()
+            .any(|option| option.label == "Recent · recent diff target"));
+        assert!(frame
+            .capability_center
+            .diff_rows
+            .iter()
+            .any(|row| row.label == "Scenario" && row.status == "changed"));
+        assert!(frame
+            .capability_center
+            .snapshot_json
+            .contains("\"workspace\""));
+    }
+
+    #[test]
+    fn select_capability_diff_target_ignores_active_open_space_and_invalid_slug() {
+        let active_id = FormulaSpaceId::new("space-1");
+        let other_id = FormulaSpaceId::new("space-2");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.open_formula_space_order = vec![active_id.clone(), other_id.clone()];
+        state.capability_and_environment.selected_diff_target =
+            CapabilityDiffTarget::WorkspaceBaseline;
+
+        select_capability_diff_target(&mut state, "open:space-1");
+        assert_eq!(
+            state.capability_and_environment.selected_diff_target,
+            CapabilityDiffTarget::OpenFormulaSpace(active_id.clone())
+        );
+
+        let frame = build_shell_frame_view_model(&OneCalcHostState {
+            workspace_shell: crate::state::WorkspaceShellState {
+                active_formula_space_id: Some(active_id.clone()),
+                open_formula_space_order: vec![active_id.clone(), other_id.clone()],
+                ..Default::default()
+            },
+            formula_spaces: {
+                let mut collection = FormulaSpaceCollectionState::default();
+                collection.insert(FormulaSpaceState::new(active_id.clone(), "=SUM(1,2)"));
+                collection.insert(FormulaSpaceState::new(other_id.clone(), "=SUM(2,3)"));
+                collection
+            },
+            capability_and_environment: state.capability_and_environment.clone(),
+            ..Default::default()
+        })
+        .expect("frame should exist");
+        assert_eq!(
+            frame.capability_center.selected_diff_target_slug,
+            "workspace-baseline"
+        );
+
+        select_capability_diff_target(&mut state, "bogus-target");
+        assert_eq!(
+            state.capability_and_environment.selected_diff_target,
+            CapabilityDiffTarget::OpenFormulaSpace(active_id)
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::app::reducer::{
 use crate::services::live_edit::{apply_live_editor_command, apply_live_editor_input};
 use crate::services::shell_composition::{
     build_active_mode_projection, build_shell_frame_view_model, select_active_formula_space,
-    switch_active_mode, ActiveModeProjection,
+    select_capability_diff_target, switch_active_mode, ActiveModeProjection,
 };
 use crate::state::OneCalcHostState;
 use crate::ui::components::explore_shell::ExploreShell;
@@ -70,6 +70,11 @@ pub fn OneCalcShellApp(
                 state,
                 EditorCommand::ToggleConfigureDrawer,
             );
+        });
+    });
+    let on_capability_diff_target_select = Callback::new(move |slug: String| {
+        state.update(|state| {
+            select_capability_diff_target(state, &slug);
         });
     });
     let editor_bridge_for_input = editor_bridge.clone();
@@ -142,6 +147,7 @@ pub fn OneCalcShellApp(
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
                                 on_reopen_formula_space=Some(on_reopen_formula_space)
+                                on_capability_diff_target_select=Some(on_capability_diff_target_select)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
@@ -166,6 +172,7 @@ pub fn OneCalcShellApp(
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
                                 on_reopen_formula_space=Some(on_reopen_formula_space)
+                                on_capability_diff_target_select=Some(on_capability_diff_target_select)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
@@ -187,6 +194,7 @@ pub fn OneCalcShellApp(
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
                                 on_reopen_formula_space=Some(on_reopen_formula_space)
+                                on_capability_diff_target_select=Some(on_capability_diff_target_select)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)

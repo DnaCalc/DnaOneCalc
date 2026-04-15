@@ -294,6 +294,18 @@ pub const ONECALC_THEME_CSS: &str = r#"
   min-width: 0;
 }
 
+.onecalc-shell-frame__content-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.onecalc-shell-frame__content-main[data-drawer-open="true"] {
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.7), rgba(243, 236, 223, 0.7));
+}
+
 .onecalc-shell-frame__footer {
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   padding: var(--oc-space-3) var(--oc-space-5) var(--oc-space-4);
@@ -2264,6 +2276,24 @@ pub const ONECALC_THEME_CSS: &str = r#"
     grid-template-columns: 1fr;
   }
 
+  .onecalc-shell-frame__content-main {
+    grid-template-columns: 1fr;
+  }
+
+  .onecalc-capability-center__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .onecalc-capability-center__diff-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .onecalc-capability-center__diff-target {
+    min-width: 0;
+    width: 100%;
+  }
+
   .onecalc-explore-shell__body,
   .onecalc-inspect-shell__body,
   .onecalc-workbench-shell__body {
@@ -2441,6 +2471,142 @@ pub const ONECALC_THEME_CSS: &str = r#"
   padding: 1rem 1.25rem 1.25rem;
   overflow-y: auto;
   min-height: 0;
+}
+
+.onecalc-shell-frame__content-main .onecalc-shell-drawer {
+  min-height: 0;
+  height: 100%;
+}
+
+.onecalc-capability-center {
+  display: grid;
+  gap: var(--oc-space-4);
+}
+
+.onecalc-capability-center__summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--oc-space-2);
+}
+
+.onecalc-capability-center__summary-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 28, 23, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.onecalc-capability-center__summary-card[data-tone="accent"] {
+  border-color: rgba(36, 93, 90, 0.24);
+  background: rgba(36, 93, 90, 0.1);
+}
+
+.onecalc-capability-center__summary-label,
+.onecalc-capability-center__diff-row-label {
+  color: var(--oc-color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.onecalc-capability-center__summary-value {
+  color: var(--oc-color-night);
+  font-size: 0.92rem;
+}
+
+.onecalc-capability-center__actions {
+  display: flex;
+  gap: var(--oc-space-2);
+  flex-wrap: wrap;
+}
+
+.onecalc-capability-center__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 28, 23, 0.14);
+  background: rgba(255, 252, 246, 0.95);
+  color: var(--oc-color-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.onecalc-capability-center__action--link {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-capability-center__diff {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-capability-center__diff-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-capability-center__diff-target {
+  min-width: 14rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(31, 28, 23, 0.14);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--oc-color-ink);
+}
+
+.onecalc-capability-center__diff-rows {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-capability-center__diff-row {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 28, 23, 0.08);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.onecalc-capability-center__diff-row[data-status="changed"] {
+  border-color: rgba(184, 69, 50, 0.24);
+  background: rgba(184, 69, 50, 0.06);
+}
+
+.onecalc-capability-center__diff-row-values {
+  display: grid;
+  gap: 0.2rem;
+  font-family: var(--oc-font-mono);
+  font-size: 0.78rem;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-capability-center__payload {
+  display: grid;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-capability-center__payload-text {
+  width: 100%;
+  min-height: 16rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 28, 23, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--oc-color-ink);
+  font: 0.78rem/1.5rem var(--oc-font-mono);
+  resize: vertical;
 }
 
 .onecalc-value-panel {

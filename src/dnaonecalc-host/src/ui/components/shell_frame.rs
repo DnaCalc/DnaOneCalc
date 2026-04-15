@@ -4,6 +4,30 @@ use crate::services::shell_composition::{
     mode_accent_slug, ShellFormulaSpaceListItemViewModel, ShellFrameViewModel, ShellRailSection,
 };
 use crate::state::AppMode;
+use crate::ui::components::shell_drawer::ShellDrawer;
+
+fn encode_data_uri_payload(payload: &str) -> String {
+    let mut encoded = String::with_capacity(payload.len());
+    for byte in payload.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    encoded
+}
+
+#[cfg(target_arch = "wasm32")]
+fn copy_payload_to_clipboard(payload: &str) {
+    if let Some(window) = web_sys::window() {
+        let clipboard = window.navigator().clipboard();
+        let _ = clipboard.write_text(payload);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_payload_to_clipboard(_payload: &str) {}
 
 fn render_rail_section(
     section: ShellRailSection,
@@ -260,6 +284,7 @@ pub fn ShellFrame(
     on_mode_select: Option<Callback<AppMode>>,
     #[prop(default = None)] on_formula_space_select: Option<Callback<String>>,
     #[prop(default = None)] on_reopen_formula_space: Option<Callback<String>>,
+    #[prop(default = None)] on_capability_diff_target_select: Option<Callback<String>>,
     #[prop(default = None)] on_new_formula_space: Option<Callback<()>>,
     #[prop(default = None)] on_close_formula_space: Option<Callback<String>>,
     #[prop(default = None)] on_toggle_pin_formula_space: Option<Callback<String>>,
@@ -492,7 +517,7 @@ pub fn ShellFrame(
                                     class="onecalc-shell-frame__configure-action"
                                     data-role="shell-frame-configure-toggle"
                                     data-open=if configure_drawer_open { "true" } else { "false" }
-                                    aria-label="Toggle Configure drawer"
+                                    aria-label="Toggle Capability Center"
                                     aria-expanded=if configure_drawer_open { "true" } else { "false" }
                                     on:click=move |_| {
                                         if let Some(callback) = configure_callback.as_ref() {
@@ -500,15 +525,141 @@ pub fn ShellFrame(
                                         }
                                     }
                                 >
-                                    {if configure_drawer_open { "Close configure" } else { "Configure" }}
+                                    {if configure_drawer_open {
+                                        "Close capability center"
+                                    } else {
+                                        "Capability Center"
+                                    }}
                                 </button>
                             }
                         }}
                     </nav>
                 </header>
 
-                <section class="onecalc-shell-frame__mode-body">
-                    {children()}
+                <section
+                    class="onecalc-shell-frame__content-main"
+                    data-role="shell-content-main"
+                    data-drawer-open=if configure_drawer_open { "true" } else { "false" }
+                >
+                    <section class="onecalc-shell-frame__mode-body">
+                        {children()}
+                    </section>
+                    {if configure_drawer_open {
+                        let export_href = format!(
+                            "data:application/json;charset=utf-8,{}",
+                            encode_data_uri_payload(&frame.capability_center.snapshot_json),
+                        );
+                        view! {
+                            <ShellDrawer
+                                drawer_kind="capability-center".to_string()
+                                title=frame.capability_center.title.clone()
+                                subtitle=Some(frame.capability_center.subtitle.clone())
+                                is_open=true
+                                on_close=on_configure_toggle.clone()
+                            >
+                                <section class="onecalc-capability-center" data-role="capability-center">
+                                    <div class="onecalc-capability-center__summary" data-role="capability-center-summary">
+                                        {frame
+                                            .capability_center
+                                            .summary
+                                            .iter()
+                                            .map(|fact| view! {
+                                                <article
+                                                    class="onecalc-capability-center__summary-card"
+                                                    data-role="capability-center-summary-card"
+                                                    data-tone=fact.tone
+                                                >
+                                                    <span class="onecalc-capability-center__summary-label">{fact.label}</span>
+                                                    <strong class="onecalc-capability-center__summary-value">{fact.value.clone()}</strong>
+                                                </article>
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                    <div class="onecalc-capability-center__actions" data-role="capability-center-actions">
+                                        <button
+                                            type="button"
+                                            class="onecalc-capability-center__action"
+                                            data-role="capability-center-copy"
+                                            data-copy-payload=frame.capability_center.snapshot_json.clone()
+                                            on:click={
+                                                let snapshot_json = frame.capability_center.snapshot_json.clone();
+                                                move |_| copy_payload_to_clipboard(&snapshot_json)
+                                            }
+                                        >
+                                            "Copy snapshot"
+                                        </button>
+                                        <a
+                                            class="onecalc-capability-center__action onecalc-capability-center__action--link"
+                                            data-role="capability-center-export"
+                                            href=export_href
+                                            download=frame.capability_center.export_file_name.clone()
+                                        >
+                                            "Export JSON"
+                                        </a>
+                                    </div>
+                                    <div class="onecalc-capability-center__diff" data-role="capability-center-diff">
+                                        <header class="onecalc-capability-center__diff-header">
+                                            <div>
+                                                <div class="onecalc-shell-frame__eyebrow">"Diff target"</div>
+                                                <strong>"Compare capability truth"</strong>
+                                            </div>
+                                            <select
+                                                class="onecalc-capability-center__diff-target"
+                                                data-role="capability-center-diff-target"
+                                                on:change=move |ev| {
+                                                    if let Some(callback) = on_capability_diff_target_select.as_ref() {
+                                                        callback.run(event_target_value(&ev));
+                                                    }
+                                                }
+                                                prop:value=frame.capability_center.selected_diff_target_slug.clone()
+                                            >
+                                                {frame
+                                                    .capability_center
+                                                    .diff_target_options
+                                                    .iter()
+                                                    .map(|option| view! {
+                                                        <option value=option.slug.clone()>{option.label.clone()}</option>
+                                                    })
+                                                    .collect_view()}
+                                            </select>
+                                        </header>
+                                        <div class="onecalc-capability-center__diff-rows">
+                                            {frame
+                                                .capability_center
+                                                .diff_rows
+                                                .iter()
+                                                .map(|row| view! {
+                                                    <article
+                                                        class="onecalc-capability-center__diff-row"
+                                                        data-role="capability-center-diff-row"
+                                                        data-status=row.status
+                                                    >
+                                                        <div class="onecalc-capability-center__diff-row-label">{row.label}</div>
+                                                        <div class="onecalc-capability-center__diff-row-values">
+                                                            <span data-role="capability-center-diff-current">{row.current_value.clone()}</span>
+                                                            <span data-role="capability-center-diff-target-value">{row.target_value.clone()}</span>
+                                                        </div>
+                                                    </article>
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    </div>
+                                    <div class="onecalc-capability-center__payload" data-role="capability-center-payload">
+                                        <div class="onecalc-shell-frame__eyebrow">"Snapshot payload"</div>
+                                        <textarea
+                                            class="onecalc-capability-center__payload-text"
+                                            data-role="capability-center-payload-text"
+                                            readonly
+                                            prop:value=frame.capability_center.snapshot_json.clone()
+                                        />
+                                    </div>
+                                </section>
+                            </ShellDrawer>
+                        }
+                        .into_any()
+                    } else {
+                        view! { <></> }.into_any()
+                    }}
                 </section>
 
                 <footer class="onecalc-shell-frame__footer" data-role="shell-footer">
@@ -538,9 +689,10 @@ pub fn ShellFrame(
 mod tests {
     use super::*;
     use crate::services::shell_composition::{
-        ShellBreadcrumbViewModel, ShellFormulaSpaceListItemViewModel, ShellModeTabViewModel,
-        ShellRailSection, ShellRetainedVerdictsViewModel, ShellScopeSegmentStatus,
-        ShellScopeSegmentViewModel,
+        CapabilityCenterFactViewModel, CapabilityCenterViewModel, CapabilityDiffRowViewModel,
+        CapabilityDiffTargetOptionViewModel, ShellBreadcrumbViewModel,
+        ShellFormulaSpaceListItemViewModel, ShellModeTabViewModel, ShellRailSection,
+        ShellRetainedVerdictsViewModel, ShellScopeSegmentStatus, ShellScopeSegmentViewModel,
     };
 
     #[test]
@@ -602,6 +754,41 @@ mod tests {
                         recent_count: 1,
                         isolation_note: "Documents remain isolated OneCalc instances.",
                     },
+                    capability_center: CapabilityCenterViewModel {
+                        title: "Capability Center".to_string(),
+                        subtitle: "Supporting honesty surface for capability truth, diff targeting, copy, and export.".to_string(),
+                        summary: vec![
+                            CapabilityCenterFactViewModel {
+                                label: "Mode",
+                                value: "Explore".to_string(),
+                                tone: "accent",
+                            },
+                            CapabilityCenterFactViewModel {
+                                label: "Diff target",
+                                value: "Workspace baseline".to_string(),
+                                tone: "muted",
+                            },
+                        ],
+                        snapshot_json: "{\"mode\":\"Explore\"}".to_string(),
+                        export_file_name: "onecalc-capability-space-1.json".to_string(),
+                        diff_target_options: vec![
+                            CapabilityDiffTargetOptionViewModel {
+                                slug: "workspace-baseline".to_string(),
+                                label: "Workspace baseline".to_string(),
+                            },
+                            CapabilityDiffTargetOptionViewModel {
+                                slug: "recent:space-2".to_string(),
+                                label: "Recent · space-2".to_string(),
+                            },
+                        ],
+                        selected_diff_target_slug: "workspace-baseline".to_string(),
+                        diff_rows: vec![CapabilityDiffRowViewModel {
+                            label: "Host profile",
+                            current_value: "windows".to_string(),
+                            target_value: "Workspace-scoped host truth".to_string(),
+                            status: "changed",
+                        }],
+                    },
                     mode_tabs: vec![
                         ShellModeTabViewModel {
                             mode: AppMode::Explore,
@@ -648,6 +835,7 @@ mod tests {
                 on_mode_select=None
                 on_formula_space_select=None
                 on_reopen_formula_space=None
+                configure_drawer_open=true
             >
                 <div>"Body"</div>
             </ShellFrame>
@@ -696,5 +884,14 @@ mod tests {
         assert!(html.contains("data-role=\"workspace-isolation-note\""));
         assert!(html.contains("data-role=\"formula-space-reopen\""));
         assert!(html.contains("data-role=\"shell-rail-reopen-tag\""));
+        assert!(html.contains("data-role=\"shell-content-main\""));
+        assert!(html.contains("data-role=\"capability-center\""));
+        assert!(html.contains("data-role=\"capability-center-copy\""));
+        assert!(html.contains("data-role=\"capability-center-export\""));
+        assert!(html.contains("data-role=\"capability-center-diff-target\""));
+        assert!(html.contains("data-role=\"capability-center-diff-row\""));
+        assert!(html.contains("data-role=\"capability-center-payload-text\""));
+        assert!(html.contains("Capability Center"));
+        assert!(html.contains("workspace-baseline"));
     }
 }
