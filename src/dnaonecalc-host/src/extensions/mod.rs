@@ -1,6 +1,11 @@
+mod packaging_conformance;
 mod rtd_runtime;
 mod runtime_catalog;
 
+pub use packaging_conformance::{
+    build_packaging_conformance_harnesses, verify_packaging_parity,
+    ExtensionPackagingConformanceHarness, ExtensionPackagingParityReport,
+};
 pub use rtd_runtime::{
     default_extension_rtd_host, ExtensionRtdHostState, RtdHostReport, RtdTopicLifecycleState,
     RtdTopicRecord, RtdTopicRequest, RtdTopicRequestKey, RtdTopicRequestOutcome,
