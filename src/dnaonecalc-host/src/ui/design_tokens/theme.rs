@@ -93,6 +93,52 @@ pub const ONECALC_THEME_CSS: &str = r#"
   box-shadow: var(--oc-shadow-panel);
 }
 
+.onecalc-shell-frame__workspace-manifest {
+  display: grid;
+  gap: var(--oc-space-3);
+  padding: var(--oc-space-4);
+  border-radius: 18px;
+  border: 1px solid rgba(31, 28, 23, 0.1);
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(245, 237, 225, 0.94));
+  box-shadow: 0 10px 24px rgba(31, 28, 23, 0.06);
+}
+
+.onecalc-shell-frame__workspace-manifest-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--oc-space-2);
+}
+
+.onecalc-shell-frame__workspace-manifest-metric {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 28, 23, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.onecalc-shell-frame__workspace-manifest-metric > span {
+  color: var(--oc-color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
+.onecalc-shell-frame__workspace-manifest-metric > strong {
+  font-family: var(--oc-font-mono);
+  font-size: 1.15rem;
+  color: var(--oc-color-night);
+}
+
+.onecalc-shell-frame__workspace-manifest-note {
+  margin: 0;
+  color: var(--oc-color-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 .onecalc-shell-frame__active-meta,
 .onecalc-shell-frame__active-capability,
 .onecalc-shell-frame__context-copy {
@@ -296,6 +342,11 @@ pub const ONECALC_THEME_CSS: &str = r#"
   background: var(--oc-color-surface);
 }
 
+.onecalc-shell-frame__space-item[data-state="recent"] {
+  border-style: dashed;
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.94), rgba(244, 237, 226, 0.9));
+}
+
 .onecalc-shell-frame__space-button {
   width: 100%;
   text-align: left;
@@ -316,6 +367,20 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-shell-frame__space-button-packet {
   color: var(--oc-color-muted);
   font-size: 0.82rem;
+}
+
+.onecalc-shell-frame__space-reopen-tag {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.25rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(36, 93, 90, 0.1);
+  color: var(--oc-color-accent);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .onecalc-shell-frame__space-item--active {
@@ -2192,6 +2257,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
   }
 
   .onecalc-shell-frame__context-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .onecalc-shell-frame__workspace-manifest-grid {
     grid-template-columns: 1fr;
   }
 

@@ -54,6 +54,11 @@ pub fn OneCalcShellApp(
             let _ = crate::app::case_lifecycle::close_formula_space(state, &formula_space_id);
         });
     });
+    let on_reopen_formula_space = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::reopen_formula_space(state, &formula_space_id);
+        });
+    });
     let on_toggle_pin_formula_space = Callback::new(move |formula_space_id: String| {
         state.update(|state| {
             let _ = crate::app::case_lifecycle::toggle_pin_formula_space(state, &formula_space_id);
@@ -136,6 +141,7 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_reopen_formula_space=Some(on_reopen_formula_space)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
@@ -159,6 +165,7 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_reopen_formula_space=Some(on_reopen_formula_space)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)
@@ -179,6 +186,7 @@ pub fn OneCalcShellApp(
                                 frame=frame
                                 on_mode_select=Some(on_mode_select)
                                 on_formula_space_select=Some(on_formula_space_select)
+                                on_reopen_formula_space=Some(on_reopen_formula_space)
                                 on_new_formula_space=Some(on_new_formula_space)
                                 on_close_formula_space=Some(on_close_formula_space)
                                 on_toggle_pin_formula_space=Some(on_toggle_pin_formula_space)

@@ -1,14 +1,17 @@
 //! S1 / S9 / S10 / S11 — workspace / formula-space lifecycle scenarios.
 
 use dnaonecalc_host::app::case_lifecycle::{
-    close_formula_space, new_formula_space, toggle_pin_formula_space,
+    close_formula_space, new_formula_space, reopen_formula_space, toggle_pin_formula_space,
 };
-use dnaonecalc_host::services::shell_composition::{select_active_formula_space, ShellRailSection};
+use dnaonecalc_host::services::shell_composition::{
+    select_active_formula_space, switch_active_mode, ShellRailSection,
+};
+use dnaonecalc_host::state::AppMode;
 use dnaonecalc_host::state::OneCalcHostState;
 
 use super::fixtures::{
     explore_editor_cluster, explore_projection, explore_result_cluster,
-    fresh_state_with_active_space, scenario_bridge, shell_frame, type_formula,
+    fresh_state_with_active_space, inspect_projection, scenario_bridge, shell_frame, type_formula,
 };
 
 #[test]
@@ -89,7 +92,11 @@ fn closing_the_last_space_keeps_the_workspace_non_empty() {
     assert!(closed);
     let frame = shell_frame(&state);
     assert_eq!(
-        frame.formula_spaces.len(),
+        frame
+            .formula_spaces
+            .iter()
+            .filter(|item| item.section != ShellRailSection::Recent)
+            .count(),
         1,
         "workspace spins up a fresh untitled space after last-close",
     );
@@ -116,4 +123,48 @@ fn pinning_a_space_moves_it_to_the_pinned_rail_section() {
         .expect("first space is in shell frame");
     assert_eq!(first_item.section, ShellRailSection::Pinned);
     assert!(first_item.is_pinned);
+}
+
+#[test]
+fn closed_space_can_be_reopened_from_the_workspace_manifest_without_cross_space_leakage() {
+    let mut state = OneCalcHostState::default();
+    let bridge = scenario_bridge();
+    let first = new_formula_space(&mut state);
+    type_formula(&bridge, &mut state, "=SUM(1,2)");
+    switch_active_mode(&mut state, AppMode::Inspect);
+
+    let second = new_formula_space(&mut state);
+    type_formula(&bridge, &mut state, "=SUM(10,20)");
+
+    assert!(close_formula_space(&mut state, first.as_str()));
+
+    let frame_after_close = shell_frame(&state);
+    let recent_item = frame_after_close
+        .formula_spaces
+        .iter()
+        .find(|item| item.formula_space_id == first.as_str())
+        .expect("closed space listed in recent");
+    assert_eq!(recent_item.section, ShellRailSection::Recent);
+    assert!(recent_item.can_reopen);
+
+    assert!(reopen_formula_space(&mut state, first.as_str()));
+
+    let reopened_frame = shell_frame(&state);
+    let reopened_item = reopened_frame
+        .formula_spaces
+        .iter()
+        .find(|item| item.formula_space_id == first.as_str())
+        .expect("reopened space listed");
+    assert_eq!(reopened_item.section, ShellRailSection::Open);
+    assert!(reopened_item.is_active);
+    assert_eq!(reopened_item.mode_label, "Inspect");
+
+    let reopened_projection = inspect_projection(&state);
+    assert_eq!(reopened_projection.scenario_label, "Untitled 1");
+    select_active_formula_space(&mut state, second.as_str());
+    let second_projection = explore_projection(&state);
+    assert_eq!(
+        explore_editor_cluster(&second_projection).raw_entered_cell_text,
+        "=SUM(10,20)"
+    );
 }

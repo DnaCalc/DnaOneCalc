@@ -9,6 +9,7 @@ fn render_rail_section(
     section: ShellRailSection,
     formula_spaces: &[ShellFormulaSpaceListItemViewModel],
     on_formula_space_select: Option<Callback<String>>,
+    on_reopen_formula_space: Option<Callback<String>>,
     on_close_formula_space: Option<Callback<String>>,
     on_toggle_pin_formula_space: Option<Callback<String>>,
 ) -> impl IntoView {
@@ -40,6 +41,7 @@ fn render_rail_section(
                 let placeholder_label = match section {
                     ShellRailSection::Pinned => "No pinned spaces",
                     ShellRailSection::Open => "No open spaces",
+                    ShellRailSection::Recent => "No recent documents",
                 };
                 view! {
                     <p
@@ -58,6 +60,7 @@ fn render_rail_section(
                             .map(|formula_space| render_rail_row(
                                 formula_space,
                                 on_formula_space_select.clone(),
+                                on_reopen_formula_space.clone(),
                                 on_close_formula_space.clone(),
                                 on_toggle_pin_formula_space.clone(),
                             ))
@@ -73,15 +76,19 @@ fn render_rail_section(
 fn render_rail_row(
     formula_space: ShellFormulaSpaceListItemViewModel,
     on_formula_space_select: Option<Callback<String>>,
+    on_reopen_formula_space: Option<Callback<String>>,
     on_close_formula_space: Option<Callback<String>>,
     on_toggle_pin_formula_space: Option<Callback<String>>,
 ) -> impl IntoView {
+    let can_reopen = formula_space.can_reopen;
     let item_class = if formula_space.is_active {
         "onecalc-shell-frame__space-item onecalc-shell-frame__space-item--active"
     } else {
         "onecalc-shell-frame__space-item"
     };
-    let data_state = if formula_space.is_active {
+    let data_state = if can_reopen {
+        "recent"
+    } else if formula_space.is_active {
         "active"
     } else {
         "idle"
@@ -90,6 +97,11 @@ fn render_rail_row(
     let formula_space_id_for_close = formula_space.formula_space_id.clone();
     let formula_space_id_for_pin = formula_space.formula_space_id.clone();
     let verdicts = formula_space.retained_verdicts.clone();
+    let meta_summary = format!(
+        "{} · {}",
+        formula_space.truth_source_label.clone(),
+        formula_space.mode_label
+    );
     view! {
         <li
             class=item_class
@@ -101,10 +113,18 @@ fn render_rail_row(
             <button
                 type="button"
                 class="onecalc-shell-frame__space-button"
-                data-role="formula-space-select"
+                data-role=if can_reopen {
+                    "formula-space-reopen"
+                } else {
+                    "formula-space-select"
+                }
                 data-formula-space-id=formula_space.formula_space_id.clone()
                 on:click=move |_| {
-                    if let Some(callback) = on_formula_space_select.as_ref() {
+                    if can_reopen {
+                        if let Some(callback) = on_reopen_formula_space.as_ref() {
+                            callback.run(formula_space_id.clone());
+                        }
+                    } else if let Some(callback) = on_formula_space_select.as_ref() {
                         callback.run(formula_space_id.clone());
                     }
                 }
@@ -127,11 +147,24 @@ fn render_rail_row(
                     </span>
                 </span>
                 <span class="onecalc-shell-frame__space-button-meta">
-                    {formula_space.truth_source_label.clone()}
+                    {meta_summary.clone()}
                 </span>
                 <span class="onecalc-shell-frame__space-button-packet">
                     {formula_space.packet_kind_summary.clone()}
                 </span>
+                {if can_reopen {
+                    view! {
+                        <span
+                            class="onecalc-shell-frame__space-reopen-tag"
+                            data-role="shell-rail-reopen-tag"
+                        >
+                            "Reopen isolated document"
+                        </span>
+                    }
+                    .into_any()
+                } else {
+                    view! { <></> }.into_any()
+                }}
             </button>
             {verdicts.map(|verdicts| {
                 view! {
@@ -173,35 +206,42 @@ fn render_rail_row(
                     </div>
                 }
             })}
-            <div class="onecalc-shell-frame__space-affordances" data-role="shell-rail-affordances">
-                <button
-                    type="button"
-                    class="onecalc-shell-frame__space-affordance"
-                    data-role="shell-rail-affordance-pin"
-                    data-pinned=if formula_space.is_pinned { "true" } else { "false" }
-                    aria-label="Toggle pinned"
-                    on:click=move |_| {
-                        if let Some(callback) = on_toggle_pin_formula_space.as_ref() {
-                            callback.run(formula_space_id_for_pin.clone());
-                        }
-                    }
-                >
-                    {if formula_space.is_pinned { "Unpin" } else { "Pin" }}
-                </button>
-                <button
-                    type="button"
-                    class="onecalc-shell-frame__space-affordance"
-                    data-role="shell-rail-affordance-close"
-                    aria-label="Close formula space"
-                    on:click=move |_| {
-                        if let Some(callback) = on_close_formula_space.as_ref() {
-                            callback.run(formula_space_id_for_close.clone());
-                        }
-                    }
-                >
-                    "×"
-                </button>
-            </div>
+            {if can_reopen {
+                view! { <></> }.into_any()
+            } else {
+                view! {
+                    <div class="onecalc-shell-frame__space-affordances" data-role="shell-rail-affordances">
+                        <button
+                            type="button"
+                            class="onecalc-shell-frame__space-affordance"
+                            data-role="shell-rail-affordance-pin"
+                            data-pinned=if formula_space.is_pinned { "true" } else { "false" }
+                            aria-label="Toggle pinned"
+                            on:click=move |_| {
+                                if let Some(callback) = on_toggle_pin_formula_space.as_ref() {
+                                    callback.run(formula_space_id_for_pin.clone());
+                                }
+                            }
+                        >
+                            {if formula_space.is_pinned { "Unpin" } else { "Pin" }}
+                        </button>
+                        <button
+                            type="button"
+                            class="onecalc-shell-frame__space-affordance"
+                            data-role="shell-rail-affordance-close"
+                            aria-label="Close formula space"
+                            on:click=move |_| {
+                                if let Some(callback) = on_close_formula_space.as_ref() {
+                                    callback.run(formula_space_id_for_close.clone());
+                                }
+                            }
+                        >
+                            "×"
+                        </button>
+                    </div>
+                }
+                .into_any()
+            }}
         </li>
     }
 }
@@ -219,6 +259,7 @@ pub fn ShellFrame(
     frame: ShellFrameViewModel,
     on_mode_select: Option<Callback<AppMode>>,
     #[prop(default = None)] on_formula_space_select: Option<Callback<String>>,
+    #[prop(default = None)] on_reopen_formula_space: Option<Callback<String>>,
     #[prop(default = None)] on_new_formula_space: Option<Callback<()>>,
     #[prop(default = None)] on_close_formula_space: Option<Callback<String>>,
     #[prop(default = None)] on_toggle_pin_formula_space: Option<Callback<String>>,
@@ -254,6 +295,38 @@ pub fn ShellFrame(
                         {frame.workspace_summary.clone()}
                     </div>
                 </section>
+                <section
+                    class="onecalc-shell-frame__workspace-manifest"
+                    data-role="workspace-manifest"
+                >
+                    <div class="onecalc-shell-frame__eyebrow">"Workspace manifest"</div>
+                    <div class="onecalc-shell-frame__workspace-manifest-grid">
+                        <div
+                            class="onecalc-shell-frame__workspace-manifest-metric"
+                            data-role="workspace-manifest-open"
+                        >
+                            <span>"Open"</span>
+                            <strong>{frame.workspace_manifest.open_count}</strong>
+                        </div>
+                        <div
+                            class="onecalc-shell-frame__workspace-manifest-metric"
+                            data-role="workspace-manifest-pinned"
+                        >
+                            <span>"Pinned"</span>
+                            <strong>{frame.workspace_manifest.pinned_count}</strong>
+                        </div>
+                        <div
+                            class="onecalc-shell-frame__workspace-manifest-metric"
+                            data-role="workspace-manifest-recent"
+                        >
+                            <span>"Recent"</span>
+                            <strong>{frame.workspace_manifest.recent_count}</strong>
+                        </div>
+                    </div>
+                    <p class="onecalc-shell-frame__workspace-manifest-note" data-role="workspace-isolation-note">
+                        {frame.workspace_manifest.isolation_note}
+                    </p>
+                </section>
                 <div class="onecalc-shell-frame__rail-section-header" data-role="shell-rail-actions">
                     <span class="onecalc-shell-frame__eyebrow">"Formula spaces"</span>
                     <div class="onecalc-shell-frame__rail-action-buttons">
@@ -281,6 +354,7 @@ pub fn ShellFrame(
                     ShellRailSection::Pinned,
                     &frame.formula_spaces,
                     on_formula_space_select.clone(),
+                    on_reopen_formula_space.clone(),
                     on_close_formula_space.clone(),
                     on_toggle_pin_formula_space.clone(),
                 )}
@@ -288,6 +362,15 @@ pub fn ShellFrame(
                     ShellRailSection::Open,
                     &frame.formula_spaces,
                     on_formula_space_select.clone(),
+                    on_reopen_formula_space.clone(),
+                    on_close_formula_space.clone(),
+                    on_toggle_pin_formula_space.clone(),
+                )}
+                {render_rail_section(
+                    ShellRailSection::Recent,
+                    &frame.formula_spaces,
+                    on_formula_space_select.clone(),
+                    on_reopen_formula_space.clone(),
                     on_close_formula_space.clone(),
                     on_toggle_pin_formula_space.clone(),
                 )}
@@ -512,7 +595,13 @@ mod tests {
                             tone: "default",
                         },
                     ],
-                    workspace_summary: "1 open · 1 pinned".to_string(),
+                    workspace_summary: "1 open · 1 pinned · 1 recent".to_string(),
+                    workspace_manifest: crate::services::shell_composition::ShellWorkspaceManifestViewModel {
+                        open_count: 1,
+                        pinned_count: 1,
+                        recent_count: 1,
+                        isolation_note: "Documents remain isolated OneCalc instances.",
+                    },
                     mode_tabs: vec![
                         ShellModeTabViewModel {
                             mode: AppMode::Explore,
@@ -530,9 +619,11 @@ mod tests {
                         label: "space-1".to_string(),
                         truth_source_label: "live-backed".to_string(),
                         packet_kind_summary: "verification publication".to_string(),
+                        mode_label: "Explore",
                         is_active: true,
                         is_pinned: true,
                         is_dirty: true,
+                        can_reopen: false,
                         section: ShellRailSection::Pinned,
                         retained_verdicts: Some(ShellRetainedVerdictsViewModel {
                             value_match: Some(true),
@@ -540,10 +631,23 @@ mod tests {
                             replay_equivalent: None,
                             comparison_lane_label: "Mismatched",
                         }),
+                    }, ShellFormulaSpaceListItemViewModel {
+                        formula_space_id: "space-2".to_string(),
+                        label: "space-2".to_string(),
+                        truth_source_label: "local-fallback".to_string(),
+                        packet_kind_summary: "scratch snapshot".to_string(),
+                        mode_label: "Inspect",
+                        is_active: false,
+                        is_pinned: false,
+                        is_dirty: false,
+                        can_reopen: true,
+                        section: ShellRailSection::Recent,
+                        retained_verdicts: None,
                     }],
                 }
                 on_mode_select=None
                 on_formula_space_select=None
+                on_reopen_formula_space=None
             >
                 <div>"Body"</div>
             </ShellFrame>
@@ -560,7 +664,7 @@ mod tests {
         assert!(html.contains("data-state=\"active\""));
         assert!(html.contains("Pinned"));
         assert!(html.contains("verification publication"));
-        assert!(html.contains("1 open · 1 pinned"));
+        assert!(html.contains("1 open · 1 pinned · 1 recent"));
         assert!(html.contains("Body"));
         assert!(html.contains("data-active-mode=\"explore\""));
         assert!(html.contains("data-role=\"shell-breadcrumb\""));
@@ -579,6 +683,7 @@ mod tests {
         assert!(html.contains("data-role=\"shell-rail-section\""));
         assert!(html.contains("data-section=\"pinned\""));
         assert!(html.contains("data-section=\"open\""));
+        assert!(html.contains("data-section=\"recent\""));
         assert!(html.contains("data-role=\"shell-rail-dirty-dot\""));
         assert!(html.contains("data-role=\"shell-rail-verdicts\""));
         assert!(html.contains("data-role=\"shell-rail-verdict-value\""));
@@ -587,5 +692,9 @@ mod tests {
         assert!(html.contains("data-verdict=\"unobserved\""));
         assert!(html.contains("data-role=\"shell-rail-affordance-pin\""));
         assert!(html.contains("data-role=\"shell-rail-affordance-close\""));
+        assert!(html.contains("data-role=\"workspace-manifest\""));
+        assert!(html.contains("data-role=\"workspace-isolation-note\""));
+        assert!(html.contains("data-role=\"formula-space-reopen\""));
+        assert!(html.contains("data-role=\"shell-rail-reopen-tag\""));
     }
 }

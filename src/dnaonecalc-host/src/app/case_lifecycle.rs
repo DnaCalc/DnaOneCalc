@@ -6,7 +6,9 @@
 //! wire them to callbacks without threading additional services.
 
 use crate::domain::ids::FormulaSpaceId;
-use crate::state::{FormulaSpaceState, OneCalcHostState};
+use crate::state::{AppMode, ClosedFormulaSpaceRecord, FormulaSpaceState, OneCalcHostState};
+
+const MAX_RECENT_FORMULA_SPACES: usize = 8;
 
 /// Create a fresh empty formula space, insert it into the workspace, and
 /// activate it. Returns the generated id so the caller can show toast or
@@ -25,6 +27,12 @@ pub fn new_formula_space(state: &mut OneCalcHostState) -> FormulaSpaceId {
         .open_formula_space_order
         .push(formula_space_id.clone());
     state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state
+        .workspace_shell
+        .formula_space_modes
+        .insert(formula_space_id.clone(), AppMode::Explore);
+    state.workspace_shell.navigation_selection =
+        crate::state::WorkspaceNavigationSelection::FormulaSpace(formula_space_id.clone());
     formula_space_id
 }
 
@@ -84,21 +92,37 @@ pub fn duplicate_formula_space(
         .open_formula_space_order
         .push(new_id.clone());
     state.workspace_shell.active_formula_space_id = Some(new_id.clone());
+    let duplicated_mode = state
+        .workspace_shell
+        .formula_space_modes
+        .get(&source_id)
+        .copied()
+        .unwrap_or(AppMode::Explore);
+    state
+        .workspace_shell
+        .formula_space_modes
+        .insert(new_id.clone(), duplicated_mode);
+    state.workspace_shell.navigation_selection =
+        crate::state::WorkspaceNavigationSelection::FormulaSpace(new_id.clone());
     Some(new_id)
 }
 
 pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
     let id = FormulaSpaceId::new(formula_space_id.to_string());
-    if state.formula_spaces.get(&id).is_none() {
+    let Some(closed_formula_space) = state.formula_spaces.spaces.remove(&id) else {
         return false;
-    }
-
-    state.formula_spaces.spaces.remove(&id);
+    };
     state
         .workspace_shell
         .open_formula_space_order
         .retain(|candidate| candidate != &id);
     state.workspace_shell.pinned_formula_space_ids.remove(&id);
+    let last_active_mode = state
+        .workspace_shell
+        .formula_space_modes
+        .remove(&id)
+        .unwrap_or(AppMode::Explore);
+    remember_recent_formula_space(state, closed_formula_space, last_active_mode);
 
     let was_active = state
         .workspace_shell
@@ -112,6 +136,18 @@ pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str)
             .open_formula_space_order
             .first()
             .cloned();
+        if let Some(next_active_formula_space_id) =
+            state.workspace_shell.active_formula_space_id.as_ref()
+        {
+            state.active_formula_space_view.active_mode = state
+                .workspace_shell
+                .formula_space_modes
+                .get(next_active_formula_space_id)
+                .copied()
+                .unwrap_or(AppMode::Explore);
+            state.active_formula_space_view.selected_formula_space_id =
+                Some(next_active_formula_space_id.clone());
+        }
     }
 
     // Keep the workspace from ever being empty: if closing the last space
@@ -120,6 +156,51 @@ pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str)
     if state.workspace_shell.open_formula_space_order.is_empty() {
         let _ = new_formula_space(state);
     }
+    true
+}
+
+pub fn reopen_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
+    let id = FormulaSpaceId::new(formula_space_id.to_string());
+    if state
+        .workspace_shell
+        .open_formula_space_order
+        .iter()
+        .any(|candidate| candidate == &id)
+    {
+        state.workspace_shell.active_formula_space_id = Some(id.clone());
+        state.active_formula_space_view.selected_formula_space_id = Some(id.clone());
+        state.active_formula_space_view.active_mode = state
+            .workspace_shell
+            .formula_space_modes
+            .get(&id)
+            .copied()
+            .unwrap_or(AppMode::Explore);
+        state.workspace_shell.navigation_selection =
+            crate::state::WorkspaceNavigationSelection::FormulaSpace(id);
+        return true;
+    }
+
+    let Some(record) = state.workspace_shell.recent_formula_spaces.remove(&id) else {
+        return false;
+    };
+    state
+        .workspace_shell
+        .recent_formula_space_order
+        .retain(|candidate| candidate != &id);
+    state.formula_spaces.insert(record.formula_space);
+    state
+        .workspace_shell
+        .open_formula_space_order
+        .push(id.clone());
+    state.workspace_shell.active_formula_space_id = Some(id.clone());
+    state.active_formula_space_view.selected_formula_space_id = Some(id.clone());
+    state.active_formula_space_view.active_mode = record.last_active_mode;
+    state
+        .workspace_shell
+        .formula_space_modes
+        .insert(id.clone(), record.last_active_mode);
+    state.workspace_shell.navigation_selection =
+        crate::state::WorkspaceNavigationSelection::FormulaSpace(id);
     true
 }
 
@@ -134,6 +215,37 @@ pub fn toggle_pin_formula_space(state: &mut OneCalcHostState, formula_space_id: 
         state.workspace_shell.pinned_formula_space_ids.insert(id);
     }
     true
+}
+
+fn remember_recent_formula_space(
+    state: &mut OneCalcHostState,
+    formula_space: FormulaSpaceState,
+    last_active_mode: AppMode,
+) {
+    let id = formula_space.formula_space_id.clone();
+    state
+        .workspace_shell
+        .recent_formula_space_order
+        .retain(|candidate| candidate != &id);
+    state.workspace_shell.recent_formula_spaces.insert(
+        id.clone(),
+        ClosedFormulaSpaceRecord {
+            formula_space,
+            last_active_mode,
+        },
+    );
+    state
+        .workspace_shell
+        .recent_formula_space_order
+        .insert(0, id);
+    while state.workspace_shell.recent_formula_space_order.len() > MAX_RECENT_FORMULA_SPACES {
+        if let Some(removed_id) = state.workspace_shell.recent_formula_space_order.pop() {
+            state
+                .workspace_shell
+                .recent_formula_spaces
+                .remove(&removed_id);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +277,13 @@ mod tests {
             Some(id.clone())
         );
         assert_eq!(state.workspace_shell.open_formula_space_order, vec![id]);
+        assert_eq!(
+            state
+                .workspace_shell
+                .formula_space_modes
+                .get(&FormulaSpaceId::new("untitled-1")),
+            Some(&AppMode::Explore)
+        );
     }
 
     #[test]
@@ -239,12 +358,59 @@ mod tests {
         let mut state = fresh_state_with_space("space-1");
         close_formula_space(&mut state, "space-1");
         assert_eq!(state.formula_spaces.spaces.len(), 1);
+        assert_eq!(state.workspace_shell.recent_formula_space_order.len(), 1);
         let active_id = state
             .workspace_shell
             .active_formula_space_id
             .as_ref()
             .unwrap();
         assert!(active_id.as_str().starts_with("untitled-"));
+    }
+
+    #[test]
+    fn close_archives_formula_space_for_reopen() {
+        let mut state = fresh_state_with_space("space-1");
+        state.active_formula_space_view.active_mode = AppMode::Inspect;
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(FormulaSpaceId::new("space-1".to_string()), AppMode::Inspect);
+
+        assert!(close_formula_space(&mut state, "space-1"));
+
+        let archived = state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(&FormulaSpaceId::new("space-1".to_string()))
+            .expect("archived formula space");
+        assert_eq!(archived.formula_space.raw_entered_cell_text, "=1");
+        assert_eq!(archived.last_active_mode, AppMode::Inspect);
+    }
+
+    #[test]
+    fn reopen_restores_formula_space_and_mode() {
+        let mut state = fresh_state_with_space("space-1");
+        state.active_formula_space_view.active_mode = AppMode::Workbench;
+        state.workspace_shell.formula_space_modes.insert(
+            FormulaSpaceId::new("space-1".to_string()),
+            AppMode::Workbench,
+        );
+        assert!(close_formula_space(&mut state, "space-1"));
+
+        assert!(reopen_formula_space(&mut state, "space-1"));
+        assert!(state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(&FormulaSpaceId::new("space-1".to_string()))
+            .is_none());
+        assert!(state
+            .workspace_shell
+            .open_formula_space_order
+            .contains(&FormulaSpaceId::new("space-1".to_string())));
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            AppMode::Workbench
+        );
     }
 
     #[test]

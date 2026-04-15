@@ -44,6 +44,9 @@ pub struct WorkspaceShellState {
     pub active_formula_space_id: Option<FormulaSpaceId>,
     pub open_formula_space_order: Vec<FormulaSpaceId>,
     pub pinned_formula_space_ids: BTreeSet<FormulaSpaceId>,
+    pub recent_formula_space_order: Vec<FormulaSpaceId>,
+    pub recent_formula_spaces: BTreeMap<FormulaSpaceId, ClosedFormulaSpaceRecord>,
+    pub formula_space_modes: BTreeMap<FormulaSpaceId, AppMode>,
     pub navigation_selection: WorkspaceNavigationSelection,
 }
 
@@ -53,6 +56,9 @@ impl Default for WorkspaceShellState {
             active_formula_space_id: None,
             open_formula_space_order: Vec::new(),
             pinned_formula_space_ids: BTreeSet::new(),
+            recent_formula_space_order: Vec::new(),
+            recent_formula_spaces: BTreeMap::new(),
+            formula_space_modes: BTreeMap::new(),
             navigation_selection: WorkspaceNavigationSelection::Overview,
         }
     }
@@ -267,6 +273,12 @@ pub enum AppMode {
     Explore,
     Inspect,
     Workbench,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClosedFormulaSpaceRecord {
+    pub formula_space: FormulaSpaceState,
+    pub last_active_mode: AppMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

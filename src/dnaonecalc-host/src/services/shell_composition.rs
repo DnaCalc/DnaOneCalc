@@ -26,9 +26,11 @@ pub struct ShellFormulaSpaceListItemViewModel {
     pub label: String,
     pub truth_source_label: String,
     pub packet_kind_summary: String,
+    pub mode_label: &'static str,
     pub is_active: bool,
     pub is_pinned: bool,
     pub is_dirty: bool,
+    pub can_reopen: bool,
     pub section: ShellRailSection,
     pub retained_verdicts: Option<ShellRetainedVerdictsViewModel>,
 }
@@ -37,6 +39,7 @@ pub struct ShellFormulaSpaceListItemViewModel {
 pub enum ShellRailSection {
     Pinned,
     Open,
+    Recent,
 }
 
 impl ShellRailSection {
@@ -44,6 +47,7 @@ impl ShellRailSection {
         match self {
             Self::Pinned => "pinned",
             Self::Open => "open",
+            Self::Recent => "recent",
         }
     }
 
@@ -51,8 +55,17 @@ impl ShellRailSection {
         match self {
             Self::Pinned => "Pinned",
             Self::Open => "Open",
+            Self::Recent => "Recent",
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellWorkspaceManifestViewModel {
+    pub open_count: usize,
+    pub pinned_count: usize,
+    pub recent_count: usize,
+    pub isolation_note: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +90,7 @@ pub struct ShellFrameViewModel {
     pub context_facts: Vec<ShellChromeFactViewModel>,
     pub footer_facts: Vec<ShellChromeFactViewModel>,
     pub workspace_summary: String,
+    pub workspace_manifest: ShellWorkspaceManifestViewModel,
     pub mode_tabs: Vec<ShellModeTabViewModel>,
     pub formula_spaces: Vec<ShellFormulaSpaceListItemViewModel>,
 }
@@ -215,6 +229,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                         crate::ui::editor::state::EditorLiveState::EditingLive
                             | crate::ui::editor::state::EditorLiveState::ProofedScratch
                     );
+                    let is_active = &formula_space.formula_space_id == active_formula_space_id;
                     let retained_verdicts = state
                         .retained_artifacts
                         .catalog
@@ -238,9 +253,20 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
                         label: formula_space.context.scenario_label.clone(),
                         truth_source_label: formula_space.context.truth_source.label().to_string(),
                         packet_kind_summary: formula_space.context.packet_kind.clone(),
-                        is_active: &formula_space.formula_space_id == active_formula_space_id,
+                        mode_label: mode_label(if is_active {
+                            active_mode
+                        } else {
+                            state
+                                .workspace_shell
+                                .formula_space_modes
+                                .get(&formula_space.formula_space_id)
+                                .copied()
+                                .unwrap_or(AppMode::Explore)
+                        }),
+                        is_active,
                         is_pinned,
                         is_dirty,
+                        can_reopen: false,
                         section,
                         retained_verdicts,
                     }
@@ -248,11 +274,76 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         })
         .collect();
 
+    let recent_formula_spaces = state
+        .workspace_shell
+        .recent_formula_space_order
+        .iter()
+        .filter_map(|formula_space_id| {
+            state
+                .workspace_shell
+                .recent_formula_spaces
+                .get(formula_space_id)
+                .map(|record| {
+                    let formula_space = &record.formula_space;
+                    let live_state = formula_space.live_state();
+                    let is_dirty = matches!(
+                        live_state,
+                        crate::ui::editor::state::EditorLiveState::EditingLive
+                            | crate::ui::editor::state::EditorLiveState::ProofedScratch
+                    );
+                    let retained_verdicts = state
+                        .retained_artifacts
+                        .catalog
+                        .values()
+                        .find(|artifact| {
+                            artifact.formula_space_id.as_str()
+                                == formula_space.formula_space_id.as_str()
+                        })
+                        .map(|artifact| ShellRetainedVerdictsViewModel {
+                            value_match: artifact.value_match,
+                            display_match: artifact.display_match,
+                            replay_equivalent: artifact.replay_equivalent,
+                            comparison_lane_label: match artifact.comparison_status {
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Matched => "Matched",
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched => "Mismatched",
+                                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked => "Blocked",
+                            },
+                        });
+                    ShellFormulaSpaceListItemViewModel {
+                        formula_space_id: formula_space.formula_space_id.as_str().to_string(),
+                        label: formula_space.context.scenario_label.clone(),
+                        truth_source_label: formula_space.context.truth_source.label().to_string(),
+                        packet_kind_summary: formula_space.context.packet_kind.clone(),
+                        mode_label: mode_label(record.last_active_mode),
+                        is_active: false,
+                        is_pinned: false,
+                        is_dirty,
+                        can_reopen: true,
+                        section: ShellRailSection::Recent,
+                        retained_verdicts,
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
+
+    let formula_spaces = formula_spaces
+        .into_iter()
+        .chain(recent_formula_spaces)
+        .collect::<Vec<_>>();
+
     let workspace_summary = format!(
-        "{} open · {} pinned",
+        "{} open · {} pinned · {} recent",
         state.workspace_shell.open_formula_space_order.len(),
-        state.workspace_shell.pinned_formula_space_ids.len()
+        state.workspace_shell.pinned_formula_space_ids.len(),
+        state.workspace_shell.recent_formula_space_order.len(),
     );
+    let workspace_manifest = ShellWorkspaceManifestViewModel {
+        open_count: state.workspace_shell.open_formula_space_order.len(),
+        pinned_count: state.workspace_shell.pinned_formula_space_ids.len(),
+        recent_count: state.workspace_shell.recent_formula_space_order.len(),
+        isolation_note:
+            "Documents remain isolated OneCalc instances. Reopen restores one space without cross-instance recalc or shared references.",
+    };
 
     let context_facts = vec![
         ShellChromeFactViewModel {
@@ -371,6 +462,7 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
         context_facts,
         footer_facts,
         workspace_summary,
+        workspace_manifest,
         mode_tabs,
         formula_spaces,
     })
@@ -378,6 +470,12 @@ pub fn build_shell_frame_view_model(state: &OneCalcHostState) -> Option<ShellFra
 
 pub fn switch_active_mode(state: &mut OneCalcHostState, next_mode: AppMode) {
     state.active_formula_space_view.active_mode = next_mode;
+    if let Some(active_formula_space_id) = state.workspace_shell.active_formula_space_id.as_ref() {
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(active_formula_space_id.clone(), next_mode);
+    }
 }
 
 pub fn select_active_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) {
@@ -392,7 +490,23 @@ pub fn select_active_formula_space(state: &mut OneCalcHostState, formula_space_i
     };
 
     state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-    state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id);
+    state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id.clone());
+    state.active_formula_space_view.active_mode = state
+        .workspace_shell
+        .formula_space_modes
+        .get(&formula_space_id)
+        .copied()
+        .unwrap_or(AppMode::Explore);
+    state.workspace_shell.navigation_selection =
+        crate::state::WorkspaceNavigationSelection::FormulaSpace(formula_space_id);
+}
+
+fn mode_label(mode: AppMode) -> &'static str {
+    match mode {
+        AppMode::Explore => "Explore",
+        AppMode::Inspect => "Inspect",
+        AppMode::Workbench => "Workbench",
+    }
 }
 
 #[cfg(test)]
@@ -481,6 +595,10 @@ mod tests {
             .push(formula_space_id.clone());
         state.active_formula_space_view.active_mode = AppMode::Inspect;
         state
+            .workspace_shell
+            .formula_space_modes
+            .insert(formula_space_id.clone(), AppMode::Inspect);
+        state
             .formula_spaces
             .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
 
@@ -488,11 +606,14 @@ mod tests {
         assert_eq!(frame.active_formula_space_label, "space-1");
         assert_eq!(frame.active_mode_label, "Inspect");
         assert_eq!(frame.active_truth_source_label, "local-fallback");
-        assert_eq!(frame.workspace_summary, "1 open · 0 pinned");
+        assert_eq!(frame.workspace_summary, "1 open · 0 pinned · 0 recent");
         assert_eq!(frame.formula_spaces.len(), 1);
         assert!(frame.formula_spaces[0].is_active);
         assert!(!frame.formula_spaces[0].is_pinned);
+        assert_eq!(frame.formula_spaces[0].mode_label, "Inspect");
         assert_eq!(frame.formula_spaces[0].truth_source_label, "local-fallback");
+        assert_eq!(frame.workspace_manifest.open_count, 1);
+        assert_eq!(frame.workspace_manifest.recent_count, 0);
         assert_eq!(frame.context_facts.len(), 3);
         assert!(frame
             .footer_facts
@@ -507,6 +628,16 @@ mod tests {
     #[test]
     fn switch_active_mode_updates_state() {
         let mut state = OneCalcHostState::default();
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(formula_space_id, AppMode::Explore);
         assert_eq!(
             state.active_formula_space_view.active_mode,
             AppMode::Explore
@@ -518,6 +649,13 @@ mod tests {
             state.active_formula_space_view.active_mode,
             AppMode::Inspect
         );
+        assert_eq!(
+            state
+                .workspace_shell
+                .formula_space_modes
+                .get(&FormulaSpaceId::new("space-1")),
+            Some(&AppMode::Inspect)
+        );
     }
 
     #[test]
@@ -527,6 +665,14 @@ mod tests {
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(first_id.clone());
         state.workspace_shell.open_formula_space_order = vec![first_id.clone(), second_id.clone()];
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(first_id.clone(), AppMode::Explore);
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(second_id.clone(), AppMode::Workbench);
         state
             .formula_spaces
             .insert(FormulaSpaceState::new(first_id, "=SUM(1,2)"));
@@ -547,6 +693,51 @@ mod tests {
                 .as_ref(),
             Some(&second_id)
         );
+        assert_eq!(
+            state.active_formula_space_view.active_mode,
+            AppMode::Workbench
+        );
+    }
+
+    #[test]
+    fn shell_frame_view_model_lists_recent_reopenable_spaces() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state
+            .workspace_shell
+            .formula_space_modes
+            .insert(formula_space_id.clone(), AppMode::Explore);
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, "=SUM(1,2)"));
+
+        let archived = FormulaSpaceState::new(FormulaSpaceId::new("space-2"), "=SEQUENCE(2,2)");
+        state
+            .workspace_shell
+            .recent_formula_space_order
+            .push(archived.formula_space_id.clone());
+        state.workspace_shell.recent_formula_spaces.insert(
+            archived.formula_space_id.clone(),
+            crate::state::ClosedFormulaSpaceRecord {
+                formula_space: archived,
+                last_active_mode: AppMode::Inspect,
+            },
+        );
+
+        let frame = build_shell_frame_view_model(&state).expect("frame should exist");
+        let recent = frame
+            .formula_spaces
+            .iter()
+            .find(|item| item.section == ShellRailSection::Recent)
+            .expect("recent space should be listed");
+        assert!(recent.can_reopen);
+        assert_eq!(recent.mode_label, "Inspect");
+        assert_eq!(frame.workspace_manifest.recent_count, 1);
     }
 
     #[test]
