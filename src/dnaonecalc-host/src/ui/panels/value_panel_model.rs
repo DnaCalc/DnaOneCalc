@@ -3,7 +3,7 @@
 //! These types mirror the shape of `oxfunc_value_types::ExtendedValue` /
 //! `EvalValue` / `PresentationHint` / `RichValue` / etc., but live entirely
 //! inside `dnaonecalc-host` so the UI layer does not depend on the
-//! `oxfml-live` feature flag. An adapter from the real engine types can be
+//! full engine type graph. An adapter from the real engine types can be
 //! added later once `ExtendedValue` is routed through `FormulaSpaceState`.
 //!
 //! Every engine surface that is not yet implemented is marked in the pipeline
@@ -439,7 +439,10 @@ mod tests {
         assert_eq!(panel.effective_display_text.as_deref(), Some("3"));
         assert_eq!(panel.display_pipeline.len(), 5);
         assert_eq!(
-            panel.provenance.as_ref().and_then(|p| p.green_tree_key.clone()),
+            panel
+                .provenance
+                .as_ref()
+                .and_then(|p| p.green_tree_key.clone()),
             Some("green-1".to_string())
         );
     }
@@ -466,12 +469,7 @@ mod tests {
 
     #[test]
     fn build_from_strings_falls_back_to_unevaluated_when_empty() {
-        let panel = build_value_panel_from_explore_strings(
-            None,
-            None,
-            None,
-            EditorLiveState::Idle,
-        );
+        let panel = build_value_panel_from_explore_strings(None, None, None, EditorLiveState::Idle);
         assert!(matches!(panel.value, ValuePanelValue::Unevaluated));
         assert_eq!(panel.value.slug(), "unevaluated");
         assert_eq!(panel.value.header_label(), "Unevaluated");

@@ -127,10 +127,7 @@ fn apply_live_state_command(
                         anchor: result.reference_start,
                         focus: result.reference_end,
                     },
-                    scroll_window: formula_space
-                        .editor_surface_state
-                        .scroll_window
-                        .clone(),
+                    scroll_window: formula_space.editor_surface_state.scroll_window.clone(),
                     completion_anchor_offset: None,
                     completion_selected_index: None,
                     signature_help_anchor_offset: None,
@@ -162,8 +159,7 @@ pub fn toggle_editor_settings_popover(state: &mut OneCalcHostState) -> bool {
 }
 
 pub fn toggle_configure_drawer(state: &mut OneCalcHostState) -> bool {
-    state.global_ui_chrome.configure_drawer_open =
-        !state.global_ui_chrome.configure_drawer_open;
+    state.global_ui_chrome.configure_drawer_open = !state.global_ui_chrome.configure_drawer_open;
     true
 }
 
@@ -472,10 +468,8 @@ mod tests {
         );
         assert!(!changed);
 
-        let changed = apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::CommitEntry,
-        );
+        let changed =
+            apply_editor_command_to_active_formula_space(&mut state, EditorCommand::CommitEntry);
         assert!(!changed);
     }
 
@@ -506,7 +500,12 @@ mod tests {
             EditorCommand::UpdateEditorSetting(EditorSettingUpdate::ToggleHighlightBracketPairs),
         ));
         // The setting must have changed even though there's no formula space.
-        assert!(!state.global_ui_chrome.editor_settings.highlight_bracket_pairs);
+        assert!(
+            !state
+                .global_ui_chrome
+                .editor_settings
+                .highlight_bracket_pairs
+        );
     }
 
     #[test]
@@ -515,9 +514,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         assert!(apply_editor_command_to_active_formula_space(
             &mut state,
@@ -576,7 +576,12 @@ mod tests {
             &mut state,
             EditorCommand::UpdateEditorSetting(EditorSettingUpdate::ToggleHighlightBracketPairs),
         );
-        assert!(!state.global_ui_chrome.editor_settings.highlight_bracket_pairs);
+        assert!(
+            !state
+                .global_ui_chrome
+                .editor_settings
+                .highlight_bracket_pairs
+        );
 
         apply_editor_command_to_active_formula_space(
             &mut state,
@@ -605,15 +610,13 @@ mod tests {
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
         let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=A1+B2");
-        formula_space.editor_surface_state.caret = crate::ui::editor::state::EditorCaret { offset: 1 };
+        formula_space.editor_surface_state.caret =
+            crate::ui::editor::state::EditorCaret { offset: 1 };
         formula_space.editor_surface_state.selection = EditorSelection::collapsed(1);
         state.formula_spaces.insert(formula_space);
 
         // Step 1: A1 → $A$1
-        apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::CycleReferenceForm,
-        );
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::CycleReferenceForm);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -623,10 +626,7 @@ mod tests {
         assert_eq!(active.editor_surface_state.selection.focus, 5);
 
         // Step 2: $A$1 → A$1
-        apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::CycleReferenceForm,
-        );
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::CycleReferenceForm);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -636,10 +636,7 @@ mod tests {
         assert_eq!(active.editor_surface_state.selection.focus, 4);
 
         // Step 3: A$1 → $A1
-        apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::CycleReferenceForm,
-        );
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::CycleReferenceForm);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -649,10 +646,7 @@ mod tests {
         assert_eq!(active.editor_surface_state.selection.focus, 4);
 
         // Step 4: $A1 → A1 (back to the starting form)
-        apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::CycleReferenceForm,
-        );
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::CycleReferenceForm);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -740,17 +734,20 @@ mod tests {
         formula_space.editor_surface_state.completion_selected_index = Some(2);
         state.formula_spaces.insert(formula_space);
 
-        apply_editor_command_to_active_formula_space(
-            &mut state,
-            EditorCommand::DismissCompletion,
-        );
+        apply_editor_command_to_active_formula_space(&mut state, EditorCommand::DismissCompletion);
 
         let active = state
             .formula_spaces
             .get(&formula_space_id)
             .expect("space exists");
-        assert!(active.editor_surface_state.completion_anchor_offset.is_none());
-        assert!(active.editor_surface_state.completion_selected_index.is_none());
+        assert!(active
+            .editor_surface_state
+            .completion_anchor_offset
+            .is_none());
+        assert!(active
+            .editor_surface_state
+            .completion_selected_index
+            .is_none());
     }
 
     #[test]

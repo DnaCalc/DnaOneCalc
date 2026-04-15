@@ -53,11 +53,7 @@ pub fn scenario_bridge() -> LiveOxfmlBridge {
 /// runtime; tests that need a deterministic fault injection (diagnostics,
 /// blocked reasons) pass their own fake bridge to `apply_live_editor_input`
 /// directly.
-pub fn type_formula(
-    bridge: &dyn OxfmlEditorBridge,
-    state: &mut OneCalcHostState,
-    text: &str,
-) {
+pub fn type_formula(bridge: &dyn OxfmlEditorBridge, state: &mut OneCalcHostState, text: &str) {
     let caret_offset = text.chars().count();
     apply_live_editor_input(
         bridge,
@@ -101,15 +97,11 @@ pub fn shell_frame(state: &OneCalcHostState) -> ShellFrameViewModel {
     build_shell_frame_view_model(state).expect("shell frame view model")
 }
 
-pub fn explore_editor_cluster(
-    view_model: &ExploreViewModel,
-) -> ExploreEditorClusterViewModel {
+pub fn explore_editor_cluster(view_model: &ExploreViewModel) -> ExploreEditorClusterViewModel {
     build_explore_editor_cluster(view_model)
 }
 
-pub fn explore_result_cluster(
-    view_model: &ExploreViewModel,
-) -> ExploreResultClusterViewModel {
+pub fn explore_result_cluster(view_model: &ExploreViewModel) -> ExploreResultClusterViewModel {
     build_explore_result_cluster(view_model)
 }
 

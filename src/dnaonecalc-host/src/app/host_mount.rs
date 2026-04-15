@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-#[cfg(feature = "oxfml-live")]
 use crate::adapters::oxfml::LiveOxfmlBridge;
-use crate::adapters::oxfml::{OxfmlEditorBridge, PreviewOxfmlBridge};
+use crate::adapters::oxfml::OxfmlEditorBridge;
 use leptos::prelude::*;
 
 use crate::state::OneCalcHostState;
@@ -32,12 +31,7 @@ pub fn bootstrap_spec(target: HostMountTarget) -> HostBootstrapSpec {
 pub fn bootstrap_editor_bridge(
     _target: HostMountTarget,
 ) -> Arc<dyn OxfmlEditorBridge + Send + Sync> {
-    #[cfg(feature = "oxfml-live")]
-    if std::env::var_os("ONECALC_FORCE_PREVIEW_BRIDGE").is_none() {
-        return Arc::new(LiveOxfmlBridge::default());
-    }
-
-    Arc::new(PreviewOxfmlBridge)
+    Arc::new(LiveOxfmlBridge::default())
 }
 
 pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostState) -> String {

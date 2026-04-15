@@ -143,7 +143,6 @@ impl FormulaSpaceState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectionTruthSource {
-    PreviewBacked,
     LiveBacked,
     LocalFallback,
 }
@@ -151,7 +150,6 @@ pub enum ProjectionTruthSource {
 impl ProjectionTruthSource {
     pub fn label(&self) -> &'static str {
         match self {
-            ProjectionTruthSource::PreviewBacked => "preview-backed",
             ProjectionTruthSource::LiveBacked => "live-backed",
             ProjectionTruthSource::LocalFallback => "local-fallback",
         }
@@ -276,4 +274,3 @@ pub struct OpenFormulaSpaceRecord {
     pub formula_space_id: FormulaSpaceId,
     pub is_pinned: bool,
 }
-

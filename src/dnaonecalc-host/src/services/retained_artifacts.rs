@@ -277,7 +277,6 @@ fn sanitize_case_id(case_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::services::programmatic_testing::{
         ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
     };
@@ -288,6 +287,7 @@ mod tests {
         ExcelObservationSummary, OxfmlVerificationSummary, VerificationBundleReport,
         VerificationCaseReport, VerificationObservationGapReport,
     };
+    use serde_json::json;
 
     #[test]
     fn importing_programmatic_artifact_populates_catalog() {
@@ -607,7 +607,10 @@ mod tests {
             artifact.bundle_report_path.as_deref(),
             Some("target/onecalc-verification/bundle-1")
         );
-        assert_eq!(artifact.excel_effective_display_text.as_deref(), Some("$6.00"));
+        assert_eq!(
+            artifact.excel_effective_display_text.as_deref(),
+            Some("$6.00")
+        );
         assert_eq!(
             state.active_formula_space_view.active_mode,
             crate::state::AppMode::Workbench

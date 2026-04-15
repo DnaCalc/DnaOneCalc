@@ -92,9 +92,6 @@ fn update_formula_space_from_editor_document(
 
 fn infer_truth_source(document: &EditorDocument) -> ProjectionTruthSource {
     if let Some(provenance_summary) = document.provenance_summary.as_ref() {
-        if provenance_summary.profile_summary.contains("PreviewBridge") {
-            return ProjectionTruthSource::PreviewBacked;
-        }
         if provenance_summary.profile_summary.contains("OxFml") {
             return ProjectionTruthSource::LiveBacked;
         }
@@ -174,39 +171,6 @@ fn derive_formula_presentation(
         }
     }
 
-    if let Some(sum_value) = parse_sum_formula(source_text) {
-        let display = format_number(sum_value);
-        return DerivedFormulaPresentation {
-            evaluation_summary: Some(format!("Number · {display}")),
-            effective_display_summary: Some(display),
-            array_preview: None,
-            blocked_reason: None,
-        };
-    }
-
-    if let Some((rows, cols, preview_rows)) = parse_sequence_formula(source_text) {
-        let effective_display_summary = format_array_display(&preview_rows);
-        return DerivedFormulaPresentation {
-            evaluation_summary: Some(format!("Array · {rows}x{cols} dynamic result")),
-            effective_display_summary: Some(effective_display_summary),
-            array_preview: Some(FormulaArrayPreviewState {
-                label: format!("{rows}x{cols} spill preview"),
-                rows: preview_rows,
-                truncated: false,
-            }),
-            blocked_reason: None,
-        };
-    }
-
-    if source_text.eq_ignore_ascii_case("=LET(x,1,x)") {
-        return DerivedFormulaPresentation {
-            evaluation_summary: Some("Number · 1".to_string()),
-            effective_display_summary: Some("1".to_string()),
-            array_preview: None,
-            blocked_reason: None,
-        };
-    }
-
     DerivedFormulaPresentation {
         evaluation_summary: None,
         effective_display_summary: None,
@@ -230,57 +194,6 @@ fn derived_presentation_from_value_presentation(
         }),
         blocked_reason: value_presentation.blocked_reason.clone(),
     }
-}
-
-fn parse_sum_formula(source_text: &str) -> Option<f64> {
-    let inner = source_text
-        .strip_prefix("=SUM(")
-        .and_then(|text| text.strip_suffix(')'))?;
-    let mut total = 0.0f64;
-    let mut count = 0usize;
-    for part in inner.split(',') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        total += trimmed.parse::<f64>().ok()?;
-        count += 1;
-    }
-    (count > 0).then_some(total)
-}
-
-fn parse_sequence_formula(source_text: &str) -> Option<(usize, usize, Vec<Vec<String>>)> {
-    let inner = source_text
-        .strip_prefix("=SEQUENCE(")
-        .and_then(|text| text.strip_suffix(')'))?;
-    let mut parts = inner.split(',').map(|part| part.trim());
-    let rows = parts.next()?.parse::<usize>().ok()?;
-    let cols = parts
-        .next()
-        .map(|value| value.parse::<usize>().ok())
-        .flatten()
-        .unwrap_or(1);
-    if rows == 0 || cols == 0 {
-        return None;
-    }
-
-    let mut next_value = 1usize;
-    let mut preview_rows = Vec::with_capacity(rows);
-    for _ in 0..rows {
-        let mut row = Vec::with_capacity(cols);
-        for _ in 0..cols {
-            row.push(next_value.to_string());
-            next_value += 1;
-        }
-        preview_rows.push(row);
-    }
-
-    Some((rows, cols, preview_rows))
-}
-
-fn format_array_display(rows: &[Vec<String>]) -> String {
-    let row_strings = rows.iter().map(|row| row.join(",")).collect::<Vec<_>>();
-    format!("{{{}}}", row_strings.join(";"))
 }
 
 fn format_number(value: f64) -> String {
@@ -393,65 +306,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn apply_editor_document_derives_preview_sum_result() {
-        let formula_space_id = FormulaSpaceId::new("space-1");
-        let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(
-            formula_space_id.clone(),
-            "=SUM(1,2,3)",
-        ));
-
-        EditorSessionService::apply_editor_document(
-            &mut formula_spaces,
-            &formula_space_id,
-            sample_document("=SUM(1,2,3)"),
-        )
-        .expect("known formula space should update");
-
-        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
-        assert_eq!(
-            updated.latest_evaluation_summary.as_deref(),
-            Some("Number · 6")
-        );
-        assert_eq!(updated.effective_display_summary.as_deref(), Some("6"));
-        assert!(updated.array_preview.is_none());
-    }
-
-    #[test]
-    fn apply_editor_document_derives_sequence_array_preview() {
-        let formula_space_id = FormulaSpaceId::new("space-1");
-        let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(
-            formula_space_id.clone(),
-            "=SEQUENCE(2,2)",
-        ));
-
-        EditorSessionService::apply_editor_document(
-            &mut formula_spaces,
-            &formula_space_id,
-            sample_document("=SEQUENCE(2,2)"),
-        )
-        .expect("known formula space should update");
-
-        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
-        assert_eq!(
-            updated.latest_evaluation_summary.as_deref(),
-            Some("Array · 2x2 dynamic result")
-        );
-        assert_eq!(
-            updated.effective_display_summary.as_deref(),
-            Some("{1,2;3,4}")
-        );
-        assert_eq!(
-            updated
-                .array_preview
-                .as_ref()
-                .map(|preview| preview.rows.len()),
-            Some(2)
-        );
-    }
-
     struct FakeBridge {
         document: EditorDocument,
     }
@@ -513,10 +367,9 @@ mod tests {
     }
 
     /// §11.3 invariant 2 (LocalFallback arm): a document whose
-    /// `provenance_summary` carries neither `OxFml` nor `PreviewBridge`
-    /// markers must derive `ProjectionTruthSource::LocalFallback`. The
-    /// existing `apply_editor_document_marks_*` tests cover the LiveBacked
-    /// and PreviewBacked arms.
+    /// `provenance_summary` carries no OxFml marker and no
+    /// `value_presentation`, the document must derive
+    /// `ProjectionTruthSource::LocalFallback`.
     #[test]
     fn apply_editor_document_marks_neutral_provenance_as_local_fallback() {
         let formula_space_id = FormulaSpaceId::new("space-1");
@@ -588,31 +441,6 @@ mod tests {
         assert_eq!(
             updated.context.truth_source,
             ProjectionTruthSource::LiveBacked
-        );
-    }
-
-    #[test]
-    fn apply_editor_document_marks_preview_bridge_documents_as_preview_backed() {
-        let formula_space_id = FormulaSpaceId::new("space-1");
-        let mut formula_spaces = FormulaSpaceCollectionState::default();
-        formula_spaces.insert(FormulaSpaceState::new(formula_space_id.clone(), "=1+1"));
-        let mut document = sample_document("=SUM(1,2,3)");
-        document.provenance_summary = Some(ProvenanceSummary {
-            profile_summary: "PreviewBridge".to_string(),
-            blocked_reason: None,
-        });
-
-        EditorSessionService::apply_editor_document(
-            &mut formula_spaces,
-            &formula_space_id,
-            document,
-        )
-        .expect("known formula space should update");
-
-        let updated = formula_spaces.get(&formula_space_id).expect("space exists");
-        assert_eq!(
-            updated.context.truth_source,
-            ProjectionTruthSource::PreviewBacked
         );
     }
 }

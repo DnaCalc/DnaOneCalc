@@ -19,32 +19,22 @@ use crate::services::spreadsheet_xml::{
     extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction,
 };
 
-#[cfg(feature = "oxfml-live")]
 use crate::adapters::oxfml::{
     EditorAnalysisStage, FormulaEditRequest, LiveOxfmlBridge, OxfmlEditorBridge,
 };
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::consumer::replay::{ReplayProjectionRequest, ReplayProjectionService};
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest};
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::interface::TypedContextQueryBundle;
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::publication::{
     LocaleFormatContextSurface, VerificationConditionalFormattingRule,
     VerificationPublicationContext, VerificationPublicationSurface,
 };
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::source::FormulaSourceRecord;
-#[cfg(feature = "oxfml-live")]
 use oxfml_core::FormulaChannelKind;
-#[cfg(feature = "oxfml-live")]
 use oxfunc_core::locale_format::{
-    excel_serial_from_ymd, format_profile, ymd_from_excel_serial, FormatCodeEngine,
-    FormatFailure, LocaleFormatContext, LocaleProfileId, LocaleValueParser, ParseFailure,
-    WorkbookDateSystem,
+    excel_serial_from_ymd, format_profile, ymd_from_excel_serial, FormatCodeEngine, FormatFailure,
+    LocaleFormatContext, LocaleProfileId, LocaleValueParser, ParseFailure, WorkbookDateSystem,
 };
-#[cfg(feature = "oxfml-live")]
 use oxfunc_core::value::ExcelText;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,7 +209,6 @@ struct OxxlplayBatchCaseOutputIndex {
     pub normalized_replay_path: Option<String>,
 }
 
-#[cfg(feature = "oxfml-live")]
 struct PreparedVerificationCase {
     case_dir: PathBuf,
     command_dir: PathBuf,
@@ -234,7 +223,6 @@ struct PreparedVerificationCase {
     batch_case_manifest: OxxlplayBatchCaseManifest,
 }
 
-#[cfg(feature = "oxfml-live")]
 pub trait VerificationCommandRunner {
     fn run_oxxlplay_capture_batch(
         &self,
@@ -263,11 +251,9 @@ pub trait VerificationCommandRunner {
     ) -> Result<VerificationCommandCapture, String>;
 }
 
-#[cfg(feature = "oxfml-live")]
 #[derive(Debug, Default)]
 pub struct ProcessVerificationCommandRunner;
 
-#[cfg(feature = "oxfml-live")]
 impl VerificationCommandRunner for ProcessVerificationCommandRunner {
     fn run_oxxlplay_capture_batch(
         &self,
@@ -380,7 +366,6 @@ impl VerificationCommandRunner for ProcessVerificationCommandRunner {
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn load_verification_batch_request(
     input_path: impl AsRef<Path>,
 ) -> Result<VerificationBatchRequest, String> {
@@ -411,7 +396,6 @@ pub fn load_verification_batch_request(
     Ok(request)
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn single_case_request(
     case_id: impl Into<String>,
     formula: impl Into<String>,
@@ -420,7 +404,6 @@ pub fn single_case_request(
     single_case_request_with_config(case_id, formula, &config)
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn single_case_request_with_config(
     case_id: impl Into<String>,
     formula: impl Into<String>,
@@ -438,7 +421,6 @@ pub fn single_case_request_with_config(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn single_xml_case_request(
     case_id: impl Into<String>,
     workbook_path: impl Into<String>,
@@ -448,7 +430,6 @@ pub fn single_xml_case_request(
     single_xml_case_request_with_config(case_id, workbook_path, locator, &config)
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn single_xml_case_request_with_config(
     case_id: impl Into<String>,
     workbook_path: impl Into<String>,
@@ -477,7 +458,6 @@ pub fn single_xml_case_request_with_config(
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn default_output_root() -> Result<PathBuf, String> {
     let repo_root = repo_root()?;
     let timestamp = SystemTime::now()
@@ -490,7 +470,6 @@ pub fn default_output_root() -> Result<PathBuf, String> {
         .join(format!("bundle-{timestamp}")))
 }
 
-#[cfg(feature = "oxfml-live")]
 pub fn run_verification_batch(
     request: &VerificationBatchRequest,
     output_root: impl AsRef<Path>,
@@ -499,73 +478,6 @@ pub fn run_verification_batch(
     run_verification_batch_with_runner(request, output_root, &runner)
 }
 
-#[cfg(not(feature = "oxfml-live"))]
-pub fn load_verification_batch_request(
-    _input_path: impl AsRef<Path>,
-) -> Result<VerificationBatchRequest, String> {
-    Err("verification CLI requires the `oxfml-live` feature".to_string())
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn single_case_request(
-    case_id: impl Into<String>,
-    formula: impl Into<String>,
-) -> VerificationBatchRequest {
-    let config = default_verification_config();
-    single_case_request_with_config(case_id, formula, &config)
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn single_case_request_with_config(
-    case_id: impl Into<String>,
-    formula: impl Into<String>,
-    config: &crate::services::programmatic_testing::ProgrammaticVerificationConfig,
-) -> VerificationBatchRequest {
-    VerificationBatchRequest {
-        host_profile: config.host_profile.clone(),
-        capabilities: config.capabilities.clone(),
-        replay_policy: default_verification_replay_policy(),
-        cases: vec![ProgrammaticFormulaCase {
-            case_id: case_id.into(),
-            entered_cell_text: formula.into(),
-            spreadsheet_xml_source: None,
-        }],
-    }
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn single_xml_case_request(
-    _case_id: impl Into<String>,
-    _workbook_path: impl Into<String>,
-    _locator: impl Into<String>,
-) -> Result<VerificationBatchRequest, String> {
-    Err("verification CLI requires the `oxfml-live` feature".to_string())
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn single_xml_case_request_with_config(
-    _case_id: impl Into<String>,
-    _workbook_path: impl Into<String>,
-    _locator: impl Into<String>,
-    _config: &crate::services::programmatic_testing::ProgrammaticVerificationConfig,
-) -> Result<VerificationBatchRequest, String> {
-    Err("verification CLI requires the `oxfml-live` feature".to_string())
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn default_output_root() -> Result<PathBuf, String> {
-    Err("verification CLI requires the `oxfml-live` feature".to_string())
-}
-
-#[cfg(not(feature = "oxfml-live"))]
-pub fn run_verification_batch(
-    _request: &VerificationBatchRequest,
-    _output_root: impl AsRef<Path>,
-) -> Result<VerificationBundleReport, String> {
-    Err("verification CLI requires the `oxfml-live` feature".to_string())
-}
-
-#[cfg(feature = "oxfml-live")]
 pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
     request: &VerificationBatchRequest,
     output_root: impl AsRef<Path>,
@@ -613,7 +525,8 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
 
     let mut batch_case_outputs = HashMap::new();
     let mut batch_failure_reason = None;
-    if batch_plan.comparison_lane == crate::services::programmatic_testing::ProgrammaticComparisonLane::OxfmlAndExcel
+    if batch_plan.comparison_lane
+        == crate::services::programmatic_testing::ProgrammaticComparisonLane::OxfmlAndExcel
     {
         let batch_output_root = output_root.join("oxxlplay-batch");
         fs::create_dir_all(&batch_output_root).map_err(|error| {
@@ -725,7 +638,6 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
     Ok(report)
 }
 
-#[cfg(feature = "oxfml-live")]
 fn validate_verification_request(request: &VerificationBatchRequest) -> Result<(), String> {
     if request.cases.is_empty() {
         return Err("verification batch request must contain at least one case".to_string());
@@ -741,7 +653,6 @@ fn validate_verification_request(request: &VerificationBatchRequest) -> Result<(
     Ok(())
 }
 
-#[cfg(feature = "oxfml-live")]
 fn prepare_verification_case(
     repo_root: &Path,
     output_root: &Path,
@@ -858,7 +769,6 @@ fn prepare_verification_case(
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn finalize_excel_case<R: VerificationCommandRunner>(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
@@ -906,7 +816,9 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     let normalized_replay_path = resolve_repo_or_absolute_path(
         repo_root,
         batch_case_output.normalized_replay_path.as_deref(),
-        resolved_output_dir.join("views").join("normalized-replay.json"),
+        resolved_output_dir
+            .join("views")
+            .join("normalized-replay.json"),
     );
 
     let excel_summary = summarize_excel_capture(capture_path)?;
@@ -927,7 +839,11 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         _ => None,
     };
     let display_match = match (
-        prepared.oxfml_result.summary.effective_display_summary.as_deref(),
+        prepared
+            .oxfml_result
+            .summary
+            .effective_display_summary
+            .as_deref(),
         preferred_excel_display_repr(&excel_summary),
     ) {
         (Some(left), Some(right)) => Some(left == right),
@@ -961,9 +877,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
 
     let validate_capture = runner.run_oxreplay_validate_bundle(&manifest_path)?;
     write_json_file(
-        prepared
-            .command_dir
-            .join("oxreplay-validate-bundle.json"),
+        prepared.command_dir.join("oxreplay-validate-bundle.json"),
         &validate_capture,
     )?;
     if !validate_capture.stdout.trim().is_empty() {
@@ -1008,9 +922,15 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         &normalized_replay_path,
         "normalized-replay",
     )?;
-    write_json_file(prepared.command_dir.join("oxreplay-diff.json"), &diff_capture)?;
+    write_json_file(
+        prepared.command_dir.join("oxreplay-diff.json"),
+        &diff_capture,
+    )?;
     if !diff_capture.stdout.trim().is_empty() {
-        write_json_text_file(prepared.oxreplay_dir.join("diff.report.json"), &diff_capture.stdout)?;
+        write_json_text_file(
+            prepared.oxreplay_dir.join("diff.report.json"),
+            &diff_capture.stdout,
+        )?;
     }
 
     let explain_capture = runner.run_oxreplay_explain(
@@ -1065,7 +985,6 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     )
 }
 
-#[cfg(feature = "oxfml-live")]
 fn finish_oxfml_only_case(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
@@ -1088,7 +1007,6 @@ fn finish_oxfml_only_case(
     )
 }
 
-#[cfg(feature = "oxfml-live")]
 fn finish_blocked_case(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
@@ -1110,7 +1028,6 @@ fn finish_blocked_case(
     )
 }
 
-#[cfg(feature = "oxfml-live")]
 fn finish_case_report(
     repo_root: &Path,
     prepared: PreparedVerificationCase,
@@ -1161,7 +1078,6 @@ fn finish_case_report(
     Ok(report)
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_oxxlplay_batch_case_manifest(
     case_dir: &Path,
     oxxlplay_dir: &Path,
@@ -1219,13 +1135,13 @@ fn build_oxxlplay_batch_case_manifest(
             None
         },
         requested_observation_scope,
-        source_cell_locator: spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
+        source_cell_locator: spreadsheet_xml_extraction
+            .map(|extraction| extraction.locator.clone()),
         source_workbook_path: spreadsheet_xml_extraction
             .map(|extraction| extraction.workbook_path.clone()),
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn should_run_oxreplay(
     replay_policy: VerificationReplayPolicy,
     comparison_status: ProgrammaticComparisonStatus,
@@ -1239,7 +1155,6 @@ fn should_run_oxreplay(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn load_oxxlplay_batch_output_index(
     batch_output_index_path: &Path,
 ) -> Result<OxxlplayBatchOutputIndex, String> {
@@ -1252,7 +1167,6 @@ fn load_oxxlplay_batch_output_index(
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn resolve_repo_or_absolute_path(
     repo_root: &Path,
     raw_path: Option<&str>,
@@ -1271,14 +1185,12 @@ fn resolve_repo_or_absolute_path(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 struct OxfmlCaseArtifacts {
     summary: OxfmlVerificationSummary,
     replay_projection_json: Value,
     execution_failure: Option<String>,
 }
 
-#[cfg(feature = "oxfml-live")]
 fn run_oxfml_case(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
@@ -1375,8 +1287,10 @@ fn run_oxfml_case(
             })
         }
         Err(error) => {
-            let failure_reason =
-                format!("OxFml runtime execution failed for case `{}`: {error}", case.case_id);
+            let failure_reason = format!(
+                "OxFml runtime execution failed for case `{}`: {error}",
+                case.case_id
+            );
             let summary = OxfmlVerificationSummary {
                 evaluation_summary,
                 comparison_value: None,
@@ -1394,7 +1308,6 @@ fn run_oxfml_case(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn verification_locale_context(
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> LocaleFormatContext<'static> {
@@ -1412,19 +1325,14 @@ fn verification_locale_context(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 struct HostTestLocaleValueParser;
 
-#[cfg(feature = "oxfml-live")]
 struct HostTestFormatCodeEngine;
 
-#[cfg(feature = "oxfml-live")]
 static HOST_TEST_LOCALE_VALUE_PARSER: HostTestLocaleValueParser = HostTestLocaleValueParser;
 
-#[cfg(feature = "oxfml-live")]
 static HOST_TEST_FORMAT_CODE_ENGINE: HostTestFormatCodeEngine = HostTestFormatCodeEngine;
 
-#[cfg(feature = "oxfml-live")]
 impl LocaleValueParser for HostTestLocaleValueParser {
     fn parse_value_text(
         &self,
@@ -1472,7 +1380,6 @@ impl LocaleValueParser for HostTestLocaleValueParser {
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 impl FormatCodeEngine for HostTestFormatCodeEngine {
     fn render_with_code(
         &self,
@@ -1527,12 +1434,10 @@ impl FormatCodeEngine for HostTestFormatCodeEngine {
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn excel_text_from_string(value: String) -> ExcelText {
     ExcelText::from_utf16_code_units(value.encode_utf16().collect())
 }
 
-#[cfg(feature = "oxfml-live")]
 fn normalize_numeric_text(
     profile: &oxfunc_core::locale_format::FormatProfile,
     raw: &str,
@@ -1565,7 +1470,6 @@ fn normalize_numeric_text(
     Some(normalized)
 }
 
-#[cfg(feature = "oxfml-live")]
 fn parse_number_with_profile(
     profile: &oxfunc_core::locale_format::FormatProfile,
     raw: &str,
@@ -1573,7 +1477,6 @@ fn parse_number_with_profile(
     normalize_numeric_text(profile, raw)?.parse().ok()
 }
 
-#[cfg(feature = "oxfml-live")]
 fn parse_iso_ymd(text: &str) -> Option<(i64, i64, i64)> {
     let mut parts = text.split('-');
     let year = parts.next()?.parse().ok()?;
@@ -1582,7 +1485,6 @@ fn parse_iso_ymd(text: &str) -> Option<(i64, i64, i64)> {
     (parts.next().is_none()).then_some((year, month, day))
 }
 
-#[cfg(feature = "oxfml-live")]
 fn parse_en_us_slash_date(text: &str) -> Option<(i64, i64, i64)> {
     let mut parts = text.split('/');
     let month = parts.next()?.parse().ok()?;
@@ -1591,7 +1493,6 @@ fn parse_en_us_slash_date(text: &str) -> Option<(i64, i64, i64)> {
     (parts.next().is_none()).then_some((year, month, day))
 }
 
-#[cfg(feature = "oxfml-live")]
 fn render_fixed_common(
     profile: &oxfunc_core::locale_format::FormatProfile,
     value: f64,
@@ -1634,7 +1535,6 @@ fn render_fixed_common(
     rendered
 }
 
-#[cfg(feature = "oxfml-live")]
 fn grouped_integer_string(int_part: &str, sep: &str) -> String {
     if int_part.len() <= 3 || sep.is_empty() {
         return int_part.to_string();
@@ -1657,7 +1557,6 @@ fn grouped_integer_string(int_part: &str, sep: &str) -> String {
     out
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_verification_publication_context(
     extraction: &SpreadsheetXmlCellExtraction,
 ) -> VerificationPublicationContext {
@@ -1676,7 +1575,6 @@ fn build_verification_publication_context(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_verification_conditional_formatting_rule(
     rule: &crate::services::spreadsheet_xml::ConditionalFormatRule,
 ) -> VerificationConditionalFormattingRule {
@@ -1712,7 +1610,6 @@ fn build_verification_conditional_formatting_rule(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_oxxlplay_scenario_json(
     repo_root: &Path,
     case_dir: &Path,
@@ -1759,7 +1656,6 @@ fn build_oxxlplay_scenario_json(
     scenario
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_observation_gap_report(
     observation_scope: &SpreadsheetXmlCellExtraction,
 ) -> VerificationObservationGapReport {
@@ -2025,7 +1921,6 @@ pub fn replay_projection_coverage_gap_summaries(
         .collect()
 }
 
-#[cfg(feature = "oxfml-live")]
 fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSummary, String> {
     let capture_json = read_json_file(&capture_path)?;
     let surfaces = capture_json
@@ -2094,7 +1989,6 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
     summary.effective_display_text.as_deref()
 }
 
-#[cfg(feature = "oxfml-live")]
 fn serialize_replay_projection(
     projection: &oxfml_core::consumer::replay::ReplayProjectionResult,
 ) -> Value {
@@ -2129,7 +2023,6 @@ fn serialize_replay_projection(
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn serialize_comparison_views(
     comparison_views: &[oxfml_core::consumer::replay::ReplayComparisonView],
 ) -> Value {
@@ -2146,7 +2039,6 @@ fn serialize_comparison_views(
     )
 }
 
-#[cfg(feature = "oxfml-live")]
 fn serialize_verification_publication_surface(surface: &VerificationPublicationSurface) -> Value {
     json!({
         "entered_cell_text": surface.entered_cell_text,
@@ -2182,7 +2074,6 @@ fn serialize_verification_publication_surface(surface: &VerificationPublicationS
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn serialize_locale_format_context_surface(surface: &LocaleFormatContextSurface) -> Value {
     json!({
         "locale_profile_id": surface.locale_profile_id,
@@ -2195,7 +2086,6 @@ fn serialize_locale_format_context_surface(surface: &LocaleFormatContextSurface)
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn serialize_verification_conditional_formatting_rule(
     rule: &VerificationConditionalFormattingRule,
 ) -> Value {
@@ -2213,7 +2103,6 @@ fn serialize_verification_conditional_formatting_rule(
     })
 }
 
-#[cfg(feature = "oxfml-live")]
 fn build_discrepancy_summary(
     comparison_status: ProgrammaticComparisonStatus,
     value_match: Option<bool>,
@@ -2224,14 +2113,11 @@ fn build_discrepancy_summary(
 ) -> Option<String> {
     match comparison_status {
         ProgrammaticComparisonStatus::Matched => None,
-        ProgrammaticComparisonStatus::Blocked => Some(
-            oxfml_summary
-                .blocked_reason
-                .clone()
-                .unwrap_or_else(|| {
-                    "comparison blocked before both value and display axes completed".to_string()
-                }),
-        ),
+        ProgrammaticComparisonStatus::Blocked => {
+            Some(oxfml_summary.blocked_reason.clone().unwrap_or_else(|| {
+                "comparison blocked before both value and display axes completed".to_string()
+            }))
+        }
         ProgrammaticComparisonStatus::Mismatched => {
             let value_summary = value_comparison_summary(
                 value_match,
@@ -2332,7 +2218,6 @@ fn append_replay_diagnostic_summary(
     }
 }
 
-#[cfg(feature = "oxfml-live")]
 fn run_command_capture(
     command_label: &str,
     program: &str,
@@ -2717,7 +2602,7 @@ mod consumer_shape_tests {
     }
 }
 
-#[cfg(all(test, feature = "oxfml-live"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
@@ -2741,10 +2626,9 @@ mod tests {
                 .lock()
                 .expect("calls")
                 .push("oxxlplay_capture_batch".to_string());
-            let manifest: OxxlplayBatchManifest = serde_json::from_str(
-                &fs::read_to_string(manifest_path).expect("batch manifest"),
-            )
-            .expect("batch manifest parse");
+            let manifest: OxxlplayBatchManifest =
+                serde_json::from_str(&fs::read_to_string(manifest_path).expect("batch manifest"))
+                    .expect("batch manifest parse");
             let batch_output_root = PathBuf::from(&manifest.output_root);
             fs::create_dir_all(&batch_output_root).expect("batch output root");
             let mut case_index = Vec::new();
@@ -3129,9 +3013,10 @@ mod tests {
             .join("upstream-gap-report.json")
             .is_file());
         let case_dir = output_root.join("cases").join("case-xml");
-        let scenario: Value =
-            serde_json::from_str(&fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"))
-                .expect("scenario parse");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
         assert_eq!(scenario["workbook_kind"], "spreadsheetml-2003-import");
         assert!(scenario.get("entered_cell_text").is_none());
         assert!(case_dir.join("workbook.xml").is_file());
@@ -3176,10 +3061,11 @@ mod tests {
         assert_eq!(case_report.display_match, Some(false));
         assert_eq!(case_report.replay_equivalent, None);
         assert_eq!(case_report.replay_mismatch_records.len(), 0);
-        assert!(case_report
-            .discrepancy_summary
-            .as_deref()
-            .is_some_and(|summary| summary.contains("Replay validate-bundle failed (exit code 1)")));
+        assert!(
+            case_report.discrepancy_summary.as_deref().is_some_and(
+                |summary| summary.contains("Replay validate-bundle failed (exit code 1)")
+            )
+        );
         assert_eq!(
             runner.calls.lock().expect("calls").clone(),
             vec![

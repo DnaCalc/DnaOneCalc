@@ -37,17 +37,17 @@ fn opening_a_retained_artifact_routes_the_shell_to_workbench() {
     let opened = open_retained_artifact_from_catalog(&mut state, "artifact-42");
     assert!(opened);
 
-    assert_eq!(state.active_formula_space_view.active_mode, AppMode::Workbench);
+    assert_eq!(
+        state.active_formula_space_view.active_mode,
+        AppMode::Workbench
+    );
     let workbench = workbench_projection(&state);
     assert_eq!(
         workbench.retained_artifact_id.as_deref(),
         Some("artifact-42"),
         "workbench projection exposes the opened artifact via retained_artifact_id",
     );
-    assert_eq!(
-        workbench.retained_case_id.as_deref(),
-        Some("case-42"),
-    );
+    assert_eq!(workbench.retained_case_id.as_deref(), Some("case-42"),);
 }
 
 #[test]
@@ -92,5 +92,8 @@ fn importing_a_verification_bundle_populates_the_shell_and_catalog() {
         state.retained_artifacts.open_artifact_id.as_deref(),
         Some("artifact-a"),
     );
-    assert_eq!(state.active_formula_space_view.active_mode, AppMode::Workbench);
+    assert_eq!(
+        state.active_formula_space_view.active_mode,
+        AppMode::Workbench
+    );
 }

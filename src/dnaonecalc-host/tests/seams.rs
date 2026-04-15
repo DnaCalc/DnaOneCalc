@@ -18,51 +18,51 @@
 //! See `~/.claude/plans/fuzzy-spinning-flame.md` → "Seam test catalogue"
 //! and "Seam-id crosswalk" for the mapping from seam id to test file.
 
-#[path = "seams/common.rs"]
-mod common;
-#[path = "seams/extended_value_routing.rs"]
-mod extended_value_routing;
-#[path = "seams/capability_snapshot.rs"]
-mod capability_snapshot;
-#[path = "seams/host_bindings.rs"]
-mod host_bindings;
-#[path = "seams/persistence.rs"]
-mod persistence;
-#[path = "seams/parity_matrix.rs"]
-mod parity_matrix;
-#[path = "seams/trace_consumption.rs"]
-mod trace_consumption;
-#[path = "seams/witness_handoff.rs"]
-mod witness_handoff;
-#[path = "seams/rail_rename.rs"]
-mod rail_rename;
-#[path = "seams/verification_context.rs"]
-mod verification_context;
-#[path = "seams/format_payload.rs"]
-mod format_payload;
-#[path = "seams/seam_board.rs"]
-mod seam_board;
-#[path = "seams/conditional_formatting.rs"]
-mod conditional_formatting;
-#[path = "seams/cell_style.rs"]
-mod cell_style;
 #[path = "seams/calc_options.rs"]
 mod calc_options;
-#[path = "seams/reference_style.rs"]
-mod reference_style;
-#[path = "seams/external_links.rs"]
-mod external_links;
-#[path = "seams/rich_value.rs"]
-mod rich_value;
-#[path = "seams/green_tree_node.rs"]
-mod green_tree_node;
+#[path = "seams/capability_snapshot.rs"]
+mod capability_snapshot;
+#[path = "seams/cell_style.rs"]
+mod cell_style;
+#[path = "seams/common.rs"]
+mod common;
 #[path = "seams/comparison_taxonomy.rs"]
 mod comparison_taxonomy;
-#[path = "seams/presentation_propagation.rs"]
-mod presentation_propagation;
+#[path = "seams/conditional_formatting.rs"]
+mod conditional_formatting;
+#[path = "seams/extended_value_routing.rs"]
+mod extended_value_routing;
+#[path = "seams/external_links.rs"]
+mod external_links;
+#[path = "seams/format_payload.rs"]
+mod format_payload;
+#[path = "seams/green_tree_node.rs"]
+mod green_tree_node;
+#[path = "seams/host_bindings.rs"]
+mod host_bindings;
 #[path = "seams/locale_expand.rs"]
 mod locale_expand;
-#[path = "seams/value_boundary_help.rs"]
-mod value_boundary_help;
+#[path = "seams/parity_matrix.rs"]
+mod parity_matrix;
+#[path = "seams/persistence.rs"]
+mod persistence;
+#[path = "seams/presentation_propagation.rs"]
+mod presentation_propagation;
+#[path = "seams/rail_rename.rs"]
+mod rail_rename;
+#[path = "seams/reference_style.rs"]
+mod reference_style;
 #[path = "seams/replay_capture.rs"]
 mod replay_capture;
+#[path = "seams/rich_value.rs"]
+mod rich_value;
+#[path = "seams/seam_board.rs"]
+mod seam_board;
+#[path = "seams/trace_consumption.rs"]
+mod trace_consumption;
+#[path = "seams/value_boundary_help.rs"]
+mod value_boundary_help;
+#[path = "seams/verification_context.rs"]
+mod verification_context;
+#[path = "seams/witness_handoff.rs"]
+mod witness_handoff;

@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 
 use crate::ui::panels::value_panel_model::{
-    ValuePanelArrayCell, ValuePanelPipelineStepStatus, ValuePanelPresentation,
-    ValuePanelRichValue, ValuePanelRichValueData, ValuePanelValue, ValuePanelViewModel,
+    ValuePanelArrayCell, ValuePanelPipelineStepStatus, ValuePanelPresentation, ValuePanelRichValue,
+    ValuePanelRichValueData, ValuePanelValue, ValuePanelViewModel,
 };
 
 #[component]
@@ -552,12 +552,7 @@ mod tests {
 
     #[test]
     fn renders_unevaluated_panel_from_empty_strings() {
-        let panel = build_value_panel_from_explore_strings(
-            None,
-            None,
-            None,
-            EditorLiveState::Idle,
-        );
+        let panel = build_value_panel_from_explore_strings(None, None, None, EditorLiveState::Idle);
         let html = view! { <ValuePanel panel=panel /> }.to_html();
         assert!(html.contains("data-component=\"value-panel\""));
         assert!(html.contains("data-value-kind=\"unevaluated\""));

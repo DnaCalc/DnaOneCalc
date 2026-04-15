@@ -3,9 +3,7 @@
 use dnaonecalc_host::app::case_lifecycle::{
     close_formula_space, new_formula_space, toggle_pin_formula_space,
 };
-use dnaonecalc_host::services::shell_composition::{
-    select_active_formula_space, ShellRailSection,
-};
+use dnaonecalc_host::services::shell_composition::{select_active_formula_space, ShellRailSection};
 use dnaonecalc_host::state::OneCalcHostState;
 
 use super::fixtures::{

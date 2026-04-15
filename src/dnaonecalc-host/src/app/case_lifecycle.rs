@@ -70,13 +70,10 @@ pub fn duplicate_formula_space(
     let next_index = next_untitled_index(state);
     let new_id = FormulaSpaceId::new(format!("copy-{next_index}-of-{formula_space_id}"));
 
-    let mut duplicate = FormulaSpaceState::new(
-        new_id.clone(),
-        source.raw_entered_cell_text.clone(),
-    );
+    let mut duplicate =
+        FormulaSpaceState::new(new_id.clone(), source.raw_entered_cell_text.clone());
     duplicate.context = source.context.clone();
-    duplicate.context.scenario_label =
-        format!("{} (copy)", source.context.scenario_label);
+    duplicate.context.scenario_label = format!("{} (copy)", source.context.scenario_label);
     duplicate.committed_cell_text = source.committed_cell_text.clone();
     duplicate.proofed_cell_text = source.proofed_cell_text.clone();
     duplicate.expanded_editor = source.expanded_editor;
@@ -126,10 +123,7 @@ pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str)
     true
 }
 
-pub fn toggle_pin_formula_space(
-    state: &mut OneCalcHostState,
-    formula_space_id: &str,
-) -> bool {
+pub fn toggle_pin_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
     let id = FormulaSpaceId::new(formula_space_id.to_string());
     if state.formula_spaces.get(&id).is_none() {
         return false;
@@ -137,10 +131,7 @@ pub fn toggle_pin_formula_space(
     if state.workspace_shell.pinned_formula_space_ids.contains(&id) {
         state.workspace_shell.pinned_formula_space_ids.remove(&id);
     } else {
-        state
-            .workspace_shell
-            .pinned_formula_space_ids
-            .insert(id);
+        state.workspace_shell.pinned_formula_space_ids.insert(id);
     }
     true
 }

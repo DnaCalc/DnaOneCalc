@@ -17,8 +17,11 @@ pub fn bracket_pair_for_caret(text: &str, caret_offset: usize) -> Option<Bracket
     }
 
     // Prefer a bracket at the caret, fall back to the bracket just before it.
-    let probe = bracket_at(&chars, caret_offset)
-        .or_else(|| caret_offset.checked_sub(1).and_then(|p| bracket_at(&chars, p)));
+    let probe = bracket_at(&chars, caret_offset).or_else(|| {
+        caret_offset
+            .checked_sub(1)
+            .and_then(|p| bracket_at(&chars, p))
+    });
 
     let (probe_index, probe_char) = probe?;
     if is_inside_string_literal(&chars, probe_index) {
@@ -69,10 +72,7 @@ fn is_close_bracket(ch: char) -> bool {
 }
 
 fn matches_pair(open: char, close: char) -> bool {
-    matches!(
-        (open, close),
-        ('(', ')') | ('[', ']') | ('{', '}')
-    )
+    matches!((open, close), ('(', ')') | ('[', ']') | ('{', '}'))
 }
 
 fn find_matching_close(chars: &[char], open_index: usize) -> Option<usize> {

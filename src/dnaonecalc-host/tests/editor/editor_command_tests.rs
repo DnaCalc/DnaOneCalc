@@ -78,14 +78,8 @@ fn ex_14_keydown_mapping_intercepts_only_editor_owned_keys() {
         keydown_to_command("Backspace", false, false, false, ctx),
         None
     );
-    assert_eq!(
-        keydown_to_command("Delete", false, false, false, ctx),
-        None
-    );
-    assert_eq!(
-        keydown_to_command("Enter", false, false, false, ctx),
-        None
-    );
+    assert_eq!(keydown_to_command("Delete", false, false, false, ctx), None);
+    assert_eq!(keydown_to_command("Enter", false, false, false, ctx), None);
     assert_eq!(keydown_to_command("x", false, true, false, ctx), None);
 
     // Editor-owned chords.

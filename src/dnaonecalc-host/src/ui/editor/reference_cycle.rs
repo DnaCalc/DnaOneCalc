@@ -128,7 +128,11 @@ fn try_read_reference(chars: &[char], start: usize) -> Option<ReferenceToken> {
 
     // If what follows is an identifier character the match is really the
     // prefix of a larger name like `A1B` (a defined name) — skip it.
-    if chars.get(idx).copied().is_some_and(is_reference_continuation) {
+    if chars
+        .get(idx)
+        .copied()
+        .is_some_and(is_reference_continuation)
+    {
         return None;
     }
 

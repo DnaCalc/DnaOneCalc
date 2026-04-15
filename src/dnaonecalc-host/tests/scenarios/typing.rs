@@ -1,7 +1,7 @@
 //! S2 / S3 / S4 / S5 / S12 — formula entry scenarios.
 //!
 //! Each test dispatches `apply_live_editor_input` against a real
-//! `PreviewOxfmlBridge` (or a `FakeBridge` where the preview bridge can't
+//! `LiveOxfmlBridge` (or a `FakeBridge` where the live bridge can't
 //! yet return the richer document a scenario needs), then walks the
 //! full projection chain down to the Explore clusters.
 
@@ -92,7 +92,7 @@ impl OxfmlEditorBridge for DiagnosticFakeBridge {
 
 #[test]
 fn typing_an_invalid_formula_surfaces_a_diagnostic_in_the_cluster() {
-    // S5: type `=SUM(` with an unclosed paren. The preview bridge does not
+    // S5: type `=SUM(` with an unclosed paren. The live bridge does not
     // currently emit diagnostics, so this scenario uses a fake bridge that
     // returns a document with a populated `live_diagnostics` snapshot. The
     // assertion is that the diagnostic reaches the editor cluster and the

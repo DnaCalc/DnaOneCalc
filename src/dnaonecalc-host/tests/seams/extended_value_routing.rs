@@ -29,10 +29,10 @@ fn value_presentation_carries_typed_number_after_sum_round_trip() {
 
 /// Pending SEAM-ONECALC-EXTENDED-VALUE-ROUTING: typing `=SEQUENCE(2,2)`
 /// must produce a typed `ExtendedValue::Array` with the typed element
-/// shape, not a hand-stringified preview.
+/// shape, not a local string mirror.
 ///
 /// Passes when the cluster's `array_preview` comes from a typed array
-/// value rather than `parse_sequence_formula` in `editor_session.rs`.
+/// value rather than a OneCalc-local derived preview.
 #[test]
 #[ignore = "pending SEAM-ONECALC-EXTENDED-VALUE-ROUTING"]
 fn value_presentation_carries_typed_array_after_sequence_round_trip() {

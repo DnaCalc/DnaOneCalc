@@ -29,10 +29,7 @@ pub fn FormulaEditorSurface(
         .result_value_summary
         .clone()
         .unwrap_or_else(|| "Unevaluated".to_string());
-    let effective_display_label = editor
-        .effective_display_summary
-        .clone()
-        .unwrap_or_default();
+    let effective_display_label = editor.effective_display_summary.clone().unwrap_or_default();
     let bracket_pair = editor.bracket_pair;
     let editor_settings = editor.editor_settings;
     let settings_popover_open = editor.editor_settings_popover_open;
@@ -813,9 +810,7 @@ fn render_editor_settings_popover(
     settings: crate::ui::editor::state::EditorSettings,
     on_command: Option<Callback<EditorCommand>>,
 ) -> impl IntoView {
-    use crate::ui::editor::state::{
-        CompletionAggressiveness, EditorSettingUpdate, HelpPlacement,
-    };
+    use crate::ui::editor::state::{CompletionAggressiveness, EditorSettingUpdate, HelpPlacement};
     let toggle = |update: EditorSettingUpdate, on_command: Option<Callback<EditorCommand>>| {
         move |_| {
             if let Some(callback) = on_command.as_ref() {

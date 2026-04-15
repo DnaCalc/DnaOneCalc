@@ -276,7 +276,7 @@ pub struct FormulaSpaceContextState {
 
 Most of these fields are populated by the editor session service from bridge responses (`services/editor_session.rs::infer_truth_source`). `host_profile` and `packet_kind` are seeded from the bootstrap and currently treated as opaque strings.
 
-**`ProjectionTruthSource`** (`state/types.rs:144`) — `enum { PreviewBacked, LiveBacked, LocalFallback }`. Determines the "truth source" badge in the rail and the scope strip's profile segment.
+**`ProjectionTruthSource`** (`state/types.rs:144`) — `enum { LiveBacked, LocalFallback }`. Determines the "truth source" badge in the rail and the scope strip's profile segment.
 
 **`FormulaArrayPreviewState`** (`state/types.rs:188`) — `{ label, rows: Vec<Vec<String>>, truncated: bool }`. Populated by `derive_formula_presentation` for `=SEQUENCE(...)` and similar; live bridge will eventually fill richer cases.
 
@@ -426,7 +426,7 @@ Test coverage: 8 tests covering every path including the "close last → fresh u
 
 **`HostBootstrapSpec`** (`host_mount.rs:17`) — `{ target, mount_element_id: "onecalc-root", document_title: "DNA OneCalc" }`.
 
-**`bootstrap_editor_bridge(target) -> Arc<dyn OxfmlEditorBridge>`** (`host_mount.rs:32`) — returns `LiveOxfmlBridge` if the `oxfml-live` Cargo feature is enabled and the `ONECALC_FORCE_PREVIEW_BRIDGE` env var is unset, otherwise `PreviewOxfmlBridge`.
+**`bootstrap_editor_bridge(target) -> Arc<dyn OxfmlEditorBridge>`** (`host_mount.rs:32`) — returns `LiveOxfmlBridge` for both desktop and web mounts. The preview host still seeds demo state, but the running bridge is always the real OxFml/OxFunc path.
 
 **`render_shell_html(target, state) -> String`** (`host_mount.rs:43`) and **`render_shell_document(...)`** (`host_mount.rs:60`) — render the Leptos `OneCalcShellApp` to HTML for SSR / static documents.
 
@@ -540,10 +540,7 @@ The internal `update_formula_space_from_editor_document` function does everythin
 3. If a diagnostic exists, return a diagnostic summary.
 4. If the text starts with `'`, return text-mode summary.
 5. If the text parses as a number, return a number summary.
-6. **If the text matches `=SUM(...)`, hand-evaluate it** via the local `parse_sum_formula`.
-7. **If the text matches `=SEQUENCE(...)`, hand-generate a preview** via `parse_sequence_formula`.
-8. **If the text equals `=LET(x,1,x)`, return a hard-coded result of `1`.**
-9. Otherwise `Unevaluated`.
+6. Otherwise `Unevaluated`.
 
 Steps 6, 7, and 8 are **explicit local fakes** that exist only to make the preview look alive while the real bridge isn't routing `EvalValue` through. They are scheduled for removal once `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` lands and `value_presentation` carries real data for every formula.
 
@@ -795,19 +792,11 @@ fn apply_formula_edit(&self, request: FormulaEditRequest)
 
 This is the **single point of contact** between OneCalc and any downstream formula evaluator.
 
-### 7.3 `adapters/oxfml/preview_bridge.rs` — Local synthetic bridge
+### 7.3 `adapters/oxfml/live_bridge.rs` — Real OxFml integration
 
-**`PreviewOxfmlBridge`** — implements `OxfmlEditorBridge`. Returns synthesised `EditorDocument`s for demo / development. Used:
+**`LiveOxfmlBridge`** — implements `OxfmlEditorBridge` by delegating to the real `oxfml_core` library. This is the only place in OneCalc where `oxfml_core::*` types are imported.
 
-- When the `oxfml-live` Cargo feature is disabled.
-- When the `ONECALC_FORCE_PREVIEW_BRIDGE` environment variable is set.
-- In every test case that needs a deterministic bridge stand-in.
-
-The synthesised documents come from `test_support/mod.rs` factories (`sample_editor_document`, `diagnostic_editor_document`, `array_editor_document`, `blocked_editor_document`).
-
-### 7.4 `adapters/oxfml/live_bridge.rs` — Real OxFml integration
-
-`#[cfg(feature = "oxfml-live")]`. **`LiveOxfmlBridge`** — implements `OxfmlEditorBridge` by delegating to the real `oxfml_core` library. This is the only place in OneCalc where `oxfml_core::*` types are imported.
+Deterministic bridge stand-ins now live only in tests as local fakes or fixture documents from `test_support/mod.rs` (`sample_editor_document`, `diagnostic_editor_document`, `array_editor_document`, `blocked_editor_document`).
 
 ## 8. Panel view-models (UI-adjacent but rendering-free)
 
@@ -880,7 +869,7 @@ Legend: 🟢 LIVE = end-to-end through a real bridge or pure logic with no facad
 
 | Feature | Status | Notes |
 |---|---|---|
-| `SelectPreviousCompletion` / `SelectNextCompletion` | 🟡 | Navigation logic is pure; depends on the bridge to populate `completion_proposals`. PreviewBridge produces fake proposals. |
+| `SelectPreviousCompletion` / `SelectNextCompletion` | 🟡 | Navigation logic is pure; depends on the bridge to populate `completion_proposals`. Most real-path tests use `LiveOxfmlBridge`; deterministic unit tests use local fixture documents or fake bridges. |
 | `SelectCompletionByIndex` / `AcceptSelectedCompletion` / `AcceptCompletionByIndex` | 🟡 | Acceptance applies `InsertText(proposal.insert_text)`; depends on the bridge to populate proposals with correct `insert_text` and `replacement_span`. |
 | `ForceShowCompletion` / `DismissCompletion` | 🟢 | Force-show is a state mutation only; dismiss clears the anchor on the editor surface state. No bridge call. |
 | `CommitEntry` / `RequestProof` / `CancelEntry` | 🟡 | OneCalc tracks `committed_cell_text` / `proofed_cell_text` and flips `live_state` correctly. **No real "commit" semantic with the bridge** — the bridge has no notion of "this proof is now canonical". This is fine for the in-memory preview, broken for any persistence story. |
@@ -896,13 +885,13 @@ Legend: 🟢 LIVE = end-to-end through a real bridge or pure logic with no facad
 | Send entered text to bridge | 🟢 | — | `ApplyFormulaEditIntent` → `bridge.apply_formula_edit`. |
 | Receive `EditorDocument` back | 🟢 | — | `EditorSessionService::apply_editor_document`. |
 | `editor_syntax_snapshot` (tokens) | 🟢 | — | Stored on the formula space, projected via `syntax_runs_from_snapshot`. |
-| `live_diagnostics` | 🟡 | — | PreviewBridge returns fake diagnostics; LiveBridge returns real ones; the Inspect mode renders them but the editor surface doesn't yet show squiggles. |
-| `completion_proposals` | 🟡 | — | Same shape on both bridges. PreviewBridge returns hand-built proposals from `test_support`. |
+| `live_diagnostics` | 🟡 | — | `LiveOxfmlBridge` returns real diagnostics when OxFml surfaces them; deterministic tests also use fake bridge documents. The Inspect mode renders them but the editor surface doesn't yet show squiggles. |
+| `completion_proposals` | 🟡 | — | Same shape on the live bridge and in fixture documents used by deterministic tests. |
 | `signature_help` / `function_help` | 🟡 | — | Same. |
-| `formula_walk` (recursive nodes) | 🟡 | — | Inspect mode renders the walk. PreviewBridge returns simple synthetic walks. |
+| `formula_walk` (recursive nodes) | 🟡 | — | Inspect mode renders the walk. Deterministic tests can still inject synthetic walks through fixture documents. |
 | `parse_summary` / `bind_summary` / `eval_summary` / `provenance_summary` | 🟡 | — | All carried; rendered partially in Inspect; no Workbench consumer yet. |
-| `value_presentation: FormulaValuePresentation` | 🔴 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | OneCalc-local mirror. Real value routing will provide a typed `EvalValue` / `ExtendedValue` from `oxfunc_value_types`. Until then, `derive_formula_presentation` hand-evaluates a tiny set of patterns (`=SUM(...)`, `=SEQUENCE(...)`, `=LET(x,1,x)`) to make the preview look alive. |
-| `latest_evaluation_summary` (string) | 🔴 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | Derived from the facade above. |
+| `value_presentation: FormulaValuePresentation` | 🔴 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | OneCalc-local mirror. Real value routing will provide a typed `EvalValue` / `ExtendedValue` from `oxfunc_value_types`. Until then, projection comes either from bridge-supplied `value_presentation` or from limited local fallback classification for blocked, diagnostic, forced-text, and plain text/number entry. |
+| `latest_evaluation_summary` (string) | 🔴 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | Derived from the current bridge projection or the limited local fallback classification above. |
 | `effective_display_summary` (string) | 🔴 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | Same. |
 | `array_preview` (rows of strings) | 🟡 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | Synthesised for `=SEQUENCE(...)`; will be real once typed values flow. |
 
@@ -1028,14 +1017,14 @@ When the new test suite is built (the missing layer that's been the subject of t
 ### 11.3 Bridge / session invariants
 
 1. `EditorSessionService::handle_formula_edit_intent` always either updates the formula space or returns an error — never partial.
-2. `apply_editor_document` derives a `truth_source` of `LiveBacked` for any document where `provenance_summary.profile_summary` contains "OxFml" or `value_presentation` is present, `PreviewBacked` for any document whose provenance contains "PreviewBridge", and `LocalFallback` otherwise.
-3. `derive_formula_presentation` returns `Unevaluated` for any text that does not match the local hand-evaluator patterns and has no `value_presentation` from the bridge.
+2. `apply_editor_document` derives a `truth_source` of `LiveBacked` for any document where `provenance_summary.profile_summary` contains "OxFml" or `value_presentation` is present, and `LocalFallback` otherwise.
+3. `derive_formula_presentation` returns `Unevaluated` for formula text that has no `value_presentation`, blocked reason, or diagnostic from the bridge.
 4. After a successful bridge round-trip, `editor_document.source_text == raw_entered_cell_text`.
 
 ### 11.4 Adapter contract invariants
 
 1. `OxfmlEditorBridge::apply_formula_edit` is the only method on the trait — every bridge implementation must satisfy it.
-2. `PreviewOxfmlBridge` returns a deterministic document for the same input.
+2. Deterministic adapter tests use fake bridges or fixture documents rather than a separate preview bridge implementation.
 3. `EditorDocument::green_tree_key()` returns the snapshot's green tree key verbatim.
 
 ### 11.5 Editor model invariants (pure logic)

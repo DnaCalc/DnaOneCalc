@@ -20,7 +20,10 @@ mod tests {
     fn formula_space_id_round_trips_string_value() {
         let id = FormulaSpaceId::new("space-1");
         assert_eq!(id.as_str(), "space-1");
-        assert_eq!(FormulaSpaceId::new(String::from("space-2")).as_str(), "space-2");
+        assert_eq!(
+            FormulaSpaceId::new(String::from("space-2")).as_str(),
+            "space-2"
+        );
     }
 
     #[test]

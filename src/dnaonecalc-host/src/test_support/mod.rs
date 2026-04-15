@@ -189,7 +189,7 @@ pub fn blocked_editor_document(source_text: &str) -> EditorDocument {
         children: vec![],
     }];
     document.provenance_summary = Some(ProvenanceSummary {
-        profile_summary: "PreviewBridge".to_string(),
+        profile_summary: "OxFml blocked lane".to_string(),
         blocked_reason: Some("Excel comparison lane unavailable on this host".to_string()),
     });
     document.eval_summary = Some(EvalSummary {

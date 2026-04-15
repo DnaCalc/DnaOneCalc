@@ -110,7 +110,7 @@ fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEdit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::oxfml::{FormulaEditRequest, FormulaEditResult, PreviewOxfmlBridge};
+    use crate::adapters::oxfml::{FormulaEditRequest, FormulaEditResult};
     use crate::state::FormulaSpaceState;
     use crate::test_support::sample_editor_document;
     use crate::ui::editor::commands::EditorInputKind;
@@ -262,8 +262,7 @@ mod tests {
             let formula_space_id = FormulaSpaceId::new("space-1");
             let mut state = OneCalcHostState::default();
             state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-            let mut formula_space =
-                FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+            let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
             formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
             formula_space.editor_surface_state.completion_selected_index = Some(0);
             state.formula_spaces.insert(formula_space);
@@ -285,12 +284,14 @@ mod tests {
         formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
         state.formula_spaces.insert(formula_space);
 
-        let changed = apply_live_editor_command(
-            &PreviewOxfmlBridge,
-            &mut state,
-            EditorCommand::MoveCaretRight,
-        )
-        .expect("caret move should refresh live signature help");
+        let mut document = sample_editor_document("=SUM(1,2)");
+        if let Some(signature_help) = document.signature_help.as_mut() {
+            signature_help.active_argument_index = 1;
+        }
+        let bridge = FakeBridge { document };
+
+        let changed = apply_live_editor_command(&bridge, &mut state, EditorCommand::MoveCaretRight)
+            .expect("caret move should refresh live signature help");
 
         assert!(changed);
         let active = state

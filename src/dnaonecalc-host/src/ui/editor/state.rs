@@ -104,12 +104,11 @@ impl EditorSettings {
                 self.reduce_motion = !self.reduce_motion;
             }
             EditorSettingUpdate::ToggleAutoProofQuietInterval => {
-                self.auto_proof_quiet_interval_ms =
-                    if self.auto_proof_quiet_interval_ms.is_some() {
-                        None
-                    } else {
-                        Some(600)
-                    };
+                self.auto_proof_quiet_interval_ms = if self.auto_proof_quiet_interval_ms.is_some() {
+                    None
+                } else {
+                    Some(600)
+                };
             }
             EditorSettingUpdate::SetAutoProofQuietIntervalMs(ms) => {
                 self.auto_proof_quiet_interval_ms = Some(ms);

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use dnaonecalc_host::adapters::oxfml::PreviewOxfmlBridge;
 use dnaonecalc_host::app::host_mount::{bootstrap_editor_bridge, HostMountTarget};
 use dnaonecalc_host::app::preview_state::preview_host_state;
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
@@ -409,7 +408,7 @@ async fn preview_host_initial_state_does_not_auto_open_assist_popups() {
         view! {
             <OneCalcShellApp
                 initial_state=state.clone()
-                editor_bridge=Some(Arc::new(PreviewOxfmlBridge))
+                editor_bridge=Some(bootstrap_editor_bridge(HostMountTarget::WebBrowser))
             />
         }
     });

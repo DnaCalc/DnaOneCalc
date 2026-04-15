@@ -211,7 +211,10 @@ mod tests {
         assert_eq!(success.raw_entered_cell_text, "=SUM(1,2)");
         assert_eq!(success.effective_display_summary.as_deref(), Some("3"));
         assert_eq!(success.context.scenario_label, "Success · SUM result");
-        assert_eq!(success.context.truth_source, ProjectionTruthSource::LocalFallback);
+        assert_eq!(
+            success.context.truth_source,
+            ProjectionTruthSource::LocalFallback
+        );
 
         // Diagnostic space fixture content.
         let diagnostic = state
