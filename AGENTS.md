@@ -48,3 +48,11 @@ Use `br` directly for bead mutations and inspection.
 For any external or public-facing message authored by an agent, the first line must be:
 
 *Posted by Codex agent on behalf of @govert*
+
+This applies to outward-facing authored content such as handoffs, prompts, public
+notes, or other messages intended for human readers outside the immediate repo
+execution flow.
+
+It does not apply to internal engineering artifacts such as git commit messages,
+branch names, local bead updates, or other repo-internal tool metadata unless a
+separate instruction explicitly says otherwise.
