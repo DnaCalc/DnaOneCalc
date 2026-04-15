@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::adapters::oxfml::EditorDocument;
 use crate::domain::ids::FormulaSpaceId;
+use crate::extensions::{frozen_extension_host_contract, FrozenExtensionHostContract};
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
@@ -260,8 +261,18 @@ impl Default for CapabilityAndEnvironmentState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ExtensionSurfaceState;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionSurfaceState {
+    pub admitted_contract: FrozenExtensionHostContract,
+}
+
+impl Default for ExtensionSurfaceState {
+    fn default() -> Self {
+        Self {
+            admitted_contract: frozen_extension_host_contract(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GlobalUiChromeState {
@@ -329,4 +340,24 @@ pub struct ClosedFormulaSpaceRecord {
 pub struct OpenFormulaSpaceRecord {
     pub formula_space_id: FormulaSpaceId,
     pub is_pinned: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extension_surface_state_defaults_to_frozen_contract() {
+        let surface = ExtensionSurfaceState::default();
+
+        assert_eq!(
+            surface.admitted_contract.abi_version.slug(),
+            "onecalc-native-extension-abi-v0"
+        );
+        assert_eq!(surface.admitted_contract.platforms.len(), 3);
+        assert_eq!(
+            surface.admitted_contract.platforms[0].platform.slug(),
+            "windows-desktop"
+        );
+    }
 }

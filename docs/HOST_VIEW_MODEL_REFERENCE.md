@@ -337,9 +337,9 @@ pub struct GlobalUiChromeState {
 
 ### 3.6 Facade-only state types
 
-**`CapabilityAndEnvironmentState`** (`state/types.rs:246`) — `pub struct CapabilityAndEnvironmentState;`. Empty marker. The plan (`SEAM-ONECALC-CAPABILITY-SNAPSHOT`) is to populate this from `ProgrammaticVerificationConfig`, host artifacts, and engine version reports so the workspace-settings page has data to render.
+**`CapabilityAndEnvironmentState`** (`state/types.rs`) — currently carries `selected_diff_target: CapabilityDiffTarget`. This is the shared shell-level selection for Capability Center diffing (`workspace-baseline`, `open:<formula-space-id>`, `recent:<formula-space-id>`). Broader capability snapshot population is still pending under `SEAM-ONECALC-CAPABILITY-SNAPSHOT`.
 
-**`ExtensionSurfaceState`** (`state/types.rs:249`) — `pub struct ExtensionSurfaceState;`. Empty marker. Reserved for RTD / XLL / OxVba extension hooks (WS-12 territory).
+**`ExtensionSurfaceState`** (`state/types.rs`) — currently carries `admitted_contract: FrozenExtensionHostContract`. The default host state now freezes the admitted OneCalc extension ABI v0 contract into runtime-owned truth: platform packaging (`.xll` on Windows, `.so` on Linux, none on browser/WASM), admitted Excel-SDK subset (`Excel12`, `XLOPER12`-only, `xlfRegister` Form 1, `xlfEvaluate`, `xlUDF`, `xlfRtd`), load phases, and the explicit safety non-claims (no browser native loading, no legacy `XLOPER`, no worksheet `REGISTER.ID` / `CALL` admission-by-implication, no OxVba packaging parity claim).
 
 ### 3.7 Identifier types
 
