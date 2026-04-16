@@ -12,8 +12,8 @@ use crate::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, build_programmatic_batch_plan,
     default_verification_config, default_windows_excel_capability_profile,
     default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan,
-    ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticFormulaCase,
-    ProgrammaticHostProfile,
+    ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticFormattingContext,
+    ProgrammaticFormulaCase, ProgrammaticHostProfile,
 };
 use crate::services::spreadsheet_xml::{
     extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction, VerificationObservationScope,
@@ -417,6 +417,7 @@ pub fn single_case_request_with_config(
             case_id: case_id.into(),
             entered_cell_text: formula.into(),
             spreadsheet_xml_source: None,
+            formatting_context: None,
         }],
     }
 }
@@ -454,6 +455,7 @@ pub fn single_xml_case_request_with_config(
                     locator,
                 },
             ),
+            formatting_context: None,
         }],
     })
 }
@@ -705,6 +707,7 @@ fn prepare_verification_case(
             .map(|extraction| extraction.entered_cell_text.clone())
             .unwrap_or_else(|| case.entered_cell_text.clone()),
         spreadsheet_xml_source: case.spreadsheet_xml_source.clone(),
+        formatting_context: case.formatting_context.clone(),
     };
     let upstream_gap_report = spreadsheet_xml_extraction
         .as_ref()
@@ -852,16 +855,23 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         (Some(left), Some(right)) => Some(left == right),
         _ => None,
     };
-    let display_match = match (
-        prepared
-            .oxfml_result
-            .summary
-            .effective_display_summary
-            .as_deref(),
-        preferred_excel_display_repr(&excel_summary),
+    let display_match = if programmatic_display_comparison_enabled(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
     ) {
-        (Some(left), Some(right)) => Some(left == right),
-        _ => None,
+        match (
+            prepared
+                .oxfml_result
+                .summary
+                .effective_display_summary
+                .as_deref(),
+            preferred_excel_display_repr(&excel_summary),
+        ) {
+            (Some(left), Some(right)) => Some(left == right),
+            _ => None,
+        }
+    } else {
+        None
     };
     let comparison_status = derive_comparison_status(value_match, display_match);
 
@@ -1137,7 +1147,7 @@ fn build_oxxlplay_batch_case_manifest(
             .replace('\\', "/"),
         observable_surfaces: build_oxxlplay_observable_surfaces(
             &locator,
-            spreadsheet_xml_extraction.is_none(),
+            programmatic_effective_display_surface_requested(case, spreadsheet_xml_extraction),
         ),
         entered_cell_text: if spreadsheet_xml_extraction.is_none() {
             Some(case.entered_cell_text.clone())
@@ -1223,16 +1233,16 @@ fn run_oxfml_case(
 
     let source = FormulaSourceRecord::new(case.case_id.clone(), 1, case.entered_cell_text.clone())
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
-    let locale_ctx = verification_locale_context(spreadsheet_xml_extraction);
+    let locale_ctx = verification_locale_context(case, spreadsheet_xml_extraction);
     let typed_query_bundle =
         TypedContextQueryBundle::new(None, None, Some(&locale_ctx), None, None);
-    let runtime_request = RuntimeFormulaRequest::new(source, typed_query_bundle);
-    let runtime_request = if let Some(extraction) = spreadsheet_xml_extraction {
-        runtime_request.with_verification_publication_context(
-            build_verification_publication_context(extraction),
-        )
+    let runtime_request = if let Some(context) =
+        effective_verification_publication_context(case, spreadsheet_xml_extraction)
+    {
+        RuntimeFormulaRequest::new(source, typed_query_bundle)
+            .with_verification_publication_context(context)
     } else {
-        runtime_request
+        RuntimeFormulaRequest::new(source, typed_query_bundle)
     };
     let runtime_outcome = RuntimeEnvironment::new().execute(runtime_request);
 
@@ -1265,6 +1275,9 @@ fn run_oxfml_case(
                 .as_ref()
                 .and_then(|summary| summary.blocked_reason.clone())
         });
+    let display_context_blocked_reason =
+        missing_programmatic_display_context_reason(case, spreadsheet_xml_extraction)
+            .map(ToOwned::to_owned);
 
     match runtime_outcome {
         Ok(runtime_result) => {
@@ -1286,7 +1299,7 @@ fn run_oxfml_case(
                         .effective_display_text
                         .clone(),
                 ),
-                blocked_reason: bridge_blocked_reason,
+                blocked_reason: bridge_blocked_reason.or(display_context_blocked_reason),
                 parse_status,
                 green_tree_key,
             };
@@ -1319,19 +1332,57 @@ fn run_oxfml_case(
 }
 
 fn verification_locale_context(
+    case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> LocaleFormatContext<'static> {
-    let date_system = if spreadsheet_xml_extraction.and_then(|value| value.date1904) == Some(true) {
+    let date_system = if effective_programmatic_date1904(case, spreadsheet_xml_extraction) {
         WorkbookDateSystem::System1904
     } else {
         WorkbookDateSystem::System1900
     };
+    let profile = parse_programmatic_format_profile_id(
+        spreadsheet_xml_extraction
+            .map(|extraction| extraction.workbook_format_profile_hint.as_str())
+            .or_else(|| {
+                case.formatting_context
+                    .as_ref()
+                    .and_then(|context| context.format_profile_id.as_deref())
+            }),
+    );
 
     LocaleFormatContext {
-        profile: format_profile(LocaleProfileId::EnUs),
+        profile: format_profile(profile),
         date_system,
         parser: &HOST_TEST_LOCALE_VALUE_PARSER,
         formatter: &HOST_TEST_FORMAT_CODE_ENGINE,
+    }
+}
+
+fn effective_programmatic_date1904(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> bool {
+    spreadsheet_xml_extraction
+        .and_then(|value| value.date1904)
+        .or_else(|| {
+            case.formatting_context
+                .as_ref()
+                .and_then(|context| context.date1904)
+        })
+        == Some(true)
+}
+
+fn parse_programmatic_format_profile_id(raw: Option<&str>) -> LocaleProfileId {
+    match raw
+        .map(str::trim)
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("currentexcelhost")
+        | Some("current_excel_host")
+        | Some("excel_host")
+        | Some("windows_excel_default") => LocaleProfileId::CurrentExcelHost,
+        _ => LocaleProfileId::EnUs,
     }
 }
 
@@ -1785,6 +1836,42 @@ fn build_verification_publication_context(
     }
 }
 
+fn build_programmatic_verification_publication_context(
+    context: &ProgrammaticFormattingContext,
+) -> VerificationPublicationContext {
+    VerificationPublicationContext {
+        format_profile: context.format_profile_id.clone(),
+        number_format_code: context.number_format_code.clone(),
+        style_id: None,
+        style_hierarchy: Vec::new(),
+        font_color: None,
+        fill_color: None,
+        conditional_formatting_rules: Vec::new(),
+    }
+}
+
+fn effective_verification_publication_context(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> Option<VerificationPublicationContext> {
+    spreadsheet_xml_extraction
+        .map(build_verification_publication_context)
+        .or_else(|| {
+            case.formatting_context
+                .as_ref()
+                .map(build_programmatic_verification_publication_context)
+        })
+}
+
+fn missing_programmatic_display_context_reason(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> Option<&'static str> {
+    (spreadsheet_xml_extraction.is_none() && case.formatting_context.is_none()).then_some(
+        "Display comparison blocked: explicit programmatic formatting context is absent on this case",
+    )
+}
+
 fn build_verification_conditional_formatting_rule(
     rule: &crate::services::spreadsheet_xml::ConditionalFormatRule,
 ) -> VerificationConditionalFormattingRule {
@@ -1837,6 +1924,8 @@ fn build_oxxlplay_scenario_json(
     };
     let requested_observation_scope =
         effective_requested_observation_scope(case, spreadsheet_xml_extraction);
+    let include_effective_display =
+        programmatic_effective_display_surface_requested(case, spreadsheet_xml_extraction);
     let mut scenario = json!({
         "scenario_id": scenario_id,
         "replay_class": "capture_surface_basic",
@@ -1844,7 +1933,7 @@ fn build_oxxlplay_scenario_json(
         "workbook_ref": "./workbook.xml",
         "workbook_kind": workbook_kind,
         "trigger": "open_then_recalc",
-        "observable_surfaces": build_oxxlplay_observable_surfaces(&locator, spreadsheet_xml_extraction.is_none()),
+        "observable_surfaces": build_oxxlplay_observable_surfaces(&locator, include_effective_display),
         "requested_observation_scope": requested_observation_scope,
         "source_cell_locator": spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
         "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone())
@@ -1856,19 +1945,26 @@ fn build_oxxlplay_scenario_json(
 }
 
 fn effective_requested_observation_scope(
-    _case: &ProgrammaticFormulaCase,
+    case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> VerificationObservationScope {
-    spreadsheet_xml_extraction
-        .map(|extraction| extraction.observation_scope.clone())
-        .unwrap_or_else(default_programmatic_formula_observation_scope)
+    if let Some(extraction) = spreadsheet_xml_extraction {
+        extraction.observation_scope.clone()
+    } else if case.formatting_context.is_some() {
+        programmatic_formula_observation_scope_with_display()
+    } else {
+        programmatic_formula_observation_scope_without_display()
+    }
 }
 
-fn default_programmatic_formula_observation_scope() -> VerificationObservationScope {
+fn programmatic_formula_observation_scope_with_display() -> VerificationObservationScope {
     VerificationObservationScope {
         oxfml_required_scope: vec![
             "entered_cell_text".to_string(),
             "returned_value_surface".to_string(),
+            "format_profile".to_string(),
+            "date1904".to_string(),
+            "number_format_code".to_string(),
             "effective_display_text".to_string(),
         ],
         oxxlplay_required_surfaces: vec![
@@ -1880,6 +1976,31 @@ fn default_programmatic_formula_observation_scope() -> VerificationObservationSc
             "effective_display_text".to_string(),
         ],
     }
+}
+
+fn programmatic_formula_observation_scope_without_display() -> VerificationObservationScope {
+    VerificationObservationScope {
+        oxfml_required_scope: vec![
+            "entered_cell_text".to_string(),
+            "returned_value_surface".to_string(),
+        ],
+        oxxlplay_required_surfaces: vec!["cell_value".to_string()],
+        oxreplay_required_views: vec!["comparison_value".to_string()],
+    }
+}
+
+fn programmatic_display_comparison_enabled(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> bool {
+    spreadsheet_xml_extraction.is_some() || case.formatting_context.is_some()
+}
+
+fn programmatic_effective_display_surface_requested(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> bool {
+    spreadsheet_xml_extraction.is_none() && case.formatting_context.is_some()
 }
 
 fn build_oxxlplay_observable_surfaces(
@@ -3230,6 +3351,14 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    fn sample_programmatic_formatting_context() -> ProgrammaticFormattingContext {
+        ProgrammaticFormattingContext {
+            format_profile_id: Some("current_excel_host".to_string()),
+            number_format_code: Some("$#,##0.00".to_string()),
+            date1904: Some(false),
+        }
+    }
+
     #[derive(Default)]
     struct FakeVerificationRunner {
         capture_exit_code: i32,
@@ -3461,6 +3590,7 @@ mod tests {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -3511,6 +3641,7 @@ mod tests {
                 case_id: "case-formula".to_string(),
                 entered_cell_text: "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -3537,13 +3668,13 @@ mod tests {
         assert_eq!(scenario["workbook_ref"], "./workbook.xml");
         assert_eq!(
             scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
         assert_eq!(
             scenario["requested_observation_scope"]["oxreplay_required_views"],
-            json!(["comparison_value", "effective_display_text"])
+            json!(["comparison_value"])
         );
-        assert!(scenario["observable_surfaces"]
+        assert!(!scenario["observable_surfaces"]
             .as_array()
             .expect("observable surfaces")
             .iter()
@@ -3558,7 +3689,7 @@ mod tests {
         .expect("requested observation scope parse");
         assert_eq!(
             requested_scope["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
         let batch_manifest: Value = serde_json::from_str(
             &fs::read_to_string(
@@ -3575,9 +3706,9 @@ mod tests {
             .expect("manifest case");
         assert_eq!(
             manifest_case["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
-        assert!(manifest_case["observable_surfaces"]
+        assert!(!manifest_case["observable_surfaces"]
             .as_array()
             .expect("manifest observable surfaces")
             .iter()
@@ -3586,6 +3717,54 @@ mod tests {
                     && surface["required"] == json!(true)
             }));
         assert!(case_dir.join("workbook.xml").is_file());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_emits_programmatic_display_scope_when_formatting_context_present() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-formula-display".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: Some(sample_programmatic_formatting_context()),
+            }],
+        };
+        let runner = FakeVerificationRunner::default();
+
+        run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(
+                output_root
+                    .join("cases")
+                    .join("case-formula-display")
+                    .join("scenario.json"),
+            )
+            .expect("scenario json"),
+        )
+        .expect("scenario parse");
+        assert_eq!(
+            scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
+            json!(["cell_value", "effective_display_text"])
+        );
+        assert!(scenario["observable_surfaces"]
+            .as_array()
+            .expect("observable surfaces")
+            .iter()
+            .any(|surface| surface["surface_kind"] == "effective_display_text"));
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -3608,6 +3787,7 @@ mod tests {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -3626,6 +3806,52 @@ mod tests {
             report.case_reports[0].artifact_catalog_entry.open_mode_hint,
             crate::services::programmatic_testing::ProgrammaticOpenModeHint::Workbench
         );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_marks_display_axis_blocked_without_programmatic_formatting_context() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-blocked-display".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            diff_equivalent: true,
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Mismatched
+        );
+        assert_eq!(case_report.display_match, None);
+        assert!(case_report
+            .oxfml_summary
+            .blocked_reason
+            .as_deref()
+            .is_some_and(|summary| summary.contains(
+                "Display comparison blocked: explicit programmatic formatting context is absent"
+            )));
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -3685,6 +3911,7 @@ mod tests {
                         locator: "Input!A1".to_string(),
                     },
                 ),
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -3742,14 +3969,38 @@ mod tests {
     }
 
     #[test]
-    fn programmatic_formula_observation_scope_requests_display_surface_explicitly() {
-        let scope = default_programmatic_formula_observation_scope();
+    fn context_free_programmatic_formula_observation_scope_omits_display_surface() {
+        let scope = programmatic_formula_observation_scope_without_display();
 
         assert_eq!(
             scope.oxfml_required_scope,
             vec![
                 "entered_cell_text".to_string(),
                 "returned_value_surface".to_string(),
+            ]
+        );
+        assert_eq!(
+            scope.oxxlplay_required_surfaces,
+            vec!["cell_value".to_string()]
+        );
+        assert_eq!(
+            scope.oxreplay_required_views,
+            vec!["comparison_value".to_string()]
+        );
+    }
+
+    #[test]
+    fn explicit_programmatic_formatting_context_requests_display_surface() {
+        let scope = programmatic_formula_observation_scope_with_display();
+
+        assert_eq!(
+            scope.oxfml_required_scope,
+            vec![
+                "entered_cell_text".to_string(),
+                "returned_value_surface".to_string(),
+                "format_profile".to_string(),
+                "date1904".to_string(),
+                "number_format_code".to_string(),
                 "effective_display_text".to_string(),
             ]
         );
@@ -3787,6 +4038,7 @@ mod tests {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -3803,7 +4055,7 @@ mod tests {
             ProgrammaticComparisonStatus::Mismatched
         );
         assert_eq!(case_report.value_match, Some(false));
-        assert_eq!(case_report.display_match, Some(false));
+        assert_eq!(case_report.display_match, None);
         assert_eq!(case_report.replay_equivalent, None);
         assert_eq!(case_report.replay_mismatch_records.len(), 0);
         assert!(
@@ -4453,7 +4705,7 @@ mod tests {
     #[test]
     fn default_programmatic_lane_filters_stale_visible_value_projection_gap() {
         let requested_views =
-            default_programmatic_formula_observation_scope().oxreplay_required_views;
+            programmatic_formula_observation_scope_with_display().oxreplay_required_views;
         let mismatch_records = filter_replay_mismatch_records_to_requested_views(
             vec![
                 OxReplayMismatchRecord {
@@ -4604,6 +4856,7 @@ mod tests {
                 case_id: "case-compare-ready".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
         };
         let runner = FakeVerificationRunner {

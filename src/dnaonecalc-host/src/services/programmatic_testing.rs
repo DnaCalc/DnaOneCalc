@@ -11,11 +11,23 @@ pub struct ProgrammaticSpreadsheetXmlSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgrammaticFormattingContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date1904: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticFormulaCase {
     pub case_id: String,
     pub entered_cell_text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spreadsheet_xml_source: Option<ProgrammaticSpreadsheetXmlSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formatting_context: Option<ProgrammaticFormattingContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +271,7 @@ mod tests {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2)".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "windows-excel".to_string(),
@@ -288,6 +301,7 @@ mod tests {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "'123.4".to_string(),
                 spreadsheet_xml_source: None,
+                formatting_context: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "browser".to_string(),
