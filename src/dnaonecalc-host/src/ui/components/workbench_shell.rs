@@ -4,7 +4,10 @@ use crate::services::programmatic_testing::ProgrammaticComparisonStatus;
 use crate::services::retained_artifacts::{
     ManualRetainedArtifactImportRequest, VerificationBundleImportRequest,
 };
-use crate::services::workbench_mode::{WorkbenchComparisonRecordView, WorkbenchExplainRecordView};
+use crate::services::workbench_mode::{
+    WorkbenchBlockedDimensionView, WorkbenchComparisonRecordView, WorkbenchExplainRecordView,
+    WorkbenchWideningRequestView,
+};
 use crate::ui::panels::workbench::{
     WorkbenchActionsClusterViewModel, WorkbenchCatalogClusterViewModel,
     WorkbenchEvidenceClusterViewModel, WorkbenchLineageClusterViewModel,
@@ -69,6 +72,54 @@ fn WorkbenchExplainRecordCard(record: WorkbenchExplainRecordView) -> impl IntoVi
                     <strong>{record.right_value_repr.unwrap_or_else(|| "Unavailable".to_string())}</strong>
                 </div>
             </div>
+        </article>
+    }
+}
+
+#[component]
+fn WorkbenchBlockedDimensionCard(record: WorkbenchBlockedDimensionView) -> impl IntoView {
+    view! {
+        <article
+            class="onecalc-workbench-shell__comparison-record"
+            data-role="workbench-blocked-dimension-card"
+            data-family=record.family_key.clone()
+            data-target-repo=record.target_repo.clone()
+        >
+            <header class="onecalc-workbench-shell__comparison-record-header">
+                <div>
+                    <div class="onecalc-workbench-shell__eyebrow">"Blocked dimension"</div>
+                    <h4 data-role="workbench-blocked-dimension-family">{record.family_label.clone()}</h4>
+                </div>
+                <div class="onecalc-workbench-shell__comparison-record-badges">
+                    <span data-role="workbench-blocked-dimension-target">{record.target_repo.clone()}</span>
+                </div>
+            </header>
+            <p data-role="workbench-blocked-dimension-summary">{record.summary.clone()}</p>
+            <p data-role="workbench-blocked-dimension-capability">{record.capability_context.clone()}</p>
+        </article>
+    }
+}
+
+#[component]
+fn WorkbenchWideningRequestCard(record: WorkbenchWideningRequestView) -> impl IntoView {
+    view! {
+        <article
+            class="onecalc-workbench-shell__comparison-record"
+            data-role="workbench-widening-request-card"
+            data-target-repo=record.target_repo.clone()
+        >
+            <header class="onecalc-workbench-shell__comparison-record-header">
+                <div>
+                    <div class="onecalc-workbench-shell__eyebrow">"Widening request"</div>
+                    <h4 data-role="workbench-widening-request-title">{record.title.clone()}</h4>
+                </div>
+                <div class="onecalc-workbench-shell__comparison-record-badges">
+                    <span data-role="workbench-widening-request-target">{record.target_repo.clone()}</span>
+                </div>
+            </header>
+            <p data-role="workbench-widening-request-summary">{record.summary.clone()}</p>
+            <p data-role="workbench-widening-request-evidence">{record.evidence_anchor.clone()}</p>
+            <p data-role="workbench-widening-request-capability">{record.capability_context.clone()}</p>
         </article>
     }
 }
@@ -286,6 +337,20 @@ pub fn WorkbenchShell(
                         }
                         .into_any()
                     }}
+                    {if evidence.blocked_dimensions.is_empty() {
+                        view! { <></> }.into_any()
+                    } else {
+                        view! {
+                            <div class="onecalc-workbench-shell__comparison-grid" data-role="workbench-blocked-dimension-grid">
+                                {evidence
+                                    .blocked_dimensions
+                                    .into_iter()
+                                    .map(|record| view! { <WorkbenchBlockedDimensionCard record=record /> })
+                                    .collect_view()}
+                            </div>
+                        }
+                        .into_any()
+                    }}
                 </section>
 
                 <section class="onecalc-workbench-shell__lineage-card" data-panel="workbench-lineage">
@@ -332,6 +397,20 @@ pub fn WorkbenchShell(
                             .map(|item| view! { <li class="onecalc-workbench-shell__action-item">{item}</li> })
                             .collect_view()}
                     </ul>
+                    {if actions.widening_requests.is_empty() {
+                        view! { <></> }.into_any()
+                    } else {
+                        view! {
+                            <div class="onecalc-workbench-shell__comparison-grid" data-role="workbench-widening-request-grid">
+                                {actions
+                                    .widening_requests
+                                    .into_iter()
+                                    .map(|record| view! { <WorkbenchWideningRequestCard record=record /> })
+                                    .collect_view()}
+                            </div>
+                        }
+                        .into_any()
+                    }}
                 </section>
 
                 <section class="onecalc-workbench-shell__catalog-card" data-panel="workbench-catalog">
@@ -588,7 +667,7 @@ mod tests {
                     host_profile_summary: "Windows desktop preview".to_string(),
                     capability_floor_summary: "Workbench with retained artifacts".to_string(),
                     outcome_summary: Some("Mismatched".to_string()),
-                    recommended_action: "Review projection coverage gaps before claiming semantic mismatch".to_string(),
+                    recommended_action: "Review blocked dimensions and prepare widening request".to_string(),
                     retained_artifact_id: Some("artifact-1".to_string()),
                     retained_case_id: Some("case-1".to_string()),
                     comparison_status_summary: Some("mismatched".to_string()),
@@ -611,6 +690,19 @@ mod tests {
                         "Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side"
                             .to_string(),
                     ],
+                    blocked_dimensions: vec![WorkbenchBlockedDimensionView {
+                        target_repo: "OxReplay".to_string(),
+                        family_key: "formatting_view".to_string(),
+                        family_label: "Formatting".to_string(),
+                        summary: "comparison view family `formatting_view` is missing on one side"
+                            .to_string(),
+                        capability_context:
+                            "Capability floor: Workbench with retained artifacts | Comparison status: mismatched"
+                                .to_string(),
+                        recommended_request:
+                            "Widen OxReplay compare family `formatting_view` for retained compare intake"
+                                .to_string(),
+                    }],
                     comparison_records: vec![
                         WorkbenchComparisonRecordView {
                             mismatch_kind: "effective_display_text".to_string(),
@@ -641,8 +733,24 @@ mod tests {
                     lineage_items: vec!["Scenario opened".to_string(), "Evaluation captured".to_string()],
                 }
                 actions=WorkbenchActionsClusterViewModel {
-                    action_items: vec!["Retain snapshot".to_string(), "Prepare handoff".to_string()],
-                    recommended_action: "Review projection coverage gaps before claiming semantic mismatch".to_string(),
+                    action_items: vec![
+                        "Retain snapshot".to_string(),
+                        "Prepare handoff".to_string(),
+                        "Prepare widening request".to_string(),
+                    ],
+                    recommended_action: "Review blocked dimensions and prepare widening request".to_string(),
+                    widening_requests: vec![WorkbenchWideningRequestView {
+                        target_repo: "OxReplay".to_string(),
+                        title:
+                            "Widen OxReplay compare family `formatting_view` for retained compare intake"
+                                .to_string(),
+                        summary: "comparison view family `formatting_view` is missing on one side"
+                            .to_string(),
+                        evidence_anchor: "Artifact artifact-1 · Case case-1".to_string(),
+                        capability_context:
+                            "Capability floor: Workbench with retained artifacts | Comparison status: mismatched"
+                                .to_string(),
+                    }],
                 }
                 catalog=WorkbenchCatalogClusterViewModel {
                     retained_catalog_items: vec![crate::services::workbench_mode::WorkbenchRetainedCatalogItemView {
@@ -673,6 +781,10 @@ mod tests {
         assert!(html.contains("Display divergence"));
         assert!(html.contains("data-role=\"workbench-explain-grid\""));
         assert!(html.contains("data-role=\"workbench-explain-record\""));
+        assert!(html.contains("data-role=\"workbench-blocked-dimension-grid\""));
+        assert!(html.contains("data-role=\"workbench-blocked-dimension-card\""));
+        assert!(html.contains("data-role=\"workbench-widening-request-grid\""));
+        assert!(html.contains("data-role=\"workbench-widening-request-card\""));
         assert!(html.contains("data-role=\"workbench-imported-bundle-summary\""));
         assert!(html.contains("data-role=\"workbench-xml-source-summary\""));
         assert!(html.contains("data-role=\"workbench-display-comparison-summary\""));
@@ -690,5 +802,6 @@ mod tests {
         assert!(html.contains("data-role=\"retained-import-submit\""));
         assert!(html.contains("data-import-status=\"blocked\""));
         assert!(html.contains("Prepare handoff"));
+        assert!(html.contains("Prepare widening request"));
     }
 }

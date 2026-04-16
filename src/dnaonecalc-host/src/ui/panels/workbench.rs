@@ -1,6 +1,6 @@
 use crate::services::workbench_mode::{
-    WorkbenchComparisonRecordView, WorkbenchExplainRecordView, WorkbenchRetainedCatalogItemView,
-    WorkbenchViewModel,
+    WorkbenchBlockedDimensionView, WorkbenchComparisonRecordView, WorkbenchExplainRecordView,
+    WorkbenchRetainedCatalogItemView, WorkbenchViewModel, WorkbenchWideningRequestView,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +29,7 @@ pub struct WorkbenchEvidenceClusterViewModel {
     pub xml_source_summary: Option<String>,
     pub display_comparison_summary: Option<String>,
     pub upstream_gap_summary: Vec<String>,
+    pub blocked_dimensions: Vec<WorkbenchBlockedDimensionView>,
     pub comparison_records: Vec<WorkbenchComparisonRecordView>,
     pub explain_records: Vec<WorkbenchExplainRecordView>,
 }
@@ -42,6 +43,7 @@ pub struct WorkbenchLineageClusterViewModel {
 pub struct WorkbenchActionsClusterViewModel {
     pub action_items: Vec<String>,
     pub recommended_action: String,
+    pub widening_requests: Vec<WorkbenchWideningRequestView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +82,7 @@ pub fn build_workbench_evidence_cluster(
         xml_source_summary: view_model.xml_source_summary.clone(),
         display_comparison_summary: view_model.display_comparison_summary.clone(),
         upstream_gap_summary: view_model.upstream_gap_summary.clone(),
+        blocked_dimensions: view_model.blocked_dimensions.clone(),
         comparison_records: view_model.comparison_records.clone(),
         explain_records: view_model.explain_records.clone(),
     }
@@ -99,6 +102,7 @@ pub fn build_workbench_actions_cluster(
     WorkbenchActionsClusterViewModel {
         action_items: view_model.action_items.clone(),
         recommended_action: view_model.recommended_action.clone(),
+        widening_requests: view_model.widening_requests.clone(),
     }
 }
 
@@ -146,6 +150,19 @@ mod tests {
                 "Projection coverage gap (formatting_view): comparison view family `formatting_view` is missing on one side"
                     .to_string(),
             ],
+            blocked_dimensions: vec![WorkbenchBlockedDimensionView {
+                target_repo: "OxReplay".to_string(),
+                family_key: "formatting_view".to_string(),
+                family_label: "Formatting".to_string(),
+                summary: "comparison view family `formatting_view` is missing on one side"
+                    .to_string(),
+                capability_context:
+                    "Capability floor: Workbench with retained artifacts | Comparison status: mismatched"
+                        .to_string(),
+                recommended_request:
+                    "Widen OxReplay compare family `formatting_view` for retained compare intake"
+                        .to_string(),
+            }],
             comparison_records: vec![WorkbenchComparisonRecordView {
                 mismatch_kind: "effective_display_text".to_string(),
                 severity: "informational".to_string(),
@@ -177,6 +194,17 @@ mod tests {
                 xml_source_summary: Some("Input @ Input!A1".to_string()),
                 is_open: true,
             }],
+            widening_requests: vec![WorkbenchWideningRequestView {
+                target_repo: "OxReplay".to_string(),
+                title: "Widen OxReplay compare family `formatting_view` for retained compare intake"
+                    .to_string(),
+                summary: "comparison view family `formatting_view` is missing on one side"
+                    .to_string(),
+                evidence_anchor: "Artifact artifact-1 · Case case-1".to_string(),
+                capability_context:
+                    "Capability floor: Workbench with retained artifacts | Comparison status: mismatched"
+                        .to_string(),
+            }],
         };
 
         let outcome = build_workbench_outcome_cluster(&view_model);
@@ -203,10 +231,12 @@ mod tests {
             Some("Display divergence (effective_display_text): OxFml 6 vs Excel $6.00")
         );
         assert_eq!(evidence.upstream_gap_summary.len(), 1);
+        assert_eq!(evidence.blocked_dimensions.len(), 1);
         assert_eq!(evidence.comparison_records.len(), 1);
         assert_eq!(evidence.explain_records.len(), 1);
         assert_eq!(lineage.lineage_items.len(), 1);
         assert_eq!(actions.action_items.len(), 1);
+        assert_eq!(actions.widening_requests.len(), 1);
         assert_eq!(catalog.retained_catalog_items.len(), 1);
         assert!(catalog.retained_catalog_items[0].is_open);
         assert_eq!(catalog.retained_catalog_items[0].case_id, "case-1");

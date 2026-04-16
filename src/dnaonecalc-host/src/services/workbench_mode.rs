@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::services::verification_bundle::{
     display_comparison_summary, replay_projection_coverage_gap_summaries, OxReplayExplainRecord,
     OxReplayMismatchRecord,
@@ -28,8 +30,10 @@ pub struct WorkbenchViewModel {
     pub xml_source_summary: Option<String>,
     pub display_comparison_summary: Option<String>,
     pub upstream_gap_summary: Vec<String>,
+    pub blocked_dimensions: Vec<WorkbenchBlockedDimensionView>,
     pub comparison_records: Vec<WorkbenchComparisonRecordView>,
     pub explain_records: Vec<WorkbenchExplainRecordView>,
+    pub widening_requests: Vec<WorkbenchWideningRequestView>,
     pub retained_catalog_items: Vec<WorkbenchRetainedCatalogItemView>,
 }
 
@@ -48,6 +52,16 @@ pub struct WorkbenchComparisonRecordView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchBlockedDimensionView {
+    pub target_repo: String,
+    pub family_key: String,
+    pub family_label: String,
+    pub summary: String,
+    pub capability_context: String,
+    pub recommended_request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchExplainRecordView {
     pub query_id: Option<String>,
     pub mismatch_kind: String,
@@ -58,6 +72,15 @@ pub struct WorkbenchExplainRecordView {
     pub left_value_repr: Option<String>,
     pub right_value_repr: Option<String>,
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbenchWideningRequestView {
+    pub target_repo: String,
+    pub title: String,
+    pub summary: String,
+    pub evidence_anchor: String,
+    pub capability_context: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +180,18 @@ pub fn build_workbench_view_model(
                 .collect()
         })
         .unwrap_or_default();
+    let blocked_dimensions = retained_artifact
+        .map(|artifact| {
+            build_blocked_dimensions(
+                artifact,
+                &formula_space.context.capability_floor,
+                &comparison_status_label(artifact),
+            )
+        })
+        .unwrap_or_default();
+    let widening_requests = retained_artifact
+        .map(|artifact| build_widening_requests(&blocked_dimensions, artifact))
+        .unwrap_or_default();
 
     WorkbenchViewModel {
         scenario_label: formula_space.context.scenario_label.clone(),
@@ -203,6 +238,9 @@ pub fn build_workbench_view_model(
                 "Open compare".to_string(),
                 "Prepare handoff".to_string(),
             ];
+            if !widening_requests.is_empty() {
+                items.push("Prepare widening request".to_string());
+            }
             if retained_artifact.is_some() {
                 items.push("Review retained discrepancy".to_string());
             }
@@ -212,14 +250,18 @@ pub fn build_workbench_view_model(
             Some(
                 crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched,
             ) => {
-                if !upstream_gap_summary.is_empty() {
-                    "Review projection coverage gaps before claiming semantic mismatch".to_string()
+                if !blocked_dimensions.is_empty() {
+                    "Review blocked dimensions and prepare widening request".to_string()
                 } else {
                     "Review discrepancy in workbench".to_string()
                 }
             }
             Some(crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked) => {
-                "Review blocked comparison and host policy".to_string()
+                if !blocked_dimensions.is_empty() {
+                    "Review blocked comparison and prepare widening request".to_string()
+                } else {
+                    "Review blocked comparison and host policy".to_string()
+                }
             }
             _ if formula_space.latest_evaluation_summary.is_some() => {
                 "Retain and compare".to_string()
@@ -237,8 +279,10 @@ pub fn build_workbench_view_model(
         xml_source_summary,
         display_comparison_summary,
         upstream_gap_summary,
+        blocked_dimensions,
         comparison_records,
         explain_records,
+        widening_requests,
         retained_catalog_items: retained_catalog
             .iter()
             .map(|artifact| WorkbenchRetainedCatalogItemView {
@@ -269,6 +313,111 @@ fn comparison_status_label(artifact: &RetainedArtifactRecord) -> String {
             "blocked".to_string()
         }
     }
+}
+
+fn build_blocked_dimensions(
+    artifact: &RetainedArtifactRecord,
+    capability_floor_summary: &str,
+    comparison_status_summary: &str,
+) -> Vec<WorkbenchBlockedDimensionView> {
+    let mut items = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for record in artifact
+        .replay_mismatch_records
+        .iter()
+        .filter(|record| record.mismatch_kind == "projection_coverage_gap")
+    {
+        let family_key = record
+            .view_family
+            .clone()
+            .unwrap_or_else(|| record.mismatch_kind.clone());
+        let dedupe_key = format!("OxReplay::{family_key}");
+        if !seen.insert(dedupe_key) {
+            continue;
+        }
+        let family_label = replay_family_label(Some(&family_key), &record.mismatch_kind);
+        items.push(WorkbenchBlockedDimensionView {
+            target_repo: "OxReplay".to_string(),
+            family_key: family_key.clone(),
+            family_label: family_label.clone(),
+            summary: replay_record_summary(
+                Some(&family_key),
+                &record.mismatch_kind,
+                record.detail.as_deref(),
+            ),
+            capability_context: format!(
+                "Capability floor: {capability_floor_summary} | Comparison status: {comparison_status_summary}"
+            ),
+            recommended_request: format!(
+                "Widen OxReplay compare family `{family_key}` for retained compare intake"
+            ),
+        });
+    }
+
+    if let Some(gap_report) = &artifact.upstream_gap_report {
+        for surface in &gap_report.oxxlplay_missing_surfaces {
+            let dedupe_key = format!("OxXlPlay::{surface}");
+            if !seen.insert(dedupe_key) {
+                continue;
+            }
+            items.push(WorkbenchBlockedDimensionView {
+                target_repo: "OxXlPlay".to_string(),
+                family_key: surface.clone(),
+                family_label: surface.replace('_', " "),
+                summary: format!(
+                    "Observable surface `{surface}` is missing from the current Excel capture envelope"
+                ),
+                capability_context: format!(
+                    "Capability floor: {capability_floor_summary} | Comparison status: {comparison_status_summary}"
+                ),
+                recommended_request: format!(
+                    "Widen OxXlPlay observable surface `{surface}` for retained compare intake"
+                ),
+            });
+        }
+        for view in &gap_report.oxreplay_missing_views {
+            let dedupe_key = format!("OxReplay::{view}");
+            if !seen.insert(dedupe_key) {
+                continue;
+            }
+            items.push(WorkbenchBlockedDimensionView {
+                target_repo: "OxReplay".to_string(),
+                family_key: view.clone(),
+                family_label: view.replace('_', " "),
+                summary: format!(
+                    "Comparison view `{view}` is missing from the current replay diff envelope"
+                ),
+                capability_context: format!(
+                    "Capability floor: {capability_floor_summary} | Comparison status: {comparison_status_summary}"
+                ),
+                recommended_request: format!(
+                    "Widen OxReplay compare family `{view}` for retained compare intake"
+                ),
+            });
+        }
+    }
+
+    items
+}
+
+fn build_widening_requests(
+    blocked_dimensions: &[WorkbenchBlockedDimensionView],
+    artifact: &RetainedArtifactRecord,
+) -> Vec<WorkbenchWideningRequestView> {
+    blocked_dimensions
+        .iter()
+        .map(|dimension| WorkbenchWideningRequestView {
+            target_repo: dimension.target_repo.clone(),
+            title: dimension.recommended_request.clone(),
+            summary: dimension.summary.clone(),
+            evidence_anchor: format!(
+                "Artifact {} · Case {}",
+                artifact.artifact_id, artifact.case_id
+            ),
+            capability_context: dimension.capability_context.clone(),
+        })
+        .collect()
 }
 
 fn project_replay_mismatch_record(

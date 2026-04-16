@@ -1,7 +1,5 @@
 #![cfg(target_arch = "wasm32")]
 
-use std::sync::Arc;
-
 use dnaonecalc_host::app::host_mount::{bootstrap_editor_bridge, HostMountTarget};
 use dnaonecalc_host::app::preview_state::preview_host_state;
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
@@ -180,7 +178,8 @@ fn sample_verification_bundle_report_json() -> String {
                 open_mode_hint: ProgrammaticOpenModeHint::Workbench,
             },
             comparison_status: ProgrammaticComparisonStatus::Mismatched,
-            visible_output_match: Some(false),
+            value_match: Some(true),
+            display_match: Some(false),
             replay_equivalent: Some(false),
             replay_mismatch_kinds: vec![
                 "effective_display_text".to_string(),
@@ -241,12 +240,14 @@ fn sample_verification_bundle_report_json() -> String {
             ),
             oxfml_summary: OxfmlVerificationSummary {
                 evaluation_summary: Some("Number · 6".to_string()),
+                comparison_value: Some(serde_json::json!(6)),
                 effective_display_summary: Some("6".to_string()),
                 blocked_reason: None,
                 parse_status: Some("Valid".to_string()),
                 green_tree_key: Some("green-browser-1".to_string()),
             },
             excel_summary: Some(ExcelObservationSummary {
+                comparison_value: Some(serde_json::json!(6)),
                 observed_value_repr: Some("$6.00".to_string()),
                 effective_display_text: Some("$6.00".to_string()),
                 observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
@@ -1082,6 +1083,8 @@ async fn verification_bundle_import_surface_imports_xml_case_and_opens_inspect_c
         html.contains("artifact-bundle-1")
             && html.contains("Input!A1")
             && html.contains("OxFml 6 vs Excel $6.00")
+            && html.contains("data-role=\"workbench-blocked-dimension-card\"")
+            && html.contains("data-role=\"workbench-widening-request-card\"")
     })
     .await;
     assert!(
@@ -1095,6 +1098,30 @@ async fn verification_bundle_import_surface_imports_xml_case_and_opens_inspect_c
     assert!(
         imported_html
             .contains("Display divergence (effective_display_text): OxFml 6 vs Excel $6.00"),
+        "mounted html after bundle import: {imported_html}"
+    );
+    assert!(
+        imported_html.contains("comparison view family `formatting_view` is missing"),
+        "mounted html after bundle import: {imported_html}"
+    );
+    assert!(
+        imported_html.contains("Observable surface `effective_display_text` is missing"),
+        "mounted html after bundle import: {imported_html}"
+    );
+    assert!(
+        imported_html.contains("Prepare widening request"),
+        "mounted html after bundle import: {imported_html}"
+    );
+    assert!(
+        imported_html.contains(
+            "Widen OxReplay compare family `formatting_view` for retained compare intake"
+        ),
+        "mounted html after bundle import: {imported_html}"
+    );
+    assert!(
+        imported_html.contains(
+            "Widen OxXlPlay observable surface `effective_display_text` for retained compare intake"
+        ),
         "mounted html after bundle import: {imported_html}"
     );
 
