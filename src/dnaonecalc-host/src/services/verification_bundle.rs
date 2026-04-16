@@ -2527,18 +2527,24 @@ fn normalize_comparison_value(value: &Value) -> Value {
     let Some(object) = current.as_object() else {
         return current.clone();
     };
-    let Some(kind) = object.get("kind").and_then(Value::as_str) else {
+    let Some(kind) = object
+        .get("value_kind")
+        .or_else(|| object.get("kind"))
+        .or_else(|| object.get("type"))
+        .and_then(Value::as_str)
+        .map(|value| value.to_ascii_lowercase())
+    else {
         return current.clone();
     };
 
-    match kind {
+    match kind.as_str() {
         "logical" => extract_logical_comparison_value(object)
             .map(|logical| json!({ "kind": "logical", "logical": logical }))
             .unwrap_or_else(|| current.clone()),
         "number" => extract_number_comparison_value(object)
             .map(|number| json!({ "kind": "number", "number": number }))
             .unwrap_or_else(|| current.clone()),
-        "text" => extract_text_comparison_value(object)
+        "text" | "string" => extract_text_comparison_value(object)
             .map(|text| json!({ "kind": "text", "text": text }))
             .unwrap_or_else(|| current.clone()),
         "error" => extract_error_comparison_code(object)
@@ -2556,12 +2562,26 @@ fn nested_comparison_value_field<'a>(
     object.get("value").and_then(Value::as_object)?.get(field)
 }
 
+fn extract_payload_comparison_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+) -> Option<&'a Value> {
+    ["payload", "value", "items", "elements", "cells", "values"]
+        .into_iter()
+        .find_map(|key| object.get(key))
+}
+
 fn extract_logical_comparison_value(object: &serde_json::Map<String, Value>) -> Option<bool> {
     object
         .get("logical")
         .and_then(Value::as_bool)
         .or_else(|| object.get("value").and_then(Value::as_bool))
         .or_else(|| nested_comparison_value_field(object, "logical").and_then(Value::as_bool))
+        .or_else(|| match extract_payload_comparison_value(object)? {
+            Value::Bool(value) => Some(*value),
+            Value::String(value) if value.eq_ignore_ascii_case("true") => Some(true),
+            Value::String(value) if value.eq_ignore_ascii_case("false") => Some(false),
+            _ => None,
+        })
 }
 
 fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> Option<Value> {
@@ -2569,6 +2589,18 @@ fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> O
         .get("number")
         .filter(|value| value.is_number())
         .cloned()
+        .or_else(|| {
+            object
+                .get("numeric_value")
+                .filter(|value| value.is_number())
+                .cloned()
+        })
+        .or_else(|| {
+            object
+                .get("published_value")
+                .filter(|value| value.is_number())
+                .cloned()
+        })
         .or_else(|| {
             object
                 .get("value")
@@ -2580,6 +2612,7 @@ fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> O
                 .filter(|value| value.is_number())
                 .cloned()
         })
+        .or_else(|| parse_number_comparison_value(extract_payload_comparison_value(object)?))
 }
 
 fn extract_text_comparison_value(object: &serde_json::Map<String, Value>) -> Option<String> {
@@ -2607,13 +2640,32 @@ fn extract_text_comparison_value(object: &serde_json::Map<String, Value>) -> Opt
             nested_comparison_value_field(object, "utf16_code_units")
                 .and_then(decode_utf16_code_units_json)
         })
+        .or_else(|| match extract_payload_comparison_value(object)? {
+            Value::String(value) => Some(value.clone()),
+            Value::Object(payload) => payload
+                .get("utf16_code_units")
+                .and_then(decode_utf16_code_units_json),
+            _ => None,
+        })
 }
 
 fn extract_error_comparison_code(object: &serde_json::Map<String, Value>) -> Option<String> {
     object
-        .get("code")
+        .get("error_kind")
         .and_then(Value::as_str)
         .map(normalize_error_code_alias)
+        .or_else(|| {
+            object
+                .get("error_code")
+                .and_then(Value::as_str)
+                .map(normalize_error_code_alias)
+        })
+        .or_else(|| {
+            object
+                .get("code")
+                .and_then(Value::as_str)
+                .map(normalize_error_code_alias)
+        })
         .or_else(|| {
             object
                 .get("value")
@@ -2636,13 +2688,20 @@ fn extract_error_comparison_code(object: &serde_json::Map<String, Value>) -> Opt
                 .and_then(Value::as_str)
                 .map(normalize_error_code_alias)
         })
+        .or_else(|| {
+            extract_payload_comparison_value(object)
+                .and_then(Value::as_str)
+                .map(normalize_error_code_alias)
+        })
 }
 
 fn normalize_array_comparison_value(object: &serde_json::Map<String, Value>) -> Option<Value> {
-    let cells = object
-        .get("cells")
-        .and_then(Value::as_array)
-        .or_else(|| nested_comparison_value_field(object, "cells").and_then(Value::as_array))?;
+    let payload = extract_payload_comparison_value(object)?;
+    let cells = match payload {
+        Value::Array(cells) => cells,
+        Value::Object(nested) => extract_payload_comparison_value(nested)?.as_array()?,
+        _ => return None,
+    };
 
     let normalized_cells = cells
         .iter()
@@ -2650,15 +2709,39 @@ fn normalize_array_comparison_value(object: &serde_json::Map<String, Value>) -> 
         .collect::<Vec<_>>();
     let mut normalized = serde_json::Map::new();
     normalized.insert("kind".to_string(), Value::String("array".to_string()));
-    if let Some(shape) = object
-        .get("shape")
-        .cloned()
-        .or_else(|| nested_comparison_value_field(object, "shape").cloned())
-    {
+    let shape = object.get("shape").cloned().or_else(|| {
+        let rows = object
+            .get("rows")
+            .or_else(|| object.get("row_count"))
+            .and_then(Value::as_u64);
+        let cols = object
+            .get("cols")
+            .or_else(|| object.get("columns"))
+            .or_else(|| object.get("col_count"))
+            .and_then(Value::as_u64);
+        match (rows, cols) {
+            (Some(rows), Some(cols)) => Some(json!({ "rows": rows, "cols": cols })),
+            _ => None,
+        }
+    });
+    if let Some(shape) = shape {
         normalized.insert("shape".to_string(), shape);
     }
     normalized.insert("cells".to_string(), Value::Array(normalized_cells));
     Some(Value::Object(normalized))
+}
+
+fn parse_number_comparison_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Number(_) => Some(value.clone()),
+        Value::String(text) => {
+            serde_json::Number::from_f64(text.parse::<f64>().ok()?).map(Value::Number)
+        }
+        Value::Object(object) => {
+            extract_payload_comparison_value(object).and_then(parse_number_comparison_value)
+        }
+        _ => None,
+    }
 }
 
 fn normalize_error_code_alias(value: &str) -> String {
@@ -4205,6 +4288,16 @@ mod tests {
                 "code": "NA"
             })
         );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "value_kind": "error",
+                "payload": "div0"
+            })),
+            json!({
+                "kind": "error",
+                "code": "Div0"
+            })
+        );
     }
 
     #[test]
@@ -4241,6 +4334,34 @@ mod tests {
                     {
                         "kind": "error",
                         "code": "NA"
+                    }
+                ]
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "value_kind": "array",
+                "rows": 1,
+                "cols": 1,
+                "payload": [
+                    {
+                        "value_kind": "text",
+                        "payload": {
+                            "utf16_code_units": [79, 75]
+                        }
+                    }
+                ]
+            })),
+            json!({
+                "kind": "array",
+                "shape": {
+                    "rows": 1,
+                    "cols": 1
+                },
+                "cells": [
+                    {
+                        "kind": "text",
+                        "text": "OK"
                     }
                 ]
             })
