@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 
 use crate::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, build_programmatic_batch_plan,
-    default_verification_config, default_windows_excel_capability_profile,
+    default_programmatic_corpus_formatting_context, default_verification_config,
+    default_windows_excel_capability_profile,
     default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan,
     ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticFormattingContext,
     ProgrammaticFormulaCase, ProgrammaticHostProfile,
@@ -417,7 +418,7 @@ pub fn single_case_request_with_config(
             case_id: case_id.into(),
             entered_cell_text: formula.into(),
             spreadsheet_xml_source: None,
-            formatting_context: None,
+            formatting_context: Some(default_programmatic_corpus_formatting_context()),
         }],
     }
 }
@@ -485,7 +486,8 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
     output_root: impl AsRef<Path>,
     runner: &R,
 ) -> Result<VerificationBundleReport, String> {
-    validate_verification_request(request)?;
+    let request = normalize_verification_request(request);
+    validate_verification_request(&request)?;
 
     let repo_root = repo_root()?;
     let output_root = output_root.as_ref();
@@ -511,7 +513,7 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
     let batch_plan =
         build_programmatic_batch_plan(&request.cases, &request.host_profile, &request.capabilities);
 
-    write_json_file(output_root.join("input-request.json"), request)?;
+    write_json_file(output_root.join("input-request.json"), &request)?;
     write_json_file(output_root.join("batch-plan.json"), &batch_plan)?;
 
     let mut prepared_cases = Vec::with_capacity(request.cases.len());
@@ -638,6 +640,36 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
         &report.retained_artifact_catalog,
     )?;
     Ok(report)
+}
+
+fn normalize_verification_request(request: &VerificationBatchRequest) -> VerificationBatchRequest {
+    VerificationBatchRequest {
+        host_profile: request.host_profile.clone(),
+        capabilities: request.capabilities.clone(),
+        replay_policy: request.replay_policy,
+        cases: request
+            .cases
+            .iter()
+            .map(normalize_programmatic_formula_case)
+            .collect(),
+    }
+}
+
+fn normalize_programmatic_formula_case(case: &ProgrammaticFormulaCase) -> ProgrammaticFormulaCase {
+    let formatting_context = if case.spreadsheet_xml_source.is_none() {
+        case.formatting_context
+            .clone()
+            .or_else(|| Some(default_programmatic_corpus_formatting_context()))
+    } else {
+        case.formatting_context.clone()
+    };
+
+    ProgrammaticFormulaCase {
+        case_id: case.case_id.clone(),
+        entered_cell_text: case.entered_cell_text.clone(),
+        spreadsheet_xml_source: case.spreadsheet_xml_source.clone(),
+        formatting_context,
+    }
 }
 
 fn validate_verification_request(request: &VerificationBatchRequest) -> Result<(), String> {
@@ -3398,6 +3430,10 @@ mod tests {
         }
     }
 
+    fn default_programmatic_formatting_context() -> ProgrammaticFormattingContext {
+        default_programmatic_corpus_formatting_context()
+    }
+
     #[derive(Default)]
     struct FakeVerificationRunner {
         capture_exit_code: i32,
@@ -3567,7 +3603,10 @@ mod tests {
             if self.assert_compare_inputs_ready {
                 let left = read_json_file(left_path).expect("left projection json");
                 let right = read_json_file(right_path).expect("right replay json");
-                assert!(projection_comparison_value(&left, "effective_display_text").is_none());
+                assert_eq!(
+                    projection_comparison_value(&left, "effective_display_text"),
+                    Some(json!("6"))
+                );
                 assert_eq!(
                     projection_comparison_value(&right, "comparison_value"),
                     Some(json!({
@@ -3707,13 +3746,13 @@ mod tests {
         assert_eq!(scenario["workbook_ref"], "./workbook.xml");
         assert_eq!(
             scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value"])
+            json!(["cell_value", "effective_display_text"])
         );
         assert_eq!(
             scenario["requested_observation_scope"]["oxreplay_required_views"],
-            json!(["comparison_value"])
+            json!(["comparison_value", "effective_display_text"])
         );
-        assert!(!scenario["observable_surfaces"]
+        assert!(scenario["observable_surfaces"]
             .as_array()
             .expect("observable surfaces")
             .iter()
@@ -3728,7 +3767,18 @@ mod tests {
         .expect("requested observation scope parse");
         assert_eq!(
             requested_scope["oxxlplay_required_surfaces"],
-            json!(["cell_value"])
+            json!(["cell_value", "effective_display_text"])
+        );
+        assert_eq!(
+            requested_scope["oxfml_required_scope"],
+            json!([
+                "entered_cell_text",
+                "returned_value_surface",
+                "format_profile",
+                "date1904",
+                "number_format_code",
+                "effective_display_text"
+            ])
         );
         let batch_manifest: Value = serde_json::from_str(
             &fs::read_to_string(
@@ -3745,9 +3795,9 @@ mod tests {
             .expect("manifest case");
         assert_eq!(
             manifest_case["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value"])
+            json!(["cell_value", "effective_display_text"])
         );
-        assert!(!manifest_case["observable_surfaces"]
+        assert!(manifest_case["observable_surfaces"]
             .as_array()
             .expect("manifest observable surfaces")
             .iter()
@@ -3756,6 +3806,18 @@ mod tests {
                     && surface["required"] == json!(true)
             }));
         assert!(case_dir.join("workbook.xml").is_file());
+
+        let input_request: Value = serde_json::from_str(
+            &fs::read_to_string(output_root.join("input-request.json")).expect("input request json"),
+        )
+        .expect("input request parse");
+        assert_eq!(
+            input_request["cases"][0]["formatting_context"],
+            json!({
+                "format_profile_id": "en-US",
+                "date1904": false
+            })
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -3850,7 +3912,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_batch_marks_display_axis_blocked_without_programmatic_formatting_context() {
+    fn verification_batch_supplies_default_display_context_for_programmatic_cases() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
             SystemTime::now()
@@ -3864,7 +3926,7 @@ mod tests {
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
             cases: vec![ProgrammaticFormulaCase {
-                case_id: "case-blocked-display".to_string(),
+                case_id: "case-default-display".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
@@ -3879,18 +3941,13 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Mismatched);
+        assert_eq!(case_report.display_match, Some(true));
+        assert_eq!(case_report.oxfml_summary.blocked_reason, None);
         assert_eq!(
-            case_report.comparison_status,
-            ProgrammaticComparisonStatus::Mismatched
+            case_report.oxfml_summary.effective_display_summary.as_deref(),
+            Some("6")
         );
-        assert_eq!(case_report.display_match, None);
-        assert!(case_report
-            .oxfml_summary
-            .blocked_reason
-            .as_deref()
-            .is_some_and(|summary| summary.contains(
-                "Display comparison blocked: explicit programmatic formatting context is absent"
-            )));
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -4914,17 +4971,36 @@ mod tests {
         assert!(projection_comparison_value(&projection, "comparison_value").is_some());
         assert_eq!(
             projection_comparison_value(&projection, "effective_display_text"),
-            None
+            Some(json!("6"))
         );
         assert_eq!(
             projection["verification_publication_surface"]["effective_display_text"],
-            Value::Null
+            json!("6")
         );
         assert_eq!(
             projection["verification_publication_surface"]["format_profile"],
-            Value::Null
+            json!("en-US")
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["date1904"],
+            json!(false)
         );
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn normalize_programmatic_formula_case_supplies_default_host_context() {
+        let normalized = normalize_programmatic_formula_case(&ProgrammaticFormulaCase {
+            case_id: "case-default-context".to_string(),
+            entered_cell_text: "=1+2".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: None,
+        });
+
+        assert_eq!(
+            normalized.formatting_context,
+            Some(default_programmatic_formatting_context())
+        );
     }
 }

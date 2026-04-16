@@ -98,6 +98,14 @@ pub fn default_windows_excel_capability_profile() -> ProgrammaticCapabilityProfi
     }
 }
 
+pub fn default_programmatic_corpus_formatting_context() -> ProgrammaticFormattingContext {
+    ProgrammaticFormattingContext {
+        format_profile_id: Some("en-US".to_string()),
+        number_format_code: None,
+        date1904: Some(false),
+    }
+}
+
 pub fn default_verification_config() -> ProgrammaticVerificationConfig {
     ProgrammaticVerificationConfig {
         host_profile: default_windows_excel_host_profile(),
