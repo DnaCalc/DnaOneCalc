@@ -2544,6 +2544,7 @@ fn normalize_comparison_value(value: &Value) -> Value {
         "error" => extract_error_comparison_code(object)
             .map(|code| json!({ "kind": "error", "code": code }))
             .unwrap_or_else(|| current.clone()),
+        "array" => normalize_array_comparison_value(object).unwrap_or_else(|| current.clone()),
         _ => current.clone(),
     }
 }
@@ -2568,7 +2569,12 @@ fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> O
         .get("number")
         .filter(|value| value.is_number())
         .cloned()
-        .or_else(|| object.get("value").filter(|value| value.is_number()).cloned())
+        .or_else(|| {
+            object
+                .get("value")
+                .filter(|value| value.is_number())
+                .cloned()
+        })
         .or_else(|| {
             nested_comparison_value_field(object, "number")
                 .filter(|value| value.is_number())
@@ -2607,29 +2613,78 @@ fn extract_error_comparison_code(object: &serde_json::Map<String, Value>) -> Opt
     object
         .get("code")
         .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+        .map(normalize_error_code_alias)
         .or_else(|| {
             object
                 .get("value")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
+                .map(normalize_error_code_alias)
         })
         .or_else(|| {
             nested_comparison_value_field(object, "code")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
+                .map(normalize_error_code_alias)
         })
         .or_else(|| {
             object
                 .get("worksheet_error_code")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
+                .map(normalize_error_code_alias)
         })
         .or_else(|| {
             nested_comparison_value_field(object, "worksheet_error_code")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
+                .map(normalize_error_code_alias)
         })
+}
+
+fn normalize_array_comparison_value(object: &serde_json::Map<String, Value>) -> Option<Value> {
+    let cells = object
+        .get("cells")
+        .and_then(Value::as_array)
+        .or_else(|| nested_comparison_value_field(object, "cells").and_then(Value::as_array))?;
+
+    let normalized_cells = cells
+        .iter()
+        .map(normalize_comparison_value)
+        .collect::<Vec<_>>();
+    let mut normalized = serde_json::Map::new();
+    normalized.insert("kind".to_string(), Value::String("array".to_string()));
+    if let Some(shape) = object
+        .get("shape")
+        .cloned()
+        .or_else(|| nested_comparison_value_field(object, "shape").cloned())
+    {
+        normalized.insert("shape".to_string(), shape);
+    }
+    normalized.insert("cells".to_string(), Value::Array(normalized_cells));
+    Some(Value::Object(normalized))
+}
+
+fn normalize_error_code_alias(value: &str) -> String {
+    let compact = value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+
+    match compact.as_str() {
+        "NULL" => "Null".to_string(),
+        "DIV0" => "Div0".to_string(),
+        "VALUE" => "Value".to_string(),
+        "REF" => "Ref".to_string(),
+        "NAME" => "Name".to_string(),
+        "NUM" => "Num".to_string(),
+        "NA" => "NA".to_string(),
+        "BUSY" => "Busy".to_string(),
+        "GETTINGDATA" => "GettingData".to_string(),
+        "SPILL" => "Spill".to_string(),
+        "CALC" => "Calc".to_string(),
+        "FIELD" => "Field".to_string(),
+        "BLOCKED" => "Blocked".to_string(),
+        "CONNECT" => "Connect".to_string(),
+        _ => value.to_string(),
+    }
 }
 
 fn decode_utf16_code_units_json(value: &Value) -> Option<String> {
@@ -4124,6 +4179,70 @@ mod tests {
             json!({
                 "kind": "error",
                 "code": "#DIV/0!"
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_comparison_value_canonicalizes_error_code_case_aliases() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "error",
+                "code": "NA"
+            })),
+            json!({
+                "kind": "error",
+                "code": "NA"
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "error",
+                "worksheet_error_code": "na"
+            })),
+            json!({
+                "kind": "error",
+                "code": "NA"
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_comparison_value_normalizes_nested_array_text_and_error_cells() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "array",
+                "shape": {
+                    "rows": 1,
+                    "cols": 2
+                },
+                "cells": [
+                    {
+                        "kind": "text",
+                        "utf16_code_units": [79, 75]
+                    },
+                    {
+                        "kind": "error",
+                        "worksheet_error_code": "na"
+                    }
+                ]
+            })),
+            json!({
+                "kind": "array",
+                "shape": {
+                    "rows": 1,
+                    "cols": 2
+                },
+                "cells": [
+                    {
+                        "kind": "text",
+                        "text": "OK"
+                    },
+                    {
+                        "kind": "error",
+                        "code": "NA"
+                    }
+                ]
             })
         );
     }
