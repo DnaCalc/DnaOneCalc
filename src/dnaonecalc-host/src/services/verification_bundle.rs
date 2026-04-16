@@ -1339,6 +1339,29 @@ struct HostTestLocaleValueParser;
 
 struct HostTestFormatCodeEngine;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationNegativeStyle {
+    Minus,
+    Parentheses,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VerificationFormatPattern {
+    Fixed {
+        decimals: i32,
+        use_grouping: bool,
+    },
+    Currency {
+        decimals: i32,
+        use_grouping: bool,
+        negative_style: VerificationNegativeStyle,
+    },
+    Percent {
+        decimals: i32,
+    },
+    IsoDate,
+}
+
 static HOST_TEST_LOCALE_VALUE_PARSER: HostTestLocaleValueParser = HostTestLocaleValueParser;
 
 static HOST_TEST_FORMAT_CODE_ENGINE: HostTestFormatCodeEngine = HostTestFormatCodeEngine;
@@ -1398,20 +1421,48 @@ impl FormatCodeEngine for HostTestFormatCodeEngine {
         value: f64,
         code: &str,
     ) -> Result<ExcelText, FormatFailure> {
-        let rendered = match code.trim() {
-            "0" => render_fixed_common(profile, value, 0, false, ""),
-            "0.00" => render_fixed_common(profile, value, 2, false, ""),
-            "0%" => {
-                let body = render_fixed_common(profile, value * 100.0, 0, false, "");
+        let rendered = match classify_verification_format_code(profile, code, value) {
+            Some(VerificationFormatPattern::Fixed {
+                decimals,
+                use_grouping,
+            }) => render_fixed_with_style(
+                profile,
+                value,
+                decimals,
+                use_grouping,
+                "",
+                VerificationNegativeStyle::Minus,
+            ),
+            Some(VerificationFormatPattern::Currency {
+                decimals,
+                use_grouping,
+                negative_style,
+            }) => render_fixed_with_style(
+                profile,
+                value,
+                decimals,
+                use_grouping,
+                profile.currency_symbol,
+                negative_style,
+            ),
+            Some(VerificationFormatPattern::Percent { decimals }) => {
+                let body = render_fixed_with_style(
+                    profile,
+                    value * 100.0,
+                    decimals,
+                    false,
+                    "",
+                    VerificationNegativeStyle::Minus,
+                );
                 format!("{body}%")
             }
-            "yyyy-mm-dd" => {
+            Some(VerificationFormatPattern::IsoDate) => {
                 let Some((year, month, day)) = ymd_from_excel_serial(date_system, value) else {
                     return Err(FormatFailure::InvalidDateSerial);
                 };
                 format!("{year:04}-{month:02}-{day:02}")
             }
-            other => return Err(FormatFailure::UnsupportedCode(other.to_string())),
+            None => return Err(FormatFailure::UnsupportedCode(code.to_string())),
         };
         Ok(excel_text_from_string(rendered))
     }
@@ -1543,6 +1594,155 @@ fn render_fixed_common(
         }
     }
     rendered
+}
+
+fn render_fixed_with_style(
+    profile: &oxfunc_core::locale_format::FormatProfile,
+    value: f64,
+    decimals: i32,
+    use_grouping: bool,
+    prefix: &str,
+    negative_style: VerificationNegativeStyle,
+) -> String {
+    let magnitude = render_fixed_common(profile, value.abs(), decimals, use_grouping, prefix);
+    if value.is_sign_negative() && value != 0.0 {
+        match negative_style {
+            VerificationNegativeStyle::Minus => format!("-{magnitude}"),
+            VerificationNegativeStyle::Parentheses => format!("({magnitude})"),
+        }
+    } else {
+        magnitude
+    }
+}
+
+fn classify_verification_format_code(
+    profile: &oxfunc_core::locale_format::FormatProfile,
+    code: &str,
+    value: f64,
+) -> Option<VerificationFormatPattern> {
+    let section = select_format_section(code, value);
+    let negative_style = if section.contains('(') && section.contains(')') {
+        VerificationNegativeStyle::Parentheses
+    } else {
+        VerificationNegativeStyle::Minus
+    };
+    let canonical = canonicalize_verification_format_section(section);
+    let structural = canonical
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+
+    match structural {
+        "0" => {
+            return Some(VerificationFormatPattern::Fixed {
+                decimals: 0,
+                use_grouping: false,
+            });
+        }
+        "0.00" => {
+            return Some(VerificationFormatPattern::Fixed {
+                decimals: 2,
+                use_grouping: false,
+            });
+        }
+        "0%" => return Some(VerificationFormatPattern::Percent { decimals: 0 }),
+        "0.00%" => return Some(VerificationFormatPattern::Percent { decimals: 2 }),
+        "yyyy-mm-dd" => return Some(VerificationFormatPattern::IsoDate),
+        _ => {}
+    }
+
+    if let Some(rest) = structural.strip_prefix(profile.currency_symbol) {
+        let (use_grouping, decimals) = parse_numeric_placeholder_pattern(rest)?;
+        return Some(VerificationFormatPattern::Currency {
+            decimals,
+            use_grouping,
+            negative_style,
+        });
+    }
+
+    let (use_grouping, decimals) = parse_numeric_placeholder_pattern(structural)?;
+    Some(VerificationFormatPattern::Fixed {
+        decimals,
+        use_grouping,
+    })
+}
+
+fn select_format_section(code: &str, value: f64) -> &str {
+    let mut sections = code.split(';');
+    let first = sections.next().unwrap_or(code);
+    let second = sections.next();
+    if value.is_sign_negative() && value != 0.0 {
+        second.unwrap_or(first)
+    } else {
+        first
+    }
+}
+
+fn canonicalize_verification_format_section(section: &str) -> String {
+    let mut out = String::new();
+    let mut chars = section.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                for inner in chars.by_ref() {
+                    if inner == '"' {
+                        break;
+                    }
+                }
+            }
+            '\\' => {
+                if let Some(escaped) = chars.next() {
+                    out.push(escaped);
+                }
+            }
+            '_' | '*' => {
+                let _ = chars.next();
+            }
+            '[' => {
+                let mut token = String::new();
+                for inner in chars.by_ref() {
+                    if inner == ']' {
+                        break;
+                    }
+                    token.push(inner);
+                }
+                if let Some(symbol) = extract_currency_symbol_token(&token) {
+                    out.push_str(symbol);
+                }
+            }
+            c if c.is_whitespace() => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn extract_currency_symbol_token(token: &str) -> Option<&str> {
+    let currency = token.strip_prefix('$')?;
+    let symbol = currency.split('-').next().unwrap_or(currency);
+    (!symbol.is_empty()).then_some(symbol)
+}
+
+fn parse_numeric_placeholder_pattern(pattern: &str) -> Option<(bool, i32)> {
+    if pattern.is_empty()
+        || !pattern
+            .chars()
+            .all(|ch| matches!(ch, '#' | '0' | ',' | '.'))
+    {
+        return None;
+    }
+    let (int_part, frac_part) = match pattern.split_once('.') {
+        Some((left, right)) => (left, Some(right)),
+        None => (pattern, None),
+    };
+    if !int_part.chars().any(|ch| ch == '0') {
+        return None;
+    }
+    let decimals = frac_part
+        .map(|right| right.chars().filter(|ch| matches!(ch, '0' | '#')).count() as i32)
+        .unwrap_or(0);
+    Some((int_part.contains(','), decimals))
 }
 
 fn grouped_integer_string(int_part: &str, sep: &str) -> String {
@@ -2347,17 +2547,50 @@ fn normalize_comparison_value(value: &Value) -> Value {
         "text" => object
             .get("text")
             .and_then(Value::as_str)
-            .or_else(|| object.get("value").and_then(Value::as_str))
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                object
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .or_else(|| {
+                object
+                    .get("utf16_code_units")
+                    .and_then(decode_utf16_code_units_json)
+            })
+            .or_else(|| {
+                object
+                    .get("value")
+                    .and_then(|value| value.get("utf16_code_units"))
+                    .and_then(decode_utf16_code_units_json)
+            })
             .map(|text| json!({ "kind": "text", "text": text }))
             .unwrap_or_else(|| current.clone()),
         "error" => object
             .get("code")
             .and_then(Value::as_str)
             .or_else(|| object.get("value").and_then(Value::as_str))
+            .or_else(|| object.get("worksheet_error_code").and_then(Value::as_str))
+            .or_else(|| {
+                object
+                    .get("value")
+                    .and_then(|value| value.get("worksheet_error_code"))
+                    .and_then(Value::as_str)
+            })
             .map(|code| json!({ "kind": "error", "code": code }))
             .unwrap_or_else(|| current.clone()),
         _ => current.clone(),
     }
+}
+
+fn decode_utf16_code_units_json(value: &Value) -> Option<String> {
+    let code_units = value.as_array()?;
+    let decoded = code_units
+        .iter()
+        .map(|unit| unit.as_u64().and_then(|value| u16::try_from(value).ok()))
+        .collect::<Option<Vec<_>>>()?;
+    Some(String::from_utf16_lossy(&decoded))
 }
 
 fn replay_projection_gap_is_requested(
@@ -3728,6 +3961,148 @@ mod tests {
     }
 
     #[test]
+    fn normalize_comparison_value_decodes_aligned_text_utf16_payloads() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "text",
+                "utf16_code_units": [72, 101, 108, 108, 111]
+            })),
+            json!({
+                "kind": "text",
+                "text": "Hello"
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "boundary": "published_formula_result",
+                "value": {
+                    "kind": "text",
+                    "value": {
+                        "utf16_code_units": [78, 47, 65]
+                    }
+                },
+                "wire_schema": "oxfunc_value_types.aligned_json.v1"
+            })),
+            json!({
+                "kind": "text",
+                "text": "N/A"
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_comparison_value_coalesces_aligned_error_aliases() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "error",
+                "worksheet_error_code": "#N/A"
+            })),
+            json!({
+                "kind": "error",
+                "code": "#N/A"
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "boundary": "published_formula_result",
+                "value": {
+                    "kind": "error",
+                    "value": {
+                        "worksheet_error_code": "#DIV/0!"
+                    }
+                },
+                "wire_schema": "oxfunc_value_types.aligned_json.v1"
+            })),
+            json!({
+                "kind": "error",
+                "code": "#DIV/0!"
+            })
+        );
+    }
+
+    #[test]
+    fn summarize_excel_capture_normalizes_aligned_text_and_error_payloads() {
+        let path = std::env::temp_dir().join(format!(
+            "dnaonecalc-capture-aligned-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+
+        write_json_file(
+            &path,
+            &json!({
+                "surfaces": [
+                    {
+                        "surface": {
+                            "surface_id": "sheet1_a1_value",
+                            "surface_kind": "cell_value",
+                            "locator": "Input!A1",
+                            "required": true
+                        },
+                        "status": "direct",
+                        "comparison_value": {
+                            "kind": "text",
+                            "utf16_code_units": [79, 75]
+                        },
+                        "value_repr": "OK",
+                        "capture_loss": "none",
+                        "uncertainty": "none"
+                    }
+                ]
+            }),
+        )
+        .expect("capture json");
+
+        let summary = summarize_excel_capture(path.clone()).expect("capture summary");
+        assert_eq!(
+            summary.comparison_value,
+            Some(json!({
+                "kind": "text",
+                "text": "OK"
+            }))
+        );
+
+        write_json_file(
+            &path,
+            &json!({
+                "surfaces": [
+                    {
+                        "surface": {
+                            "surface_id": "sheet1_a1_value",
+                            "surface_kind": "cell_value",
+                            "locator": "Input!A1",
+                            "required": true
+                        },
+                        "status": "direct",
+                        "comparison_value": {
+                            "kind": "error",
+                            "worksheet_error_code": "#N/A"
+                        },
+                        "value_repr": "#N/A",
+                        "capture_loss": "none",
+                        "uncertainty": "none"
+                    }
+                ]
+            }),
+        )
+        .expect("error capture json");
+
+        let error_summary = summarize_excel_capture(path.clone()).expect("error capture summary");
+        assert_eq!(
+            error_summary.comparison_value,
+            Some(json!({
+                "kind": "error",
+                "code": "#N/A"
+            }))
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn default_programmatic_lane_filters_stale_visible_value_projection_gap() {
         let requested_views =
             default_programmatic_formula_observation_scope().oxreplay_required_views;
@@ -3819,6 +4194,48 @@ mod tests {
         };
 
         assert_eq!(preferred_excel_display_repr(&summary), Some("$6.00"));
+    }
+
+    #[test]
+    fn host_test_format_engine_supports_grouped_currency_codes() {
+        let rendered = HOST_TEST_FORMAT_CODE_ENGINE
+            .render_with_code(
+                &format_profile(LocaleProfileId::EnUs),
+                WorkbookDateSystem::System1900,
+                1234.5,
+                "$#,##0.00",
+            )
+            .expect("currency render");
+
+        assert_eq!(rendered.to_string_lossy(), "$1,234.50");
+    }
+
+    #[test]
+    fn host_test_format_engine_supports_grouped_fixed_codes() {
+        let rendered = HOST_TEST_FORMAT_CODE_ENGINE
+            .render_with_code(
+                &format_profile(LocaleProfileId::EnUs),
+                WorkbookDateSystem::System1900,
+                1234.5,
+                "#,##0.00",
+            )
+            .expect("fixed render");
+
+        assert_eq!(rendered.to_string_lossy(), "1,234.50");
+    }
+
+    #[test]
+    fn host_test_format_engine_uses_negative_section_for_parenthesized_currency() {
+        let rendered = HOST_TEST_FORMAT_CODE_ENGINE
+            .render_with_code(
+                &format_profile(LocaleProfileId::EnUs),
+                WorkbookDateSystem::System1900,
+                -1234.5,
+                "$#,##0.00;($#,##0.00)",
+            )
+            .expect("negative currency render");
+
+        assert_eq!(rendered.to_string_lossy(), "($1,234.50)");
     }
 
     #[test]
