@@ -1236,6 +1236,8 @@ fn run_oxfml_case(
     let locale_ctx = verification_locale_context(case, spreadsheet_xml_extraction);
     let typed_query_bundle =
         TypedContextQueryBundle::new(None, None, Some(&locale_ctx), None, None);
+    let include_effective_display =
+        programmatic_display_comparison_enabled(case, spreadsheet_xml_extraction);
     let runtime_request = if let Some(context) =
         effective_verification_publication_context(case, spreadsheet_xml_extraction)
     {
@@ -1289,16 +1291,17 @@ fn run_oxfml_case(
                         sanitize_case_id(&case.case_id)
                     )),
             );
-            let projection_json = serialize_replay_projection(&projection);
+            let projection_json =
+                serialize_replay_projection(&projection, include_effective_display);
             let summary = OxfmlVerificationSummary {
                 evaluation_summary,
                 comparison_value: projection_comparison_value(&projection_json, "comparison_value"),
-                effective_display_summary: Some(
+                effective_display_summary: include_effective_display.then(|| {
                     runtime_result
                         .verification_publication_surface
                         .effective_display_text
-                        .clone(),
-                ),
+                        .clone()
+                }),
                 blocked_reason: bridge_blocked_reason.or(display_context_blocked_reason),
                 parse_status,
                 green_tree_key,
@@ -1378,11 +1381,12 @@ fn parse_programmatic_format_profile_id(raw: Option<&str>) -> LocaleProfileId {
         .map(|value| value.to_ascii_lowercase())
         .as_deref()
     {
+        Some("enus") | Some("en-us") | Some("en_us") => LocaleProfileId::EnUs,
         Some("currentexcelhost")
         | Some("current_excel_host")
         | Some("excel_host")
         | Some("windows_excel_default") => LocaleProfileId::CurrentExcelHost,
-        _ => LocaleProfileId::EnUs,
+        _ => LocaleProfileId::CurrentExcelHost,
     }
 }
 
@@ -2367,6 +2371,7 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
 
 fn serialize_replay_projection(
     projection: &oxfml_core::consumer::replay::ReplayProjectionResult,
+    include_effective_display: bool,
 ) -> Value {
     json!({
         "source_artifact_family": projection.source_artifact_family,
@@ -2397,17 +2402,25 @@ fn serialize_replay_projection(
         "comparison_views": serialize_comparison_views(
             projection.comparison_views.as_deref().unwrap_or(&[]),
             projection.verification_publication_surface.as_ref(),
+            include_effective_display,
         ),
-        "verification_publication_surface": projection.verification_publication_surface.as_ref().map(serialize_verification_publication_surface),
+        "verification_publication_surface": projection
+            .verification_publication_surface
+            .as_ref()
+            .map(|surface| {
+                serialize_verification_publication_surface(surface, include_effective_display)
+            }),
     })
 }
 
 fn serialize_comparison_views(
     comparison_views: &[oxfml_core::consumer::replay::ReplayComparisonView],
     verification_publication_surface: Option<&VerificationPublicationSurface>,
+    include_effective_display: bool,
 ) -> Value {
     let mut serialized = comparison_views
         .iter()
+        .filter(|view| include_effective_display || view.view_family != "effective_display_text")
         .map(|view| {
             let value = if view.view_family == "comparison_value" {
                 normalize_comparison_value(&view.value)
@@ -2424,7 +2437,7 @@ fn serialize_comparison_views(
     let has_effective_display_text = serialized.iter().any(|view| {
         view.get("view_family").and_then(Value::as_str) == Some("effective_display_text")
     });
-    if !has_effective_display_text {
+    if include_effective_display && !has_effective_display_text {
         if let Some(effective_display_text) = verification_publication_surface
             .map(|surface| surface.effective_display_text.clone())
             .filter(|value| !value.is_empty())
@@ -2439,18 +2452,44 @@ fn serialize_comparison_views(
     Value::Array(serialized)
 }
 
-fn serialize_verification_publication_surface(surface: &VerificationPublicationSurface) -> Value {
+fn serialize_verification_publication_surface(
+    surface: &VerificationPublicationSurface,
+    include_effective_display: bool,
+) -> Value {
     json!({
         "entered_cell_text": surface.entered_cell_text,
         "published_value": {
             "worksheet_value_class": format!("{:?}", surface.published_value_class),
             "payload": format!("{:?}", surface.published_value),
         },
-        "effective_display_text": surface.effective_display_text,
-        "format_profile": surface.format_profile,
-        "locale_format_context": surface.locale_format_context.as_ref().map(serialize_locale_format_context_surface),
-        "date1904": surface.date1904,
-        "number_format_code": surface.number_format_code,
+        "effective_display_text": if include_effective_display {
+            Some(surface.effective_display_text.clone())
+        } else {
+            None
+        },
+        "format_profile": if include_effective_display {
+            surface.format_profile.clone()
+        } else {
+            None
+        },
+        "locale_format_context": if include_effective_display {
+            surface
+                .locale_format_context
+                .as_ref()
+                .map(serialize_locale_format_context_surface)
+        } else {
+            None
+        },
+        "date1904": if include_effective_display {
+            Some(surface.date1904)
+        } else {
+            None
+        },
+        "number_format_code": if include_effective_display {
+            surface.number_format_code.clone()
+        } else {
+            None
+        },
         "style_id": surface.style_id,
         "style_hierarchy": surface.style_hierarchy,
         "format_dependency_facts": surface.format_dependency_facts.iter().map(|value| format!("{value:?}")).collect::<Vec<_>>(),
@@ -3528,7 +3567,7 @@ mod tests {
             if self.assert_compare_inputs_ready {
                 let left = read_json_file(left_path).expect("left projection json");
                 let right = read_json_file(right_path).expect("right replay json");
-                assert!(projection_comparison_value(&left, "effective_display_text").is_some());
+                assert!(projection_comparison_value(&left, "effective_display_text").is_none());
                 assert_eq!(
                     projection_comparison_value(&right, "comparison_value"),
                     Some(json!({
@@ -4875,7 +4914,15 @@ mod tests {
         assert!(projection_comparison_value(&projection, "comparison_value").is_some());
         assert_eq!(
             projection_comparison_value(&projection, "effective_display_text"),
-            Some(json!("6"))
+            None
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["effective_display_text"],
+            Value::Null
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["format_profile"],
+            Value::Null
         );
 
         let _ = fs::remove_dir_all(temp_root);

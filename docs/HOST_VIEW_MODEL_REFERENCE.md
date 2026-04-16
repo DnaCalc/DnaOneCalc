@@ -921,7 +921,7 @@ Legend: 🟢 LIVE = end-to-end through a real bridge or pure logic with no facad
 | `value_match` / `display_match` / `replay_equivalent` verdict triple | 🟢 | — | Carried, rendered in rail badges and Workbench summary. |
 | `OxReplayMismatchRecord` / `OxReplayExplainRecord` | 🟢 | — | Full data; Inspect renders them as comparison records. |
 | `oxfml_comparison_value` / `excel_comparison_value` (raw JSON) | 🟡 | `SEAM-ONECALC-EXTENDED-VALUE-ROUTING` | Carried as `serde_json::Value`; not parsed into typed values. |
-| `oxfml_effective_display_summary` / `excel_effective_display_text` | 🟢 | — | Strings from upstream; rendered. |
+| `oxfml_effective_display_summary` / `excel_effective_display_text` | 🟢 | — | Strings from upstream; rendered. Context-free programmatic verification intentionally leaves the OxFml side empty and marks the display axis blocked until explicit formatting context is supplied. |
 | `display_comparison_summary` helper | 🟢 | — | `verification_bundle::display_comparison_summary`. |
 | `replay_projection_coverage_gap_summaries` | 🟢 | — | Aggregates gap reports into reviewable strings. |
 | `VerificationObservationGapReport` | 🟢 | — | Full shape; rendered as upstream-gap summaries in Inspect / Workbench. |
