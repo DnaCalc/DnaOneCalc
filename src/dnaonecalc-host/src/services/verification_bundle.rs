@@ -2532,56 +2532,104 @@ fn normalize_comparison_value(value: &Value) -> Value {
     };
 
     match kind {
-        "logical" => object
-            .get("logical")
-            .and_then(Value::as_bool)
-            .or_else(|| object.get("value").and_then(Value::as_bool))
+        "logical" => extract_logical_comparison_value(object)
             .map(|logical| json!({ "kind": "logical", "logical": logical }))
             .unwrap_or_else(|| current.clone()),
-        "number" => object
-            .get("number")
-            .cloned()
-            .or_else(|| object.get("value").cloned())
+        "number" => extract_number_comparison_value(object)
             .map(|number| json!({ "kind": "number", "number": number }))
             .unwrap_or_else(|| current.clone()),
-        "text" => object
-            .get("text")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or_else(|| {
-                object
-                    .get("value")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-            })
-            .or_else(|| {
-                object
-                    .get("utf16_code_units")
-                    .and_then(decode_utf16_code_units_json)
-            })
-            .or_else(|| {
-                object
-                    .get("value")
-                    .and_then(|value| value.get("utf16_code_units"))
-                    .and_then(decode_utf16_code_units_json)
-            })
+        "text" => extract_text_comparison_value(object)
             .map(|text| json!({ "kind": "text", "text": text }))
             .unwrap_or_else(|| current.clone()),
-        "error" => object
-            .get("code")
-            .and_then(Value::as_str)
-            .or_else(|| object.get("value").and_then(Value::as_str))
-            .or_else(|| object.get("worksheet_error_code").and_then(Value::as_str))
-            .or_else(|| {
-                object
-                    .get("value")
-                    .and_then(|value| value.get("worksheet_error_code"))
-                    .and_then(Value::as_str)
-            })
+        "error" => extract_error_comparison_code(object)
             .map(|code| json!({ "kind": "error", "code": code }))
             .unwrap_or_else(|| current.clone()),
         _ => current.clone(),
     }
+}
+
+fn nested_comparison_value_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Option<&'a Value> {
+    object.get("value").and_then(Value::as_object)?.get(field)
+}
+
+fn extract_logical_comparison_value(object: &serde_json::Map<String, Value>) -> Option<bool> {
+    object
+        .get("logical")
+        .and_then(Value::as_bool)
+        .or_else(|| object.get("value").and_then(Value::as_bool))
+        .or_else(|| nested_comparison_value_field(object, "logical").and_then(Value::as_bool))
+}
+
+fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> Option<Value> {
+    object
+        .get("number")
+        .filter(|value| value.is_number())
+        .cloned()
+        .or_else(|| object.get("value").filter(|value| value.is_number()).cloned())
+        .or_else(|| {
+            nested_comparison_value_field(object, "number")
+                .filter(|value| value.is_number())
+                .cloned()
+        })
+}
+
+fn extract_text_comparison_value(object: &serde_json::Map<String, Value>) -> Option<String> {
+    object
+        .get("text")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            object
+                .get("value")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            nested_comparison_value_field(object, "text")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            object
+                .get("utf16_code_units")
+                .and_then(decode_utf16_code_units_json)
+        })
+        .or_else(|| {
+            nested_comparison_value_field(object, "utf16_code_units")
+                .and_then(decode_utf16_code_units_json)
+        })
+}
+
+fn extract_error_comparison_code(object: &serde_json::Map<String, Value>) -> Option<String> {
+    object
+        .get("code")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            object
+                .get("value")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            nested_comparison_value_field(object, "code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            object
+                .get("worksheet_error_code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            nested_comparison_value_field(object, "worksheet_error_code")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn decode_utf16_code_units_json(value: &Value) -> Option<String> {
@@ -3961,6 +4009,38 @@ mod tests {
     }
 
     #[test]
+    fn normalize_comparison_value_coalesces_nested_number_and_logical_aliases() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "number",
+                "value": {
+                    "number": 42.5
+                }
+            })),
+            json!({
+                "kind": "number",
+                "number": 42.5
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "boundary": "published_formula_result",
+                "value": {
+                    "kind": "logical",
+                    "value": {
+                        "logical": false
+                    }
+                },
+                "wire_schema": "oxfunc_value_types.aligned_json.v1"
+            })),
+            json!({
+                "kind": "logical",
+                "logical": false
+            })
+        );
+    }
+
+    #[test]
     fn normalize_comparison_value_decodes_aligned_text_utf16_payloads() {
         assert_eq!(
             normalize_comparison_value(&json!({
@@ -3986,6 +4066,34 @@ mod tests {
             json!({
                 "kind": "text",
                 "text": "N/A"
+            })
+        );
+    }
+
+    #[test]
+    fn normalize_comparison_value_coalesces_nested_text_and_error_aliases() {
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "text",
+                "value": {
+                    "text": "Hello"
+                }
+            })),
+            json!({
+                "kind": "text",
+                "text": "Hello"
+            })
+        );
+        assert_eq!(
+            normalize_comparison_value(&json!({
+                "kind": "error",
+                "value": {
+                    "code": "#VALUE!"
+                }
+            })),
+            json!({
+                "kind": "error",
+                "code": "#VALUE!"
             })
         );
     }
