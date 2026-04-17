@@ -2408,72 +2408,17 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
 }
 
 fn comparison_values_match(left: &Value, right: &Value) -> bool {
-    if left == right {
-        return true;
-    }
-
-    match (left, right) {
-        (Value::Number(left), Value::Number(right)) => {
-            numeric_values_nearly_equal(left.as_f64(), right.as_f64())
-        }
-        (Value::Array(left), Value::Array(right)) => {
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right.iter())
-                    .all(|(left, right)| comparison_values_match(left, right))
-        }
-        (Value::Object(left), Value::Object(right)) => {
-            left.len() == right.len()
-                && left.iter().all(|(key, left_value)| {
-                    right
-                        .get(key)
-                        .is_some_and(|right_value| comparison_values_match(left_value, right_value))
-                })
-        }
-        _ => false,
-    }
+    left == right
 }
 
 fn display_strings_match(
-    case: &ProgrammaticFormulaCase,
-    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
-    value_match: Option<bool>,
+    _case: &ProgrammaticFormulaCase,
+    _spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    _value_match: Option<bool>,
     left: &str,
     right: &str,
 ) -> bool {
-    if left == right {
-        return true;
-    }
-    if value_match != Some(true) {
-        return false;
-    }
-
-    let locale_ctx = verification_locale_context(case, spreadsheet_xml_extraction);
-    let left_numeric = HOST_TEST_LOCALE_VALUE_PARSER
-        .parse_value_text(&locale_ctx.profile, locale_ctx.date_system, left)
-        .ok();
-    let right_numeric = HOST_TEST_LOCALE_VALUE_PARSER
-        .parse_value_text(&locale_ctx.profile, locale_ctx.date_system, right)
-        .ok();
-
-    numeric_values_nearly_equal(left_numeric, right_numeric)
-}
-
-fn numeric_values_nearly_equal(left: Option<f64>, right: Option<f64>) -> bool {
-    let (Some(left), Some(right)) = (left, right) else {
-        return false;
-    };
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-
-    let scale = left.abs().max(right.abs()).max(1.0);
-    let tolerance = 16.0 * f64::EPSILON * scale;
-    (left - right).abs() <= tolerance
+    left == right
 }
 
 fn serialize_replay_projection(
@@ -4968,8 +4913,8 @@ mod tests {
     }
 
     #[test]
-    fn comparison_values_match_tolerates_last_bit_numeric_delta() {
-        assert!(comparison_values_match(
+    fn comparison_values_match_requires_exact_numeric_identity() {
+        assert!(!comparison_values_match(
             &json!({
                 "kind": "number",
                 "number": 14.206699082890463_f64
@@ -4982,7 +4927,7 @@ mod tests {
     }
 
     #[test]
-    fn display_strings_match_treats_numeric_equivalence_as_equal_after_value_match() {
+    fn display_strings_match_requires_exact_string_identity() {
         let case = ProgrammaticFormulaCase {
             case_id: "case-display-equivalent".to_string(),
             entered_cell_text: "=1".to_string(),
@@ -4990,7 +4935,7 @@ mod tests {
             formatting_context: Some(default_programmatic_corpus_formatting_context()),
         };
 
-        assert!(display_strings_match(
+        assert!(!display_strings_match(
             &case,
             None,
             Some(true),
