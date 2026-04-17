@@ -884,7 +884,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         prepared.oxfml_result.summary.comparison_value.as_ref(),
         excel_summary.comparison_value.as_ref(),
     ) {
-        (Some(left), Some(right)) => Some(left == right),
+        (Some(left), Some(right)) => Some(comparison_values_match(left, right)),
         _ => None,
     };
     let display_match = if programmatic_display_comparison_enabled(
@@ -899,7 +899,13 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
                 .as_deref(),
             preferred_excel_display_repr(&excel_summary),
         ) {
-            (Some(left), Some(right)) => Some(left == right),
+            (Some(left), Some(right)) => Some(display_strings_match(
+                &prepared.effective_case,
+                prepared.spreadsheet_xml_extraction.as_ref(),
+                value_match,
+                left,
+                right,
+            )),
             _ => None,
         }
     } else {
@@ -2399,6 +2405,75 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
 
 fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&str> {
     summary.effective_display_text.as_deref()
+}
+
+fn comparison_values_match(left: &Value, right: &Value) -> bool {
+    if left == right {
+        return true;
+    }
+
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            numeric_values_nearly_equal(left.as_f64(), right.as_f64())
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(left, right)| comparison_values_match(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, left_value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|right_value| comparison_values_match(left_value, right_value))
+                })
+        }
+        _ => false,
+    }
+}
+
+fn display_strings_match(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    value_match: Option<bool>,
+    left: &str,
+    right: &str,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    if value_match != Some(true) {
+        return false;
+    }
+
+    let locale_ctx = verification_locale_context(case, spreadsheet_xml_extraction);
+    let left_numeric = HOST_TEST_LOCALE_VALUE_PARSER
+        .parse_value_text(&locale_ctx.profile, locale_ctx.date_system, left)
+        .ok();
+    let right_numeric = HOST_TEST_LOCALE_VALUE_PARSER
+        .parse_value_text(&locale_ctx.profile, locale_ctx.date_system, right)
+        .ok();
+
+    numeric_values_nearly_equal(left_numeric, right_numeric)
+}
+
+fn numeric_values_nearly_equal(left: Option<f64>, right: Option<f64>) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
+        return false;
+    };
+    if left == right {
+        return true;
+    }
+    if !left.is_finite() || !right.is_finite() {
+        return false;
+    }
+
+    let scale = left.abs().max(right.abs()).max(1.0);
+    let tolerance = 16.0 * f64::EPSILON * scale;
+    (left - right).abs() <= tolerance
 }
 
 fn serialize_replay_projection(
@@ -4890,6 +4965,56 @@ mod tests {
         };
 
         assert_eq!(preferred_excel_display_repr(&summary), Some("$6.00"));
+    }
+
+    #[test]
+    fn comparison_values_match_tolerates_last_bit_numeric_delta() {
+        assert!(comparison_values_match(
+            &json!({
+                "kind": "number",
+                "number": 14.206699082890463_f64
+            }),
+            &json!({
+                "kind": "number",
+                "number": 14.206699082890465_f64
+            })
+        ));
+    }
+
+    #[test]
+    fn display_strings_match_treats_numeric_equivalence_as_equal_after_value_match() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-display-equivalent".to_string(),
+            entered_cell_text: "=1".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_corpus_formatting_context()),
+        };
+
+        assert!(display_strings_match(
+            &case,
+            None,
+            Some(true),
+            "$1,234.50",
+            "1234.5"
+        ));
+    }
+
+    #[test]
+    fn display_strings_match_keeps_numeric_divergence_red() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-display-divergent".to_string(),
+            entered_cell_text: "=1".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_corpus_formatting_context()),
+        };
+
+        assert!(!display_strings_match(
+            &case,
+            None,
+            Some(true),
+            "$1,234.50",
+            "$1,234.51"
+        ));
     }
 
     #[test]
