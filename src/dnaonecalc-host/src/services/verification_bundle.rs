@@ -86,6 +86,12 @@ pub struct ExcelObservationSummary {
     pub effective_display_text: Option<String>,
     pub observed_formula_repr: Option<String>,
     pub capture_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_locale_pinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_locale_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_locale_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -748,6 +754,11 @@ fn prepare_verification_case(
         write_json_file(case_dir.join("upstream-gap-report.json"), gap_report)?;
     }
 
+    let excel_render_context = build_excel_render_context_note(
+        &effective_case,
+        spreadsheet_xml_extraction.as_ref(),
+    );
+
     write_json_file(
         case_dir.join("case-input.json"),
         &json!({
@@ -757,6 +768,7 @@ fn prepare_verification_case(
             "host_profile": host_profile,
             "capabilities": capabilities,
             "spreadsheet_xml_extraction": spreadsheet_xml_extraction,
+            "excel_render_context": excel_render_context,
         }),
     )?;
 
@@ -865,7 +877,12 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             .join("normalized-replay.compare-ready.json"),
     )?;
 
-    let excel_summary = summarize_excel_capture(capture_path)?;
+    let mut excel_summary = summarize_excel_capture(capture_path)?;
+    annotate_excel_observation_render_context(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        &mut excel_summary,
+    );
     write_json_file(
         prepared.case_dir.join("excel-observation-summary.json"),
         &excel_summary,
@@ -1983,7 +2000,8 @@ fn build_oxxlplay_scenario_json(
         "observable_surfaces": build_oxxlplay_observable_surfaces(&locator, include_effective_display),
         "requested_observation_scope": requested_observation_scope,
         "source_cell_locator": spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
-        "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone())
+        "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone()),
+        "excel_render_context": build_excel_render_context_note(case, spreadsheet_xml_extraction)
     });
     if spreadsheet_xml_extraction.is_none() {
         scenario["entered_cell_text"] = Value::String(case.entered_cell_text.clone());
@@ -2062,6 +2080,50 @@ fn programmatic_effective_display_surface_requested(
 ) -> bool {
     spreadsheet_xml_extraction.is_none()
         && programmatic_display_contract_is_explicit(case, spreadsheet_xml_extraction)
+}
+
+fn build_excel_render_context_note(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> Value {
+    if spreadsheet_xml_extraction.is_some() {
+        json!({
+            "render_locale_pinned": false,
+            "render_locale_source": "observation_machine_default",
+            "render_locale_recorded": false,
+            "note": "SpreadsheetML-backed verification preserves workbook formatting/style evidence but DnaOneCalc does not record any separate Excel-side render-locale pin for the observation host."
+        })
+    } else {
+        json!({
+            "render_locale_pinned": false,
+            "render_locale_source": "observation_machine_default",
+            "render_locale_recorded": false,
+            "requested_format_profile_id": case
+                .formatting_context
+                .as_ref()
+                .and_then(|context| context.format_profile_id.clone()),
+            "note": "Programmatic-formula verification injects locale context for OxFml but the generated workbook/scenario does not carry any Excel-side locale pin or locale-capture field; Excel text rendering reflects the observation machine environment."
+        })
+    }
+}
+
+fn annotate_excel_observation_render_context(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    summary: &mut ExcelObservationSummary,
+) {
+    let context = build_excel_render_context_note(case, spreadsheet_xml_extraction);
+    summary.render_locale_pinned = context
+        .get("render_locale_pinned")
+        .and_then(Value::as_bool);
+    summary.render_locale_source = context
+        .get("render_locale_source")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    summary.render_locale_note = context
+        .get("note")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
 }
 
 fn build_oxxlplay_observable_surfaces(
@@ -2419,6 +2481,9 @@ fn summarize_excel_capture(capture_path: PathBuf) -> Result<ExcelObservationSumm
         effective_display_text,
         observed_formula_repr,
         capture_status,
+        render_locale_pinned: None,
+        render_locale_source: None,
+        render_locale_note: None,
     })
 }
 
@@ -3871,6 +3936,71 @@ mod tests {
     }
 
     #[test]
+    fn verification_batch_records_unpinned_excel_render_context_for_programmatic_cases() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-programmatic-text".to_string(),
+                entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+            }],
+        };
+        let runner = FakeVerificationRunner::default();
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_dir = output_root.join("cases").join("case-programmatic-text");
+        let case_input: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("case-input.json")).expect("case input json"),
+        )
+        .expect("case input parse");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
+
+        assert_eq!(
+            case_input["excel_render_context"]["render_locale_pinned"],
+            json!(false)
+        );
+        assert_eq!(
+            case_input["excel_render_context"]["render_locale_source"],
+            json!("observation_machine_default")
+        );
+        assert_eq!(
+            scenario["excel_render_context"]["render_locale_pinned"],
+            json!(false)
+        );
+        assert_eq!(
+            report.case_reports[0]
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_pinned),
+            Some(false)
+        );
+        assert_eq!(
+            report.case_reports[0]
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_source.as_deref()),
+            Some("observation_machine_default")
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn verification_batch_emits_programmatic_display_scope_when_formatting_context_present() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
@@ -4311,6 +4441,9 @@ mod tests {
                 effective_display_text: Some("$6.00".to_string()),
                 observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
                 capture_status: "captured".to_string(),
+                render_locale_pinned: None,
+                render_locale_source: None,
+                render_locale_note: None,
             },
         );
 
@@ -4987,9 +5120,42 @@ mod tests {
             effective_display_text: Some("$6.00".to_string()),
             observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
             capture_status: "captured".to_string(),
+            render_locale_pinned: None,
+            render_locale_source: None,
+            render_locale_note: None,
         };
 
         assert_eq!(preferred_excel_display_repr(&summary), Some("$6.00"));
+    }
+
+    #[test]
+    fn annotate_excel_observation_render_context_marks_programmatic_formula_as_unpinned() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-text".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+        };
+        let mut summary = ExcelObservationSummary {
+            comparison_value: Some(json!({"kind":"text","text":"1234,567.89"})),
+            observed_value_repr: Some("1234,567.89".to_string()),
+            effective_display_text: None,
+            observed_formula_repr: Some(case.entered_cell_text.clone()),
+            capture_status: "captured".to_string(),
+            render_locale_pinned: None,
+            render_locale_source: None,
+            render_locale_note: None,
+        };
+
+        annotate_excel_observation_render_context(&case, None, &mut summary);
+
+        assert_eq!(summary.render_locale_pinned, Some(false));
+        assert_eq!(summary.render_locale_source.as_deref(), Some("observation_machine_default"));
+        assert!(summary
+            .render_locale_note
+            .as_deref()
+            .expect("render locale note")
+            .contains("does not carry any Excel-side locale pin"));
     }
 
     #[test]

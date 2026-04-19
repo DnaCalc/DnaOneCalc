@@ -543,6 +543,9 @@ mod tests {
                     effective_display_text: Some("$6.00".to_string()),
                     observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
                     capture_status: "captured".to_string(),
+                    render_locale_pinned: None,
+                    render_locale_source: None,
+                    render_locale_note: None,
                 }),
                 spreadsheet_xml_extraction: Some(SpreadsheetXmlCellExtraction {
                     workbook_path: "C:/tmp/formula-workbook.xml".to_string(),
