@@ -821,7 +821,7 @@ fn prepare_verification_case(
 
 fn finalize_excel_case<R: VerificationCommandRunner>(
     repo_root: &Path,
-    prepared: PreparedVerificationCase,
+    mut prepared: PreparedVerificationCase,
     batch_case_output: Option<&OxxlplayBatchCaseOutputIndex>,
     replay_policy: VerificationReplayPolicy,
     runner: &R,
@@ -929,6 +929,30 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     } else {
         None
     };
+    if should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        &prepared.oxfml_result.replay_projection_json,
+        value_match,
+        prepared.oxfml_result.summary.comparison_value.as_ref(),
+        excel_summary.comparison_value.as_ref(),
+    ) {
+        let blocked_reason = "Value comparison blocked: locale-sensitive semantic text was produced under explicit OxFml locale context, but Excel-side render locale is unpinned and recorded as observation_machine_default for this non-XML programmatic case".to_string();
+        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+        return finish_case_report(
+            repo_root,
+            prepared,
+            ProgrammaticComparisonStatus::Blocked,
+            value_match,
+            display_match,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some(blocked_reason),
+            Some(excel_summary),
+        );
+    }
     let comparison_status = derive_comparison_status(
         value_match,
         display_match,
@@ -2493,6 +2517,59 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
 
 fn comparison_values_match(left: &Value, right: &Value) -> bool {
     left == right
+}
+
+fn should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    oxfml_projection: &Value,
+    value_match: Option<bool>,
+    oxfml_value: Option<&Value>,
+    excel_value: Option<&Value>,
+) -> bool {
+    value_match == Some(false)
+        && spreadsheet_xml_extraction.is_none()
+        && excel_render_locale_is_unpinned(case, spreadsheet_xml_extraction)
+        && oxfml_value.is_some_and(comparison_value_is_text)
+        && excel_value.is_some_and(comparison_value_is_text)
+        && projection_marks_locale_sensitive_semantic_text_dependency(oxfml_projection)
+}
+
+fn excel_render_locale_is_unpinned(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> bool {
+    build_excel_render_context_note(case, spreadsheet_xml_extraction)
+        .get("render_locale_pinned")
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+fn comparison_value_is_text(value: &Value) -> bool {
+    value.get("kind").and_then(Value::as_str) == Some("text")
+}
+
+fn projection_marks_locale_sensitive_semantic_text_dependency(projection: &Value) -> bool {
+    projection
+        .get("comparison_views")
+        .and_then(Value::as_array)
+        .and_then(|views| {
+            views.iter().find_map(|view| {
+                (view.get("view_family").and_then(Value::as_str) == Some("formatting_view"))
+                    .then(|| view.get("value"))
+                    .flatten()
+            })
+        })
+        .and_then(|value| value.get("format_dependency_facts"))
+        .and_then(Value::as_array)
+        .is_some_and(|facts| {
+            facts.iter().any(|fact| {
+                fact.get("dependency_class").and_then(Value::as_str)
+                    == Some("semantic_formatting")
+                    && fact.get("dependency_token").and_then(Value::as_str)
+                        == Some("locale_format_context")
+            })
+        })
 }
 
 fn display_strings_match(
@@ -5156,6 +5233,69 @@ mod tests {
             .as_deref()
             .expect("render locale note")
             .contains("does not carry any Excel-side locale pin"));
+    }
+
+    #[test]
+    fn should_block_unpinned_programmatic_locale_sensitive_text_comparison_blocks_0288_shape() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-0288".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+        };
+        let projection = json!({
+            "comparison_views": [
+                {
+                    "view_family": "formatting_view",
+                    "value": {
+                        "format_dependency_facts": [
+                            {
+                                "dependency_class": "semantic_formatting",
+                                "dependency_token": "locale_format_context"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        assert!(should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+            &case,
+            None,
+            &projection,
+            Some(false),
+            Some(&json!({"kind":"text","text":"1,234,567.89"})),
+            Some(&json!({"kind":"text","text":"1234,567.89"}))
+        ));
+    }
+
+    #[test]
+    fn should_not_block_numeric_mismatch_without_locale_sensitive_text_path() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-0406".to_string(),
+            entered_cell_text: "=PDURATION(0.05,1000,2000)".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+        };
+        let projection = json!({
+            "comparison_views": [
+                {
+                    "view_family": "formatting_view",
+                    "value": {
+                        "format_dependency_facts": []
+                    }
+                }
+            ]
+        });
+
+        assert!(!should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+            &case,
+            None,
+            &projection,
+            Some(false),
+            Some(&json!({"kind":"number","number":14.206699082890463})),
+            Some(&json!({"kind":"number","number":14.206699082890465}))
+        ));
     }
 
     #[test]
