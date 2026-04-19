@@ -887,10 +887,11 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         (Some(left), Some(right)) => Some(comparison_values_match(left, right)),
         _ => None,
     };
-    let display_match = if programmatic_display_comparison_enabled(
+    let display_comparison_enabled = programmatic_display_comparison_enabled(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
-    ) {
+    );
+    let display_match = if display_comparison_enabled {
         match (
             prepared
                 .oxfml_result
@@ -911,7 +912,11 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     } else {
         None
     };
-    let comparison_status = derive_comparison_status(value_match, display_match);
+    let comparison_status = derive_comparison_status(
+        value_match,
+        display_match,
+        display_comparison_enabled,
+    );
 
     if !should_run_oxreplay(replay_policy, comparison_status) {
         let discrepancy_summary = build_discrepancy_summary(
@@ -1992,7 +1997,7 @@ fn effective_requested_observation_scope(
 ) -> VerificationObservationScope {
     if let Some(extraction) = spreadsheet_xml_extraction {
         extraction.observation_scope.clone()
-    } else if case.formatting_context.is_some() {
+    } else if programmatic_display_comparison_enabled(case, spreadsheet_xml_extraction) {
         programmatic_formula_observation_scope_with_display()
     } else {
         programmatic_formula_observation_scope_without_display()
@@ -2031,18 +2036,32 @@ fn programmatic_formula_observation_scope_without_display() -> VerificationObser
     }
 }
 
+fn programmatic_display_contract_is_explicit(
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+) -> bool {
+    spreadsheet_xml_extraction.is_some()
+        || case
+            .formatting_context
+            .as_ref()
+            .and_then(|context| context.number_format_code.as_deref())
+            .map(str::trim)
+            .is_some_and(|code| !code.is_empty())
+}
+
 fn programmatic_display_comparison_enabled(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> bool {
-    spreadsheet_xml_extraction.is_some() || case.formatting_context.is_some()
+    programmatic_display_contract_is_explicit(case, spreadsheet_xml_extraction)
 }
 
 fn programmatic_effective_display_surface_requested(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
 ) -> bool {
-    spreadsheet_xml_extraction.is_none() && case.formatting_context.is_some()
+    spreadsheet_xml_extraction.is_none()
+        && programmatic_display_contract_is_explicit(case, spreadsheet_xml_extraction)
 }
 
 fn build_oxxlplay_observable_surfaces(
@@ -2663,7 +2682,16 @@ fn build_discrepancy_summary(
 fn derive_comparison_status(
     value_match: Option<bool>,
     display_match: Option<bool>,
+    display_comparison_enabled: bool,
 ) -> ProgrammaticComparisonStatus {
+    if !display_comparison_enabled {
+        return match value_match {
+            Some(true) => ProgrammaticComparisonStatus::Matched,
+            Some(false) => ProgrammaticComparisonStatus::Mismatched,
+            None => ProgrammaticComparisonStatus::Blocked,
+        };
+    }
+
     match (value_match, display_match) {
         (Some(true), Some(true)) => ProgrammaticComparisonStatus::Matched,
         (Some(false), _) | (_, Some(false)) => ProgrammaticComparisonStatus::Mismatched,
@@ -3623,10 +3651,10 @@ mod tests {
             if self.assert_compare_inputs_ready {
                 let left = read_json_file(left_path).expect("left projection json");
                 let right = read_json_file(right_path).expect("right replay json");
-                assert_eq!(
-                    projection_comparison_value(&left, "effective_display_text"),
-                    Some(json!("6"))
-                );
+                assert!(projection_comparison_value(&left, "comparison_value").is_some());
+                if let Some(display_value) = projection_comparison_value(&left, "effective_display_text") {
+                    assert_eq!(display_value, json!("6"));
+                }
                 assert_eq!(
                     projection_comparison_value(&right, "comparison_value"),
                     Some(json!({
@@ -3932,7 +3960,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_batch_supplies_default_display_context_for_programmatic_cases() {
+    fn verification_batch_supplies_default_locale_context_without_forcing_display_comparison() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
             SystemTime::now()
@@ -3962,12 +3990,30 @@ mod tests {
         let case_report = &report.case_reports[0];
 
         assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Mismatched);
-        assert_eq!(case_report.display_match, Some(true));
+        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.display_match, None);
         assert_eq!(case_report.oxfml_summary.blocked_reason, None);
+        assert_eq!(case_report.oxfml_summary.effective_display_summary, None);
+
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(
+                output_root
+                    .join("cases")
+                    .join("case-default-display")
+                    .join("scenario.json"),
+            )
+            .expect("scenario json"),
+        )
+        .expect("scenario parse");
         assert_eq!(
-            case_report.oxfml_summary.effective_display_summary.as_deref(),
-            Some("6")
+            scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
+            json!(["cell_value"])
         );
+        assert!(!scenario["observable_surfaces"]
+            .as_array()
+            .expect("observable surfaces")
+            .iter()
+            .any(|surface| surface["surface_kind"] == "effective_display_text"));
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -4133,6 +4179,40 @@ mod tests {
                 "comparison_value".to_string(),
                 "effective_display_text".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn default_programmatic_context_does_not_enable_display_comparison() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-default-context".to_string(),
+            entered_cell_text: "=SUM(1,2,3)".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+        };
+
+        assert!(!programmatic_display_comparison_enabled(&case, None));
+        assert!(!programmatic_effective_display_surface_requested(&case, None));
+        assert_eq!(
+            effective_requested_observation_scope(&case, None).oxxlplay_required_surfaces,
+            vec!["cell_value".to_string()]
+        );
+    }
+
+    #[test]
+    fn explicit_number_format_context_enables_display_comparison() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-explicit-display".to_string(),
+            entered_cell_text: "=SUM(1,2,3)".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(sample_programmatic_formatting_context()),
+        };
+
+        assert!(programmatic_display_comparison_enabled(&case, None));
+        assert!(programmatic_effective_display_surface_requested(&case, None));
+        assert_eq!(
+            effective_requested_observation_scope(&case, None).oxxlplay_required_surfaces,
+            vec!["cell_value".to_string(), "effective_display_text".to_string()]
         );
     }
 
@@ -4913,6 +4993,22 @@ mod tests {
     }
 
     #[test]
+    fn derive_comparison_status_uses_value_only_result_when_display_comparison_is_disabled() {
+        assert_eq!(
+            derive_comparison_status(Some(true), None, false),
+            ProgrammaticComparisonStatus::Matched
+        );
+        assert_eq!(
+            derive_comparison_status(Some(false), None, false),
+            ProgrammaticComparisonStatus::Mismatched
+        );
+        assert_eq!(
+            derive_comparison_status(None, None, false),
+            ProgrammaticComparisonStatus::Blocked
+        );
+    }
+
+    #[test]
     fn comparison_values_match_requires_exact_numeric_identity() {
         assert!(!comparison_values_match(
             &json!({
@@ -5005,7 +5101,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_batch_prepares_compare_inputs_for_programmatic_formula_cases() {
+    fn verification_batch_prepares_value_only_compare_inputs_for_default_programmatic_formula_cases() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
             SystemTime::now()
@@ -5039,22 +5135,13 @@ mod tests {
 
         assert_eq!(report.case_reports.len(), 1);
         assert!(projection_comparison_value(&projection, "comparison_value").is_some());
-        assert_eq!(
-            projection_comparison_value(&projection, "effective_display_text"),
-            Some(json!("6"))
-        );
-        assert_eq!(
-            projection["verification_publication_surface"]["effective_display_text"],
-            json!("6")
-        );
+        assert_eq!(projection_comparison_value(&projection, "effective_display_text"), None);
+        assert_eq!(projection["verification_publication_surface"]["effective_display_text"], Value::Null);
         assert_eq!(
             projection["verification_publication_surface"]["format_profile"],
-            json!("en-US")
+            Value::Null
         );
-        assert_eq!(
-            projection["verification_publication_surface"]["date1904"],
-            json!(false)
-        );
+        assert_eq!(projection["verification_publication_surface"]["date1904"], Value::Null);
 
         let _ = fs::remove_dir_all(temp_root);
     }
