@@ -230,6 +230,17 @@ struct PreparedVerificationCase {
     batch_case_manifest: OxxlplayBatchCaseManifest,
 }
 
+struct ExecutionOutcomeSurface {
+    comparison_value: Value,
+    ordinary_value_comparable: bool,
+}
+
+struct ReplayComparisonPlan {
+    required_replay_views: Vec<String>,
+    value_comparable: bool,
+    display_comparable: bool,
+}
+
 pub trait VerificationCommandRunner {
     fn run_oxxlplay_capture_batch(
         &self,
@@ -834,18 +845,14 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             None,
         );
     };
-    if let Some(error) = &batch_case_output.error {
-        return finish_blocked_case(repo_root, prepared, error.clone(), None);
-    }
-    if let Some(status) = batch_case_output.status.as_deref() {
-        if !matches!(status, "succeeded") {
-            return finish_blocked_case(
-                repo_root,
-                prepared,
-                format!("OxXlPlay batch case reported status `{status}`"),
-                None,
-            );
-        }
+
+    if matches!(replay_policy, VerificationReplayPolicy::Never) {
+        return finish_blocked_case(
+            repo_root,
+            prepared,
+            "Comparison blocked: replay equivalence is required for verification but replay policy is `Never`".to_string(),
+            None,
+        );
     }
 
     let resolved_output_dir = resolve_repo_or_absolute_path(
@@ -870,162 +877,118 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             .join("views")
             .join("normalized-replay.json"),
     );
-    let compare_ready_replay_path = materialize_compare_ready_normalized_replay(
-        &normalized_replay_path,
-        prepared
-            .oxreplay_dir
-            .join("normalized-replay.compare-ready.json"),
-    )?;
 
-    let mut excel_summary = summarize_excel_capture(capture_path)?;
-    annotate_excel_observation_render_context(
-        &prepared.effective_case,
-        prepared.spreadsheet_xml_extraction.as_ref(),
-        &mut excel_summary,
-    );
-    write_json_file(
-        prepared.case_dir.join("excel-observation-summary.json"),
-        &excel_summary,
-    )?;
-
-    if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
-        return finish_blocked_case(repo_root, prepared, failure_reason, Some(excel_summary));
-    }
-
-    let requested_replay_views = effective_requested_observation_scope(
-        &prepared.effective_case,
-        prepared.spreadsheet_xml_extraction.as_ref(),
-    )
-    .oxreplay_required_views;
-    let value_match = match (
-        prepared.oxfml_result.summary.comparison_value.as_ref(),
-        excel_summary.comparison_value.as_ref(),
-    ) {
-        (Some(left), Some(right)) => Some(comparison_values_match(left, right)),
-        _ => None,
-    };
     let display_comparison_enabled = programmatic_display_comparison_enabled(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
     );
-    let display_match = if display_comparison_enabled {
-        match (
-            prepared
-                .oxfml_result
-                .summary
-                .effective_display_summary
-                .as_deref(),
-            preferred_excel_display_repr(&excel_summary),
-        ) {
-            (Some(left), Some(right)) => Some(display_strings_match(
-                &prepared.effective_case,
-                prepared.spreadsheet_xml_extraction.as_ref(),
-                value_match,
-                left,
-                right,
-            )),
-            _ => None,
-        }
+    let excel_outcome = match classify_excel_execution_outcome(batch_case_output) {
+        Ok(outcome) => outcome,
+        Err(reason) => return finish_blocked_case(repo_root, prepared, reason, None),
+    };
+
+    let excel_summary = if excel_outcome.ordinary_value_comparable {
+        let mut summary = summarize_excel_capture(capture_path)?;
+        annotate_excel_observation_render_context(
+            &prepared.effective_case,
+            prepared.spreadsheet_xml_extraction.as_ref(),
+            &mut summary,
+        );
+        write_json_file(
+            prepared.case_dir.join("excel-observation-summary.json"),
+            &summary,
+        )?;
+        Some(summary)
     } else {
         None
     };
-    if should_block_unpinned_programmatic_locale_sensitive_text_comparison(
-        &prepared.effective_case,
-        prepared.spreadsheet_xml_extraction.as_ref(),
-        &prepared.oxfml_result.replay_projection_json,
-        value_match,
-        prepared.oxfml_result.summary.comparison_value.as_ref(),
-        excel_summary.comparison_value.as_ref(),
+
+    if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
+        return finish_blocked_case(repo_root, prepared, failure_reason, excel_summary);
+    }
+
+    let oxfml_outcome = classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json);
+    let comparison_plan = build_replay_comparison_plan(
+        display_comparison_enabled,
+        &oxfml_outcome,
+        &excel_outcome,
+    );
+    let requested_replay_views = comparison_plan.required_replay_views.clone();
+
+    let compare_ready_projection_path = materialize_compare_ready_projection(
+        &prepared.projection_path,
+        prepared
+            .oxreplay_dir
+            .join("oxfml-v1-replay-projection.compare-ready.json"),
+        &comparison_plan.required_replay_views,
+        &oxfml_outcome.comparison_value,
+    )?;
+    let compare_ready_replay_path = if excel_outcome.ordinary_value_comparable {
+        materialize_compare_ready_normalized_replay(
+            &normalized_replay_path,
+            prepared
+                .oxreplay_dir
+                .join("normalized-replay.compare-ready.json"),
+            &comparison_plan.required_replay_views,
+            &excel_outcome.comparison_value,
+        )?
+    } else {
+        materialize_synthetic_compare_ready_replay(
+            prepared
+                .oxreplay_dir
+                .join("normalized-replay.compare-ready.json"),
+            &prepared.effective_case.case_id,
+            &excel_outcome.comparison_value,
+        )?
+    };
+
+    let compare_ready_projection = read_json_file(&compare_ready_projection_path)?;
+    let compare_ready_replay = read_json_file(&compare_ready_replay_path)?;
+    if let Some(blocked_reason) = missing_required_replay_view_reason(
+        &compare_ready_projection,
+        &compare_ready_replay,
+        &comparison_plan.required_replay_views,
     ) {
-        let blocked_reason = "Value comparison blocked: locale-sensitive semantic text was produced under explicit OxFml locale context, but Excel-side render locale is unpinned and recorded as observation_machine_default for this non-XML programmatic case".to_string();
         prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
         return finish_case_report(
             repo_root,
             prepared,
             ProgrammaticComparisonStatus::Blocked,
-            value_match,
-            display_match,
+            None,
+            None,
             None,
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Some(blocked_reason),
-            Some(excel_summary),
-        );
-    }
-    let comparison_status = derive_comparison_status(
-        value_match,
-        display_match,
-        display_comparison_enabled,
-    );
-
-    if !should_run_oxreplay(replay_policy, comparison_status) {
-        let discrepancy_summary = build_discrepancy_summary(
-            comparison_status,
-            value_match,
-            display_match,
-            &[],
-            &prepared.oxfml_result.summary,
-            &excel_summary,
-        );
-        return finish_case_report(
-            repo_root,
-            prepared,
-            comparison_status,
-            value_match,
-            display_match,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            discrepancy_summary,
-            Some(excel_summary),
+            excel_summary,
         );
     }
 
-    let validate_capture = runner.run_oxreplay_validate_bundle(&manifest_path)?;
-    write_json_file(
-        prepared.command_dir.join("oxreplay-validate-bundle.json"),
-        &validate_capture,
-    )?;
-    if !validate_capture.stdout.trim().is_empty() {
-        write_json_text_file(
-            prepared.oxreplay_dir.join("validate-bundle.report.json"),
-            &validate_capture.stdout,
+    let replay_validate_diagnostic = if excel_outcome.ordinary_value_comparable {
+        let validate_capture = runner.run_oxreplay_validate_bundle(&manifest_path)?;
+        write_json_file(
+            prepared.command_dir.join("oxreplay-validate-bundle.json"),
+            &validate_capture,
         )?;
-    }
-    if validate_capture.exit_code != 0 {
-        let discrepancy_summary = append_replay_diagnostic_summary(
-            build_discrepancy_summary(
-                comparison_status,
-                value_match,
-                display_match,
-                &[],
-                &prepared.oxfml_result.summary,
-                &excel_summary,
-            ),
+        if !validate_capture.stdout.trim().is_empty() {
+            write_json_text_file(
+                prepared.oxreplay_dir.join("validate-bundle.report.json"),
+                &validate_capture.stdout,
+            )?;
+        }
+        (validate_capture.exit_code != 0).then(|| {
             format!(
                 "Replay validate-bundle failed (exit code {})",
                 validate_capture.exit_code
-            ),
-        );
-        return finish_case_report(
-            repo_root,
-            prepared,
-            comparison_status,
-            value_match,
-            display_match,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            discrepancy_summary,
-            Some(excel_summary),
-        );
-    }
+            )
+        })
+    } else {
+        None
+    };
 
     let diff_capture = runner.run_oxreplay_diff(
-        &prepared.projection_path,
+        &compare_ready_projection_path,
         "oxfml-v1-replay-projection",
         &compare_ready_replay_path,
         "normalized-replay",
@@ -1042,7 +1005,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     }
 
     let explain_capture = runner.run_oxreplay_explain(
-        &prepared.projection_path,
+        &compare_ready_projection_path,
         "oxfml-v1-replay-projection",
         &compare_ready_replay_path,
         "normalized-replay",
@@ -1075,13 +1038,55 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         .iter()
         .map(|record| record.mismatch_kind.clone())
         .collect::<Vec<_>>();
-    let discrepancy_summary = build_discrepancy_summary(
-        comparison_status,
-        value_match,
-        display_match,
+    let value_match = derive_replay_axis_match(
         &replay_mismatch_records,
-        &prepared.oxfml_result.summary,
-        &excel_summary,
+        "comparison_value",
+        comparison_plan.value_comparable,
+    );
+    let display_match = derive_replay_axis_match(
+        &replay_mismatch_records,
+        "effective_display_text",
+        comparison_plan.display_comparable,
+    );
+
+    if should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        &prepared.oxfml_result.replay_projection_json,
+        value_match,
+        prepared.oxfml_result.summary.comparison_value.as_ref(),
+        excel_summary
+            .as_ref()
+            .and_then(|summary| summary.comparison_value.as_ref()),
+    ) {
+        let blocked_reason = "Value comparison blocked: locale-sensitive semantic text was produced under explicit OxFml locale context, but Excel-side render locale is unpinned and recorded as observation_machine_default for this non-XML programmatic case".to_string();
+        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+        return finish_case_report(
+            repo_root,
+            prepared,
+            ProgrammaticComparisonStatus::Blocked,
+            value_match,
+            display_match,
+            Some(is_equivalent),
+            replay_mismatch_kinds,
+            replay_mismatch_records,
+            replay_explain_records,
+            Some(blocked_reason),
+            excel_summary,
+        );
+    }
+
+    let comparison_status = derive_host_comparison_status_from_replay(is_equivalent);
+    let discrepancy_summary = append_replay_diagnostic_summary(
+        build_discrepancy_summary(
+            comparison_status,
+            value_match,
+            display_match,
+            &replay_mismatch_records,
+            &prepared.oxfml_result.summary,
+            excel_summary.as_ref(),
+        ),
+        replay_validate_diagnostic.unwrap_or_default(),
     );
 
     finish_case_report(
@@ -1095,7 +1100,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         replay_mismatch_records,
         replay_explain_records,
         discrepancy_summary,
-        Some(excel_summary),
+        excel_summary,
     )
 }
 
@@ -1192,6 +1197,179 @@ fn finish_case_report(
     Ok(report)
 }
 
+fn normalized_pre_execution_rejection_outcome() -> Value {
+    json!({
+        "outcome_kind": "rejected",
+        "outcome_stage": "pre_execution",
+        "class_id": "programmatic_formula_rejection",
+        "lane_reason_code": "authoring_or_bind_rejected"
+    })
+}
+
+fn normalized_completed_execution_outcome() -> Value {
+    json!({
+        "outcome_kind": "completed",
+        "outcome_stage": "post_execution",
+        "class_id": "worksheet_surface",
+        "lane_reason_code": "value_or_display_surface_available"
+    })
+}
+
+fn classify_oxfml_execution_outcome(projection: &Value) -> ExecutionOutcomeSurface {
+    let commit_decision_kind = projection
+        .get("commit_decision_kind")
+        .and_then(Value::as_str)
+        .map(|value| value.to_ascii_lowercase());
+    let trace_event_kinds = projection
+        .get("trace_event_kinds")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let rejected = commit_decision_kind.as_deref() == Some("rejected")
+        || trace_event_kinds.iter().any(|value| {
+            value
+                .as_str()
+                .map(|item| matches!(item, "RejectIssued" | "CommitRejected"))
+                .unwrap_or(false)
+        });
+
+    if rejected {
+        ExecutionOutcomeSurface {
+            comparison_value: normalized_pre_execution_rejection_outcome(),
+            ordinary_value_comparable: false,
+        }
+    } else {
+        ExecutionOutcomeSurface {
+            comparison_value: normalized_completed_execution_outcome(),
+            ordinary_value_comparable: true,
+        }
+    }
+}
+
+fn excel_case_output_is_programmatic_authoring_rejection(
+    batch_case_output: &OxxlplayBatchCaseOutputIndex,
+) -> bool {
+    batch_case_output
+        .error
+        .as_deref()
+        .map(|error| {
+            let lower = error.to_ascii_lowercase();
+            lower.contains("programmatic_formula_authoring_failed")
+                || lower.contains("formula2 assignment")
+                || lower.contains("0x800a03ec")
+        })
+        .unwrap_or(false)
+}
+
+fn classify_excel_execution_outcome(
+    batch_case_output: &OxxlplayBatchCaseOutputIndex,
+) -> Result<ExecutionOutcomeSurface, String> {
+    if batch_case_output.status.as_deref() == Some("succeeded") && batch_case_output.error.is_none() {
+        return Ok(ExecutionOutcomeSurface {
+            comparison_value: normalized_completed_execution_outcome(),
+            ordinary_value_comparable: true,
+        });
+    }
+
+    if excel_case_output_is_programmatic_authoring_rejection(batch_case_output) {
+        return Ok(ExecutionOutcomeSurface {
+            comparison_value: normalized_pre_execution_rejection_outcome(),
+            ordinary_value_comparable: false,
+        });
+    }
+
+    if let Some(error) = &batch_case_output.error {
+        return Err(error.clone());
+    }
+
+    if let Some(status) = batch_case_output.status.as_deref() {
+        return Err(format!("OxXlPlay batch case reported status `{status}`"));
+    }
+
+    Err("OxXlPlay batch case did not provide comparable execution evidence".to_string())
+}
+
+fn build_replay_comparison_plan(
+    display_comparison_enabled: bool,
+    oxfml_outcome: &ExecutionOutcomeSurface,
+    excel_outcome: &ExecutionOutcomeSurface,
+) -> ReplayComparisonPlan {
+    let value_comparable =
+        oxfml_outcome.ordinary_value_comparable && excel_outcome.ordinary_value_comparable;
+    let display_comparable = value_comparable && display_comparison_enabled;
+    let mut required_replay_views = vec![EXECUTION_OUTCOME_VIEW_FAMILY.to_string()];
+    if value_comparable {
+        required_replay_views.push("comparison_value".to_string());
+    }
+    if display_comparable {
+        required_replay_views.push("effective_display_text".to_string());
+    }
+
+    ReplayComparisonPlan {
+        required_replay_views,
+        value_comparable,
+        display_comparable,
+    }
+}
+
+fn compare_ready_view_is_present(replay: &Value, family: &str) -> bool {
+    replay
+        .get("comparison_views")
+        .and_then(Value::as_array)
+        .is_some_and(|views| {
+            views.iter().any(|view| {
+                view.get("view_family").and_then(Value::as_str) == Some(family)
+                    && view.get("value").is_some()
+                    && !view.get("value").is_some_and(Value::is_null)
+            })
+        })
+}
+
+fn missing_required_replay_view_reason(
+    left: &Value,
+    right: &Value,
+    required_views: &[String],
+) -> Option<String> {
+    for view in required_views {
+        let left_present = compare_ready_view_is_present(left, view);
+        let right_present = compare_ready_view_is_present(right, view);
+        if !left_present || !right_present {
+            return Some(format!(
+                "Comparison blocked: required replay comparison view `{view}` was unavailable on {}{}",
+                if !left_present { "OxFml" } else { "" },
+                if !left_present && !right_present {
+                    " and Excel"
+                } else if !right_present {
+                    "Excel"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+    None
+}
+
+fn derive_replay_axis_match(
+    replay_mismatch_records: &[OxReplayMismatchRecord],
+    family: &str,
+    expected: bool,
+) -> Option<bool> {
+    expected.then(|| {
+        !replay_mismatch_records.iter().any(|record| {
+            record.view_family.as_deref() == Some(family) || record.mismatch_kind == family
+        })
+    })
+}
+
+fn derive_host_comparison_status_from_replay(is_equivalent: bool) -> ProgrammaticComparisonStatus {
+    if is_equivalent {
+        ProgrammaticComparisonStatus::Matched
+    } else {
+        ProgrammaticComparisonStatus::Mismatched
+    }
+}
+
 fn build_oxxlplay_batch_case_manifest(
     case_dir: &Path,
     oxxlplay_dir: &Path,
@@ -1244,19 +1422,6 @@ fn build_oxxlplay_batch_case_manifest(
         source_workbook_path: spreadsheet_xml_extraction
             .map(|extraction| extraction.workbook_path.clone()),
     })
-}
-
-fn should_run_oxreplay(
-    replay_policy: VerificationReplayPolicy,
-    comparison_status: ProgrammaticComparisonStatus,
-) -> bool {
-    match replay_policy {
-        VerificationReplayPolicy::Never => false,
-        VerificationReplayPolicy::Always => true,
-        VerificationReplayPolicy::MismatchOnly => {
-            comparison_status != ProgrammaticComparisonStatus::Matched
-        }
-    }
 }
 
 fn load_oxxlplay_batch_output_index(
@@ -2046,6 +2211,8 @@ fn effective_requested_observation_scope(
     }
 }
 
+const EXECUTION_OUTCOME_VIEW_FAMILY: &str = "execution_outcome";
+
 fn programmatic_formula_observation_scope_with_display() -> VerificationObservationScope {
     VerificationObservationScope {
         oxfml_required_scope: vec![
@@ -2061,6 +2228,7 @@ fn programmatic_formula_observation_scope_with_display() -> VerificationObservat
             "effective_display_text".to_string(),
         ],
         oxreplay_required_views: vec![
+            EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
             "comparison_value".to_string(),
             "effective_display_text".to_string(),
         ],
@@ -2074,7 +2242,10 @@ fn programmatic_formula_observation_scope_without_display() -> VerificationObser
             "returned_value_surface".to_string(),
         ],
         oxxlplay_required_surfaces: vec!["cell_value".to_string()],
-        oxreplay_required_views: vec!["comparison_value".to_string()],
+        oxreplay_required_views: vec![
+            EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
+            "comparison_value".to_string(),
+        ],
     }
 }
 
@@ -2205,6 +2376,7 @@ fn build_observation_gap_report(
         .cloned()
         .collect::<Vec<_>>();
     let oxreplay_current_bundle_views = vec![
+        EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
         "comparison_value".to_string(),
         "effective_display_text".to_string(),
         "formatting_view".to_string(),
@@ -2515,10 +2687,6 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
     summary.effective_display_text.as_deref()
 }
 
-fn comparison_values_match(left: &Value, right: &Value) -> bool {
-    left == right
-}
-
 fn should_block_unpinned_programmatic_locale_sensitive_text_comparison(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
@@ -2570,16 +2738,6 @@ fn projection_marks_locale_sensitive_semantic_text_dependency(projection: &Value
                         == Some("locale_format_context")
             })
         })
-}
-
-fn display_strings_match(
-    _case: &ProgrammaticFormulaCase,
-    _spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
-    _value_match: Option<bool>,
-    left: &str,
-    right: &str,
-) -> bool {
-    left == right
 }
 
 fn serialize_replay_projection(
@@ -2755,13 +2913,35 @@ fn serialize_verification_conditional_formatting_rule(
     })
 }
 
+fn execution_outcome_comparison_summary(
+    replay_mismatch_records: &[OxReplayMismatchRecord],
+) -> Option<String> {
+    replay_mismatch_records
+        .iter()
+        .find(|record| {
+            record.view_family.as_deref() == Some(EXECUTION_OUTCOME_VIEW_FAMILY)
+                || record.mismatch_kind == EXECUTION_OUTCOME_VIEW_FAMILY
+        })
+        .map(|record| {
+            let left = record
+                .left_value_repr
+                .clone()
+                .unwrap_or_else(|| "<unavailable>".to_string());
+            let right = record
+                .right_value_repr
+                .clone()
+                .unwrap_or_else(|| "<unavailable>".to_string());
+            format!("Execution outcome divergence: OxFml {left} vs Excel {right}")
+        })
+}
+
 fn build_discrepancy_summary(
     comparison_status: ProgrammaticComparisonStatus,
     value_match: Option<bool>,
     display_match: Option<bool>,
     replay_mismatch_records: &[OxReplayMismatchRecord],
     oxfml_summary: &OxfmlVerificationSummary,
-    excel_summary: &ExcelObservationSummary,
+    excel_summary: Option<&ExcelObservationSummary>,
 ) -> Option<String> {
     match comparison_status {
         ProgrammaticComparisonStatus::Matched => None,
@@ -2774,18 +2954,21 @@ fn build_discrepancy_summary(
             let value_summary = value_comparison_summary(
                 value_match,
                 oxfml_summary.comparison_value.as_ref(),
-                excel_summary.comparison_value.as_ref(),
+                excel_summary.and_then(|summary| summary.comparison_value.as_ref()),
             );
             let display_summary = display_comparison_summary(
                 display_match,
                 oxfml_summary.effective_display_summary.as_deref(),
-                preferred_excel_display_repr(excel_summary),
+                excel_summary.and_then(preferred_excel_display_repr),
             );
+            let execution_outcome_summary =
+                execution_outcome_comparison_summary(replay_mismatch_records);
             let projection_gap_summary =
                 replay_projection_coverage_gap_summaries(replay_mismatch_records);
 
             if value_summary.is_some()
                 || display_summary.is_some()
+                || execution_outcome_summary.is_some()
                 || !projection_gap_summary.is_empty()
             {
                 let mut parts = Vec::new();
@@ -2795,49 +2978,17 @@ fn build_discrepancy_summary(
                 if let Some(display_summary) = display_summary {
                     parts.push(display_summary);
                 }
+                if let Some(execution_outcome_summary) = execution_outcome_summary {
+                    parts.push(execution_outcome_summary);
+                }
                 if !projection_gap_summary.is_empty() {
                     parts.push(projection_gap_summary.join(" | "));
                 }
                 return Some(parts.join(" | "));
             }
 
-            if value_match == Some(true) && display_match == Some(true) {
-                let mismatch_kinds = if replay_mismatch_records.is_empty() {
-                    "unknown_replay_mismatch".to_string()
-                } else {
-                    replay_mismatch_records
-                        .iter()
-                        .map(|record| record.mismatch_kind.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                Some(format!(
-                    "Replay diverged even though value and display matched ({mismatch_kinds})"
-                ))
-            } else {
-                Some("comparison diverged".to_string())
-            }
+            Some("comparison diverged".to_string())
         }
-    }
-}
-
-fn derive_comparison_status(
-    value_match: Option<bool>,
-    display_match: Option<bool>,
-    display_comparison_enabled: bool,
-) -> ProgrammaticComparisonStatus {
-    if !display_comparison_enabled {
-        return match value_match {
-            Some(true) => ProgrammaticComparisonStatus::Matched,
-            Some(false) => ProgrammaticComparisonStatus::Mismatched,
-            None => ProgrammaticComparisonStatus::Blocked,
-        };
-    }
-
-    match (value_match, display_match) {
-        (Some(true), Some(true)) => ProgrammaticComparisonStatus::Matched,
-        (Some(false), _) | (_, Some(false)) => ProgrammaticComparisonStatus::Mismatched,
-        _ => ProgrammaticComparisonStatus::Blocked,
     }
 }
 
@@ -2861,15 +3012,62 @@ fn observed_surface_comparison_value(surface: &Value) -> Option<Value> {
         .map(normalize_comparison_value)
 }
 
+fn materialize_compare_ready_projection(
+    projection_path: &Path,
+    output_path: impl AsRef<Path>,
+    required_views: &[String],
+    execution_outcome: &Value,
+) -> Result<PathBuf, String> {
+    let mut projection = read_json_file(projection_path)?;
+    normalize_replay_comparison_views(&mut projection);
+    upsert_comparison_view(
+        &mut projection,
+        EXECUTION_OUTCOME_VIEW_FAMILY,
+        execution_outcome.clone(),
+    )?;
+    filter_comparison_views(&mut projection, required_views)?;
+
+    let output_path = output_path.as_ref();
+    write_json_file(output_path, &projection)?;
+    Ok(output_path.to_path_buf())
+}
+
 fn materialize_compare_ready_normalized_replay(
     normalized_replay_path: &Path,
     output_path: impl AsRef<Path>,
+    required_views: &[String],
+    execution_outcome: &Value,
 ) -> Result<PathBuf, String> {
     let mut normalized_replay = read_json_file(normalized_replay_path)?;
     normalize_replay_comparison_views(&mut normalized_replay);
+    upsert_comparison_view(
+        &mut normalized_replay,
+        EXECUTION_OUTCOME_VIEW_FAMILY,
+        execution_outcome.clone(),
+    )?;
+    filter_comparison_views(&mut normalized_replay, required_views)?;
 
     let output_path = output_path.as_ref();
     write_json_file(output_path, &normalized_replay)?;
+    Ok(output_path.to_path_buf())
+}
+
+fn materialize_synthetic_compare_ready_replay(
+    output_path: impl AsRef<Path>,
+    case_id: &str,
+    execution_outcome: &Value,
+) -> Result<PathBuf, String> {
+    let replay = json!({
+        "source_case_id": case_id,
+        "comparison_views": [
+            {
+                "view_family": EXECUTION_OUTCOME_VIEW_FAMILY,
+                "value": execution_outcome
+            }
+        ]
+    });
+    let output_path = output_path.as_ref();
+    write_json_file(output_path, &replay)?;
     Ok(output_path.to_path_buf())
 }
 
@@ -2889,6 +3087,54 @@ fn normalize_replay_comparison_views(replay: &mut Value) {
             *value = normalize_comparison_value(value);
         }
     }
+}
+
+fn upsert_comparison_view(
+    replay: &mut Value,
+    view_family: &str,
+    value: Value,
+) -> Result<(), String> {
+    let object = replay
+        .as_object_mut()
+        .ok_or_else(|| "replay projection was not a JSON object".to_string())?;
+    let comparison_views = object
+        .entry("comparison_views".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let comparison_views = comparison_views
+        .as_array_mut()
+        .ok_or_else(|| "replay projection `comparison_views` was not an array".to_string())?;
+
+    if let Some(existing) = comparison_views.iter_mut().find(|view| {
+        view.get("view_family").and_then(Value::as_str) == Some(view_family)
+    }) {
+        if let Some(existing_object) = existing.as_object_mut() {
+            existing_object.insert("value".to_string(), value);
+        }
+    } else {
+        comparison_views.push(json!({
+            "view_family": view_family,
+            "value": value
+        }));
+    }
+
+    Ok(())
+}
+
+fn filter_comparison_views(replay: &mut Value, required_views: &[String]) -> Result<(), String> {
+    let Some(comparison_views) = replay
+        .get_mut("comparison_views")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+
+    comparison_views.retain(|view| {
+        view.get("view_family")
+            .and_then(Value::as_str)
+            .is_some_and(|family| required_views.iter().any(|required| required == family))
+    });
+
+    Ok(())
 }
 
 fn normalize_comparison_value(value: &Value) -> Value {
@@ -3217,6 +3463,10 @@ fn append_replay_diagnostic_summary(
     discrepancy_summary: Option<String>,
     diagnostic: String,
 ) -> Option<String> {
+    if diagnostic.trim().is_empty() {
+        return discrepancy_summary;
+    }
+
     match discrepancy_summary {
         Some(summary) => Some(format!("{summary} | {diagnostic}")),
         None => Some(diagnostic),
@@ -3624,6 +3874,56 @@ mod tests {
         default_programmatic_corpus_formatting_context()
     }
 
+    fn fake_diff_report(left: &Value, right: &Value) -> Value {
+        let mut families = left
+            .get("comparison_views")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .chain(
+                right
+                    .get("comparison_views")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            )
+            .filter_map(|view| view.get("view_family").and_then(Value::as_str))
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        families.sort();
+        families.dedup();
+
+        let mismatches = families
+            .into_iter()
+            .filter_map(|family| {
+                let left_value = projection_comparison_value(left, &family);
+                let right_value = projection_comparison_value(right, &family);
+                match (left_value, right_value) {
+                    (Some(left_value), Some(right_value)) if left_value != right_value => Some(json!({
+                        "mismatch_kind": family,
+                        "severity": "semantic",
+                        "view_family": family,
+                        "left_value": left_value,
+                        "right_value": right_value,
+                        "detail": "comparison view values diverged"
+                    })),
+                    (Some(_), None) | (None, Some(_)) => Some(json!({
+                        "mismatch_kind": "projection_coverage_gap",
+                        "severity": "coverage",
+                        "view_family": family,
+                        "detail": format!("comparison view family `{family}` is missing on one side")
+                    })),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "equivalent": mismatches.is_empty(),
+            "mismatches": mismatches
+        })
+    }
+
     #[derive(Default)]
     struct FakeVerificationRunner {
         capture_exit_code: i32,
@@ -3632,6 +3932,8 @@ mod tests {
         explain_exit_code: i32,
         diff_equivalent: bool,
         assert_compare_inputs_ready: bool,
+        batch_case_status: Option<String>,
+        batch_case_error: Option<String>,
         captured_cell_value: Option<Value>,
         captured_value_repr: Option<String>,
         captured_formula_text: Option<String>,
@@ -3660,10 +3962,19 @@ mod tests {
                 fs::create_dir_all(output_dir.join("views")).expect("views dir");
                 let repo_root = repo_root().expect("repo root");
                 let output_dir_repo_relative = display_repo_relative(&output_dir, &repo_root);
-                let captured_cell_value = self
-                    .captured_cell_value
-                    .clone()
-                    .unwrap_or_else(|| json!(6));
+                let captured_cell_value = self.captured_cell_value.clone().unwrap_or_else(|| {
+                    if self.diff_equivalent {
+                        json!({
+                            "kind": "number",
+                            "number": 6.0
+                        })
+                    } else {
+                        json!({
+                            "kind": "number",
+                            "number": 7.0
+                        })
+                    }
+                });
                 let captured_value_repr = self.captured_value_repr.clone().unwrap_or_else(|| {
                     if self.diff_equivalent {
                         "6".to_string()
@@ -3685,98 +3996,111 @@ mod tests {
                             "$7.00".to_string()
                         }
                     });
-                write_json_file(
-                    output_dir.join("capture.json"),
-                    &json!({
-                        "surfaces": [
-                            {
-                                "surface": {
-                                    "surface_id": "sheet1_a1_value",
-                                    "surface_kind": "cell_value",
-                                    "locator": "Sheet1!A1",
-                            "required": true
-                        },
-                        "status": "direct",
-                        "comparison_value": captured_cell_value,
-                        "value_repr": captured_value_repr,
-                        "capture_loss": "none",
-                        "uncertainty": "none"
+                let batch_case_status = self
+                    .batch_case_status
+                    .clone()
+                    .unwrap_or_else(|| "succeeded".to_string());
+                if batch_case_status == "succeeded" && self.batch_case_error.is_none() {
+                    write_json_file(
+                        output_dir.join("capture.json"),
+                        &json!({
+                            "surfaces": [
+                                {
+                                    "surface": {
+                                        "surface_id": "sheet1_a1_value",
+                                        "surface_kind": "cell_value",
+                                        "locator": "Sheet1!A1",
+                                "required": true
                             },
-                            {
-                                "surface": {
-                                    "surface_id": "sheet1_a1_formula",
-                                    "surface_kind": "formula_text",
-                                    "locator": "Sheet1!A1",
-                                    "required": false
+                            "status": "direct",
+                            "comparison_value": captured_cell_value,
+                            "value_repr": captured_value_repr,
+                            "capture_loss": "none",
+                            "uncertainty": "none"
                                 },
-                                "status": "direct",
-                                "value_repr": captured_formula_text,
-                                "capture_loss": "none",
-                                "uncertainty": "none"
-                            },
-                            {
-                                "surface": {
-                                    "surface_id": "sheet1_a1_display",
-                                    "surface_kind": "effective_display_text",
-                                    "locator": "Sheet1!A1",
-                                    "required": true
+                                {
+                                    "surface": {
+                                        "surface_id": "sheet1_a1_formula",
+                                        "surface_kind": "formula_text",
+                                        "locator": "Sheet1!A1",
+                                        "required": false
+                                    },
+                                    "status": "direct",
+                                    "value_repr": captured_formula_text,
+                                    "capture_loss": "none",
+                                    "uncertainty": "none"
                                 },
-                                "status": "direct",
-                                "value_repr": captured_effective_display_text,
-                                "capture_loss": "none",
-                                "uncertainty": "none"
-                            }
-                        ]
-                    }),
-                )
-                .expect("capture should write");
-                write_json_file(
-                    output_dir.join("oxreplay-manifest.json"),
-                    &json!({
-                        "bundle_id": "fake-bundle",
-                        "scenario_id": case.scenario_id,
-                        "bundle_schema": "replay.bundle.v1"
-                    }),
-                )
-                .expect("manifest should write");
-                write_json_file(
-                    output_dir.join("views").join("normalized-replay.json"),
-                    &json!({
-                        "scenario_id": case.scenario_id,
-                        "lane_id": "oxxlplay",
-                        "events": [
-                            {
-                                "event_id": "sheet1_a1_value",
-                                "source_label": "cell_value:Sheet1!A1:direct",
-                                "normalized_family": "excel.surface.cell_value.direct:Sheet1!A1=6"
-                            }
-                        ],
-                        "registry_refs": [],
-                        "comparison_views": [
-                            {
-                                "view_family": "comparison_value",
-                                "value": {
-                                    "boundary": "published_formula_result",
-                                    "value": captured_cell_value,
-                                    "wire_schema": "oxfunc_value_types.aligned_json.v1"
+                                {
+                                    "surface": {
+                                        "surface_id": "sheet1_a1_display",
+                                        "surface_kind": "effective_display_text",
+                                        "locator": "Sheet1!A1",
+                                        "required": true
+                                    },
+                                    "status": "direct",
+                                    "value_repr": captured_effective_display_text,
+                                    "capture_loss": "none",
+                                    "uncertainty": "none"
                                 }
-                            },
-                            {
-                                "view_family": "effective_display_text",
-                                "value": captured_effective_display_text
-                            }
-                        ]
-                    }),
-                )
-                .expect("normalized replay should write");
-                case_index.push(json!({
-                    "case_id": case.case_id,
-                    "status": "succeeded",
-                    "output_dir": output_dir_repo_relative,
-                    "capture_path": format!("{output_dir_repo_relative}/capture.json"),
-                    "oxreplay_manifest_path": format!("{output_dir_repo_relative}/oxreplay-manifest.json"),
-                    "normalized_replay_path": format!("{output_dir_repo_relative}/views/normalized-replay.json")
-                }));
+                            ]
+                        }),
+                    )
+                    .expect("capture should write");
+                    write_json_file(
+                        output_dir.join("oxreplay-manifest.json"),
+                        &json!({
+                            "bundle_id": "fake-bundle",
+                            "scenario_id": case.scenario_id,
+                            "bundle_schema": "replay.bundle.v1"
+                        }),
+                    )
+                    .expect("manifest should write");
+                    write_json_file(
+                        output_dir.join("views").join("normalized-replay.json"),
+                        &json!({
+                            "scenario_id": case.scenario_id,
+                            "lane_id": "oxxlplay",
+                            "events": [
+                                {
+                                    "event_id": "sheet1_a1_value",
+                                    "source_label": "cell_value:Sheet1!A1:direct",
+                                    "normalized_family": "excel.surface.cell_value.direct:Sheet1!A1=6"
+                                }
+                            ],
+                            "registry_refs": [],
+                            "comparison_views": [
+                                {
+                                    "view_family": "comparison_value",
+                                    "value": {
+                                        "boundary": "published_formula_result",
+                                        "value": captured_cell_value,
+                                        "wire_schema": "oxfunc_value_types.aligned_json.v1"
+                                    }
+                                },
+                                {
+                                    "view_family": "effective_display_text",
+                                    "value": captured_effective_display_text
+                                }
+                            ]
+                        }),
+                    )
+                    .expect("normalized replay should write");
+                    case_index.push(json!({
+                        "case_id": case.case_id,
+                        "status": batch_case_status,
+                        "output_dir": output_dir_repo_relative,
+                        "capture_path": format!("{output_dir_repo_relative}/capture.json"),
+                        "oxreplay_manifest_path": format!("{output_dir_repo_relative}/oxreplay-manifest.json"),
+                        "normalized_replay_path": format!("{output_dir_repo_relative}/views/normalized-replay.json")
+                    }));
+                } else {
+                    case_index.push(json!({
+                        "case_id": case.case_id,
+                        "status": batch_case_status,
+                        "error": self.batch_case_error.clone(),
+                        "output_dir": output_dir_repo_relative
+                    }));
+                }
             }
 
             write_json_file(
@@ -3816,9 +4140,11 @@ mod tests {
             _right_kind: &str,
         ) -> Result<VerificationCommandCapture, String> {
             self.calls.lock().expect("calls").push("diff".to_string());
+            let left = read_json_file(left_path).expect("left projection json");
+            let right = read_json_file(right_path).expect("right replay json");
             if self.assert_compare_inputs_ready {
-                let left = read_json_file(left_path).expect("left projection json");
-                let right = read_json_file(right_path).expect("right replay json");
+                assert!(projection_comparison_value(&left, EXECUTION_OUTCOME_VIEW_FAMILY).is_some());
+                assert!(projection_comparison_value(&right, EXECUTION_OUTCOME_VIEW_FAMILY).is_some());
                 assert!(projection_comparison_value(&left, "comparison_value").is_some());
                 if let Some(display_value) = projection_comparison_value(&left, "effective_display_text") {
                     assert_eq!(display_value, json!("6"));
@@ -3831,17 +4157,15 @@ mod tests {
                     }))
                 );
             }
+            let diff_report = if self.diff_equivalent {
+                json!({"equivalent": true, "mismatches": []})
+            } else {
+                fake_diff_report(&left, &right)
+            };
             Ok(VerificationCommandCapture {
                 command_label: "oxreplay-diff".to_string(),
                 exit_code: self.diff_exit_code,
-                stdout: format!(
-                    "{{\"equivalent\":{}}}",
-                    if self.diff_equivalent {
-                        "true"
-                    } else {
-                        "false"
-                    }
-                ),
+                stdout: serde_json::to_string(&diff_report).expect("diff report json"),
                 stderr: String::new(),
             })
         }
@@ -3918,6 +4242,129 @@ mod tests {
     }
 
     #[test]
+    fn verification_batch_uses_oxreplay_display_mismatch_for_host_verdict() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-display-mismatch".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: Some(sample_programmatic_formatting_context()),
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            captured_cell_value: Some(json!({
+                "kind": "number",
+                "number": 6.0
+            })),
+            captured_value_repr: Some("6".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Mismatched);
+        assert_eq!(case_report.value_match, Some(true));
+        assert_eq!(case_report.display_match, Some(false));
+        assert_eq!(case_report.replay_equivalent, Some(false));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_treats_pre_execution_rejection_equivalence_as_matched() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "FTC-0448".to_string(),
+                entered_cell_text: "=LET(dict,{\"x\",LAMBDA(100);\"y\",LAMBDA(200)},GETlambda,LAMBDA(d,LAMBDA(key,LET(keys,TAKE(d,,1),objects,DROP(d,,1),obj,XLOOKUP(key,keys,objects,\"not found\"),obj()))),getter,GETlambda(dict),getter(\"y\"))".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            batch_case_status: Some("failed".to_string()),
+            batch_case_error: Some("programmatic_formula_authoring_failed: Excel COM rejected Formula2 assignment for entered_cell_text with 0x800A03EC".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(case_report.value_match, None);
+        assert_eq!(case_report.display_match, None);
+        assert_eq!(case_report.replay_equivalent, Some(true));
+        assert!(case_report.excel_summary.is_none());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_blocks_when_required_replay_value_surface_is_missing() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-missing-compare-value".to_string(),
+                entered_cell_text: "=SUM(1,2,3)".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            captured_cell_value: Some(Value::Null),
+            captured_value_repr: Some("".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Blocked);
+        assert!(case_report
+            .discrepancy_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("comparison_value")));
+        assert_eq!(case_report.replay_equivalent, None);
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
     fn verification_batch_emits_programmatic_formula_scenario_for_formula_cases() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
@@ -3966,7 +4413,7 @@ mod tests {
         );
         assert_eq!(
             scenario["requested_observation_scope"]["oxreplay_required_views"],
-            json!(["comparison_value", "effective_display_text"])
+            json!(["execution_outcome", "comparison_value", "effective_display_text"])
         );
         assert!(scenario["observable_surfaces"]
             .as_array()
@@ -4293,9 +4740,10 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Mismatched);
-        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(case_report.value_match, Some(true));
         assert_eq!(case_report.display_match, None);
+        assert_eq!(case_report.replay_equivalent, Some(true));
         assert_eq!(case_report.oxfml_summary.blocked_reason, None);
         assert_eq!(case_report.oxfml_summary.effective_display_summary, None);
 
@@ -4451,7 +4899,10 @@ mod tests {
         );
         assert_eq!(
             scope.oxreplay_required_views,
-            vec!["comparison_value".to_string()]
+            vec![
+                "execution_outcome".to_string(),
+                "comparison_value".to_string()
+            ]
         );
     }
 
@@ -4480,6 +4931,7 @@ mod tests {
         assert_eq!(
             scope.oxreplay_required_views,
             vec![
+                "execution_outcome".to_string(),
                 "comparison_value".to_string(),
                 "effective_display_text".to_string(),
             ]
@@ -4556,8 +5008,8 @@ mod tests {
         );
         assert_eq!(case_report.value_match, Some(false));
         assert_eq!(case_report.display_match, None);
-        assert_eq!(case_report.replay_equivalent, None);
-        assert_eq!(case_report.replay_mismatch_records.len(), 0);
+        assert_eq!(case_report.replay_equivalent, Some(false));
+        assert_eq!(case_report.replay_mismatch_records.len(), 1);
         assert!(
             case_report.discrepancy_summary.as_deref().is_some_and(
                 |summary| summary.contains("Replay validate-bundle failed (exit code 1)")
@@ -4567,7 +5019,9 @@ mod tests {
             runner.calls.lock().expect("calls").clone(),
             vec![
                 "oxxlplay_capture_batch".to_string(),
-                "validate_bundle".to_string()
+                "validate_bundle".to_string(),
+                "diff".to_string(),
+                "explain".to_string()
             ]
         );
 
@@ -4609,7 +5063,7 @@ mod tests {
                 parse_status: Some("Valid".to_string()),
                 green_tree_key: Some("green-1".to_string()),
             },
-            &ExcelObservationSummary {
+            Some(&ExcelObservationSummary {
                 comparison_value: Some(json!(6)),
                 observed_value_repr: Some("$6.00".to_string()),
                 effective_display_text: Some("$6.00".to_string()),
@@ -4618,7 +5072,7 @@ mod tests {
                 render_locale_pinned: None,
                 render_locale_source: None,
                 render_locale_note: None,
-            },
+            }),
         );
 
         assert_eq!(
@@ -4853,9 +5307,17 @@ mod tests {
         )
         .expect("input replay json");
 
-        let compare_ready_path =
-            materialize_compare_ready_normalized_replay(&input_path, &output_path)
-                .expect("compare-ready replay");
+        let compare_ready_path = materialize_compare_ready_normalized_replay(
+            &input_path,
+            &output_path,
+            &vec![
+                EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
+                "comparison_value".to_string(),
+                "effective_display_text".to_string(),
+            ],
+            &normalized_completed_execution_outcome(),
+        )
+        .expect("compare-ready replay");
         let compare_ready = read_json_file(compare_ready_path).expect("compare-ready json");
 
         assert_eq!(
@@ -4868,6 +5330,10 @@ mod tests {
         assert_eq!(
             projection_comparison_value(&compare_ready, "effective_display_text"),
             Some(json!("55"))
+        );
+        assert_eq!(
+            projection_comparison_value(&compare_ready, EXECUTION_OUTCOME_VIEW_FAMILY),
+            Some(normalized_completed_execution_outcome())
         );
 
         let _ = fs::remove_dir_all(temp_root);
@@ -5391,7 +5857,7 @@ mod tests {
         );
         assert_eq!(case_report.value_match, Some(false));
         assert_eq!(case_report.display_match, None);
-        assert_eq!(case_report.replay_equivalent, None);
+        assert_eq!(case_report.replay_equivalent, Some(false));
         assert!(case_report
             .discrepancy_summary
             .as_deref()
@@ -5471,69 +5937,125 @@ mod tests {
     }
 
     #[test]
-    fn derive_comparison_status_uses_value_only_result_when_display_comparison_is_disabled() {
+    fn host_verdict_uses_oxreplay_equivalence_output() {
         assert_eq!(
-            derive_comparison_status(Some(true), None, false),
+            derive_host_comparison_status_from_replay(true),
             ProgrammaticComparisonStatus::Matched
         );
         assert_eq!(
-            derive_comparison_status(Some(false), None, false),
+            derive_host_comparison_status_from_replay(false),
             ProgrammaticComparisonStatus::Mismatched
         );
+    }
+
+    #[test]
+    fn exact_numeric_mismatch_shape_is_consumed_from_oxreplay_records() {
+        let mismatch_records = parse_oxreplay_mismatch_records(&json!({
+            "equivalent": false,
+            "mismatches": [
+                {
+                    "mismatch_kind": "comparison_value",
+                    "severity": "semantic",
+                    "view_family": "comparison_value",
+                    "left_value": { "kind": "number", "number": 14.206699082890463_f64 },
+                    "right_value": { "kind": "number", "number": 14.206699082890465_f64 },
+                    "detail": "typed comparison values diverged"
+                }
+            ]
+        }));
+
         assert_eq!(
-            derive_comparison_status(None, None, false),
-            ProgrammaticComparisonStatus::Blocked
+            derive_replay_axis_match(&mismatch_records, "comparison_value", true),
+            Some(false)
         );
     }
 
     #[test]
-    fn comparison_values_match_requires_exact_numeric_identity() {
-        assert!(!comparison_values_match(
-            &json!({
-                "kind": "number",
-                "number": 14.206699082890463_f64
-            }),
-            &json!({
-                "kind": "number",
-                "number": 14.206699082890465_f64
-            })
-        ));
+    fn display_divergence_is_consumed_from_oxreplay_records() {
+        let mismatch_records = parse_oxreplay_mismatch_records(&json!({
+            "equivalent": false,
+            "mismatches": [
+                {
+                    "mismatch_kind": "effective_display_text",
+                    "severity": "informational",
+                    "view_family": "effective_display_text",
+                    "left_value": "$1,234.50",
+                    "right_value": "1234.5",
+                    "detail": "comparison view values diverged"
+                }
+            ]
+        }));
+
+        assert_eq!(
+            derive_replay_axis_match(&mismatch_records, "effective_display_text", true),
+            Some(false)
+        );
     }
 
     #[test]
-    fn display_strings_match_requires_exact_string_identity() {
-        let case = ProgrammaticFormulaCase {
-            case_id: "case-display-equivalent".to_string(),
-            entered_cell_text: "=1".to_string(),
-            spreadsheet_xml_source: None,
-            formatting_context: Some(default_programmatic_corpus_formatting_context()),
-        };
+    fn typed_execution_outcome_equivalence_is_consumed_from_oxreplay() {
+        let left = json!({
+            "comparison_views": [
+                {
+                    "view_family": "execution_outcome",
+                    "value": normalized_pre_execution_rejection_outcome()
+                }
+            ]
+        });
+        let right = json!({
+            "comparison_views": [
+                {
+                    "view_family": "execution_outcome",
+                    "value": normalized_pre_execution_rejection_outcome()
+                }
+            ]
+        });
 
-        assert!(!display_strings_match(
-            &case,
-            None,
-            Some(true),
-            "$1,234.50",
-            "1234.5"
-        ));
+        let diff_report = fake_diff_report(&left, &right);
+        assert_eq!(diff_report["equivalent"], json!(true));
+        assert_eq!(
+            derive_host_comparison_status_from_replay(
+                diff_report["equivalent"].as_bool().expect("equivalent")
+            ),
+            ProgrammaticComparisonStatus::Matched
+        );
     }
 
     #[test]
-    fn display_strings_match_keeps_numeric_divergence_red() {
-        let case = ProgrammaticFormulaCase {
-            case_id: "case-display-divergent".to_string(),
-            entered_cell_text: "=1".to_string(),
-            spreadsheet_xml_source: None,
-            formatting_context: Some(default_programmatic_corpus_formatting_context()),
-        };
+    fn missing_required_replay_view_remains_host_blocked_policy() {
+        let left = json!({
+            "comparison_views": [
+                {
+                    "view_family": "execution_outcome",
+                    "value": normalized_completed_execution_outcome()
+                },
+                {
+                    "view_family": "comparison_value",
+                    "value": { "kind": "number", "number": 6.0 }
+                }
+            ]
+        });
+        let right = json!({
+            "comparison_views": [
+                {
+                    "view_family": "execution_outcome",
+                    "value": normalized_completed_execution_outcome()
+                }
+            ]
+        });
 
-        assert!(!display_strings_match(
-            &case,
-            None,
-            Some(true),
-            "$1,234.50",
-            "$1,234.51"
-        ));
+        assert_eq!(
+            missing_required_replay_view_reason(
+                &left,
+                &right,
+                &[
+                    "execution_outcome".to_string(),
+                    "comparison_value".to_string()
+                ]
+            )
+            .as_deref(),
+            Some("Comparison blocked: required replay comparison view `comparison_value` was unavailable on Excel")
+        );
     }
 
     #[test]

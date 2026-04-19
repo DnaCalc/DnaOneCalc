@@ -58,14 +58,15 @@ Current interpretation:
 3. persistence,
 4. scenario orchestration,
 5. replay and comparison presentation,
-6. upstream handoff production,
-7. host-level test scaffolding, retained scenario corpora, and acceptance harnesses,
-8. extension hosting.
+6. final host verdict policy over `Matched` / `Mismatched` / `Blocked`,
+7. upstream handoff production,
+8. host-level test scaffolding, retained scenario corpora, and acceptance harnesses,
+9. extension hosting.
 
 `DnaOneCalc` does not own:
 1. formula semantics,
 2. function semantics,
-3. replay semantics,
+3. replay comparison or equivalence semantics,
 4. VBA semantics,
 5. Excel observation semantics.
 

@@ -103,17 +103,19 @@ Explicit non-dependency for the initial repo mission:
 1. `OxCalc`
 
 Ownership split:
-1. `DnaOneCalc` owns product shell, host policy, UI, persistence, extension hosting, scenario orchestration, and upstream handoff production.
+1. `DnaOneCalc` owns product shell, host policy, UI, persistence, extension hosting, scenario orchestration, final host verdict policy, and upstream handoff production.
 2. `OxFml` owns formula-language semantics, host-policy seams, semantic formatting, formula-semantic conditional-formatting carriers, and the canonical formula-edit language-service substrate used by hosts.
 3. `OxFunc` owns value and function semantics, library/runtime context seams, registered-external function machinery, and the authoritative function-help or signature-metadata truth that OxFml should project into host-facing editor packets.
-4. `OxReplay` owns replay bundle, replay execution, diff, explain, witness, and adapter/conformance infrastructure.
+4. `OxReplay` owns replay bundle, replay execution, diff, explain, witness, adapter/conformance infrastructure, and the detailed comparison/equivalence semantics consumed by OneCalc verification.
 5. `OxXlPlay` owns live Excel-facing observation and capture.
 6. `OxVba` owns VBA semantics and later VBA-backed extension tooling.
 
 Important rule:
 1. `DnaOneCalc` consumes lane semantics,
 2. it does not locally redefine them,
-3. it should produce structured downstream pressure and actionable upstream work rather than pretending the current libraries are frozen.
+3. verification compare-ready bundles should hand normalized comparison surfaces to `OxReplay` rather than reimplementing value, display, numeric, or typed-outcome equivalence locally,
+4. `DnaOneCalc` should derive only the final host verdict from `OxReplay` output plus local completeness/blocking policy,
+5. it should produce structured downstream pressure and actionable upstream work rather than pretending the current libraries are frozen.
 
 ### 4.0 Upstream Reference Rule
 `DNA OneCalc` should design and implement against the authoritative upstream slices recorded in Section `19`.
@@ -1447,7 +1449,9 @@ The first serious UI wave should expose named workbench modes under the followin
 4. the first honest comparison-ready observation family is still `xlplay_capture_values_formulae_001`, with direct cell-value and formula-text comparison only,
 5. `OxXlPlay` surfaces must be treated as `direct`, `derived`, or `unavailable`, and `unavailable` surfaces are not comparison-eligible,
 6. the current `OxXlPlay` replay-facing normalized view is explicitly `lossy`,
-7. `OxVba` replay-facing consumption falls outside the current scope.
+7. `DnaOneCalc` should assemble native OxFml and OxXlPlay evidence into compare-ready bundles, including normalized typed `execution_outcome` surfaces where needed, then hand detailed equivalence to `OxReplay`,
+8. the host should keep `Blocked` for missing, unavailable, or otherwise non-comparable required surfaces and other local host-policy gaps rather than flattening them into semantic pass/fail,
+9. `OxVba` replay-facing consumption falls outside the current scope.
 
 Operational consequence:
 1. OneCalc should surface replay capability floors, observation provenance, and projection or lossiness markers directly in the UI and retained artifacts,
