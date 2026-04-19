@@ -908,6 +908,28 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     }
 
     let oxfml_outcome = classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json);
+    if locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        &prepared.oxfml_result.replay_projection_json,
+        prepared.oxfml_result.summary.comparison_value.as_ref(),
+    ) {
+        let blocked_reason = "Comparison blocked: `comparison_value` is not comparison-eligible for this non-XML programmatic case because Excel render locale/separator state is unpinned while OxFml marks locale-sensitive semantic text dependency under explicit locale context".to_string();
+        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+        return finish_case_report(
+            repo_root,
+            prepared,
+            ProgrammaticComparisonStatus::Blocked,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some(blocked_reason),
+            excel_summary,
+        );
+    }
     let comparison_plan = build_replay_comparison_plan(
         display_comparison_enabled,
         &oxfml_outcome,
@@ -965,7 +987,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         );
     }
 
-    let replay_validate_diagnostic = if excel_outcome.ordinary_value_comparable {
+    if excel_outcome.ordinary_value_comparable {
         let validate_capture = runner.run_oxreplay_validate_bundle(&manifest_path)?;
         write_json_file(
             prepared.command_dir.join("oxreplay-validate-bundle.json"),
@@ -977,15 +999,27 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
                 &validate_capture.stdout,
             )?;
         }
-        (validate_capture.exit_code != 0).then(|| {
-            format!(
-                "Replay validate-bundle failed (exit code {})",
+        if validate_capture.exit_code != 0 {
+            let blocked_reason = format!(
+                "Comparison blocked: OxReplay validate-bundle failed (exit code {})",
                 validate_capture.exit_code
-            )
-        })
-    } else {
-        None
-    };
+            );
+            prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+            return finish_case_report(
+                repo_root,
+                prepared,
+                ProgrammaticComparisonStatus::Blocked,
+                None,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Some(blocked_reason),
+                excel_summary,
+            );
+        }
+    }
 
     let diff_capture = runner.run_oxreplay_diff(
         &compare_ready_projection_path,
@@ -1003,6 +1037,26 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             &diff_capture.stdout,
         )?;
     }
+    if diff_capture.exit_code != 0 {
+        let blocked_reason = format!(
+            "Comparison blocked: OxReplay diff failed (exit code {})",
+            diff_capture.exit_code
+        );
+        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+        return finish_case_report(
+            repo_root,
+            prepared,
+            ProgrammaticComparisonStatus::Blocked,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some(blocked_reason),
+            excel_summary,
+        );
+    }
 
     let explain_capture = runner.run_oxreplay_explain(
         &compare_ready_projection_path,
@@ -1019,6 +1073,26 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             prepared.oxreplay_dir.join("explain.report.json"),
             &explain_capture.stdout,
         )?;
+    }
+    if explain_capture.exit_code != 0 {
+        let blocked_reason = format!(
+            "Comparison blocked: OxReplay explain failed (exit code {})",
+            explain_capture.exit_code
+        );
+        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
+        return finish_case_report(
+            repo_root,
+            prepared,
+            ProgrammaticComparisonStatus::Blocked,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some(blocked_reason),
+            excel_summary,
+        );
     }
 
     let diff_report = parse_json_text(&diff_capture.stdout, "OxReplay diff stdout")?;
@@ -1049,44 +1123,14 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         comparison_plan.display_comparable,
     );
 
-    if should_block_unpinned_programmatic_locale_sensitive_text_comparison(
-        &prepared.effective_case,
-        prepared.spreadsheet_xml_extraction.as_ref(),
-        &prepared.oxfml_result.replay_projection_json,
-        value_match,
-        prepared.oxfml_result.summary.comparison_value.as_ref(),
-        excel_summary
-            .as_ref()
-            .and_then(|summary| summary.comparison_value.as_ref()),
-    ) {
-        let blocked_reason = "Value comparison blocked: locale-sensitive semantic text was produced under explicit OxFml locale context, but Excel-side render locale is unpinned and recorded as observation_machine_default for this non-XML programmatic case".to_string();
-        prepared.oxfml_result.summary.blocked_reason = Some(blocked_reason.clone());
-        return finish_case_report(
-            repo_root,
-            prepared,
-            ProgrammaticComparisonStatus::Blocked,
-            value_match,
-            display_match,
-            Some(is_equivalent),
-            replay_mismatch_kinds,
-            replay_mismatch_records,
-            replay_explain_records,
-            Some(blocked_reason),
-            excel_summary,
-        );
-    }
-
     let comparison_status = derive_host_comparison_status_from_replay(is_equivalent);
-    let discrepancy_summary = append_replay_diagnostic_summary(
-        build_discrepancy_summary(
-            comparison_status,
-            value_match,
-            display_match,
-            &replay_mismatch_records,
-            &prepared.oxfml_result.summary,
-            excel_summary.as_ref(),
-        ),
-        replay_validate_diagnostic.unwrap_or_default(),
+    let discrepancy_summary = build_discrepancy_summary(
+        comparison_status,
+        value_match,
+        display_match,
+        &replay_mismatch_records,
+        &prepared.oxfml_result.summary,
+        excel_summary.as_ref(),
     );
 
     finish_case_report(
@@ -2687,19 +2731,15 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
     summary.effective_display_text.as_deref()
 }
 
-fn should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
     oxfml_projection: &Value,
-    value_match: Option<bool>,
     oxfml_value: Option<&Value>,
-    excel_value: Option<&Value>,
 ) -> bool {
-    value_match == Some(false)
-        && spreadsheet_xml_extraction.is_none()
+    spreadsheet_xml_extraction.is_none()
         && excel_render_locale_is_unpinned(case, spreadsheet_xml_extraction)
         && oxfml_value.is_some_and(comparison_value_is_text)
-        && excel_value.is_some_and(comparison_value_is_text)
         && projection_marks_locale_sensitive_semantic_text_dependency(oxfml_projection)
 }
 
@@ -3058,7 +3098,11 @@ fn materialize_synthetic_compare_ready_replay(
     execution_outcome: &Value,
 ) -> Result<PathBuf, String> {
     let replay = json!({
+        "scenario_id": format!("onecalc_verify_{}", sanitize_case_id(case_id)),
         "source_case_id": case_id,
+        "lane_id": "synthetic-host-observation",
+        "events": [],
+        "registry_refs": [],
         "comparison_views": [
             {
                 "view_family": EXECUTION_OUTCOME_VIEW_FAMILY,
@@ -3456,20 +3500,6 @@ fn render_comparison_value(value: &Value) -> String {
         Value::Number(value) => value.to_string(),
         Value::String(value) => value.clone(),
         other => serde_json::to_string(other).unwrap_or_else(|_| "<unavailable>".to_string()),
-    }
-}
-
-fn append_replay_diagnostic_summary(
-    discrepancy_summary: Option<String>,
-    diagnostic: String,
-) -> Option<String> {
-    if diagnostic.trim().is_empty() {
-        return discrepancy_summary;
-    }
-
-    match discrepancy_summary {
-        Some(summary) => Some(format!("{summary} | {diagnostic}")),
-        None => Some(diagnostic),
     }
 }
 
@@ -4213,7 +4243,6 @@ mod tests {
         };
         let runner = FakeVerificationRunner {
             diff_equivalent: false,
-            diff_exit_code: 1,
             ..Default::default()
         };
 
@@ -4973,7 +5002,7 @@ mod tests {
     }
 
     #[test]
-    fn verification_batch_surfaces_validate_bundle_failure_as_replay_diagnostic() {
+    fn verification_batch_blocks_on_replay_validate_bundle_failure() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
             SystemTime::now()
@@ -5004,24 +5033,22 @@ mod tests {
 
         assert_eq!(
             case_report.comparison_status,
-            ProgrammaticComparisonStatus::Mismatched
+            ProgrammaticComparisonStatus::Blocked
         );
-        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.value_match, None);
         assert_eq!(case_report.display_match, None);
-        assert_eq!(case_report.replay_equivalent, Some(false));
-        assert_eq!(case_report.replay_mismatch_records.len(), 1);
+        assert_eq!(case_report.replay_equivalent, None);
+        assert_eq!(case_report.replay_mismatch_records.len(), 0);
         assert!(
             case_report.discrepancy_summary.as_deref().is_some_and(
-                |summary| summary.contains("Replay validate-bundle failed (exit code 1)")
+                |summary| summary.contains("Comparison blocked: OxReplay validate-bundle failed (exit code 1)")
             )
         );
         assert_eq!(
             runner.calls.lock().expect("calls").clone(),
             vec![
                 "oxxlplay_capture_batch".to_string(),
-                "validate_bundle".to_string(),
-                "diff".to_string(),
-                "explain".to_string()
+                "validate_bundle".to_string()
             ]
         );
 
@@ -5270,6 +5297,35 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn materialize_synthetic_compare_ready_replay_includes_scenario_identity() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-synthetic-compare-ready-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_path = temp_root.join("normalized-replay.compare-ready.json");
+
+        let replay_path = materialize_synthetic_compare_ready_replay(
+            &output_path,
+            "FTC-0448",
+            &normalized_pre_execution_rejection_outcome(),
+        )
+        .expect("synthetic compare-ready replay");
+        let replay = read_json_file(replay_path).expect("synthetic replay json");
+
+        assert_eq!(replay["scenario_id"], json!("onecalc_verify_FTC-0448"));
+        assert_eq!(replay["lane_id"], json!("synthetic-host-observation"));
+        assert_eq!(
+            projection_comparison_value(&replay, EXECUTION_OUTCOME_VIEW_FAMILY),
+            Some(normalized_pre_execution_rejection_outcome())
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 
     #[test]
@@ -5855,9 +5911,9 @@ mod tests {
                 "text": "1234,567.89"
             }))
         );
-        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.value_match, None);
         assert_eq!(case_report.display_match, None);
-        assert_eq!(case_report.replay_equivalent, Some(false));
+        assert_eq!(case_report.replay_equivalent, None);
         assert!(case_report
             .discrepancy_summary
             .as_deref()
@@ -5869,12 +5925,16 @@ mod tests {
                 .and_then(|summary| summary.render_locale_source.as_deref()),
             Some("observation_machine_default")
         );
+        assert_eq!(
+            runner.calls.lock().expect("calls").clone(),
+            vec!["oxxlplay_capture_batch".to_string()]
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }
 
     #[test]
-    fn should_block_unpinned_programmatic_locale_sensitive_text_comparison_blocks_0288_shape() {
+    fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible_for_0288_shape() {
         let case = ProgrammaticFormulaCase {
             case_id: "FTC-0288".to_string(),
             entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
@@ -5897,13 +5957,11 @@ mod tests {
             ]
         });
 
-        assert!(should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+        assert!(locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
             &case,
             None,
             &projection,
-            Some(false),
-            Some(&json!({"kind":"text","text":"1,234,567.89"})),
-            Some(&json!({"kind":"text","text":"1234,567.89"}))
+            Some(&json!({"kind":"text","text":"1,234,567.89"}))
         ));
     }
 
@@ -5926,13 +5984,11 @@ mod tests {
             ]
         });
 
-        assert!(!should_block_unpinned_programmatic_locale_sensitive_text_comparison(
+        assert!(!locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
             &case,
             None,
             &projection,
-            Some(false),
-            Some(&json!({"kind":"number","number":14.206699082890463})),
-            Some(&json!({"kind":"number","number":14.206699082890465}))
+            Some(&json!({"kind":"number","number":14.206699082890463}))
         ));
     }
 

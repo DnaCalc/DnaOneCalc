@@ -1450,8 +1450,9 @@ The first serious UI wave should expose named workbench modes under the followin
 5. `OxXlPlay` surfaces must be treated as `direct`, `derived`, or `unavailable`, and `unavailable` surfaces are not comparison-eligible,
 6. the current `OxXlPlay` replay-facing normalized view is explicitly `lossy`,
 7. `DnaOneCalc` should assemble native OxFml and OxXlPlay evidence into compare-ready bundles, including normalized typed `execution_outcome` surfaces where needed, then hand detailed equivalence to `OxReplay`,
-8. the host should keep `Blocked` for missing, unavailable, or otherwise non-comparable required surfaces and other local host-policy gaps rather than flattening them into semantic pass/fail,
-9. `OxVba` replay-facing consumption falls outside the current scope.
+8. the host should keep `Blocked` for missing, unavailable, untrusted, or otherwise non-comparison-eligible required surfaces and other local host-policy gaps rather than flattening them into semantic pass/fail,
+9. replay-compare inputs that fail `validate-bundle` should be treated as untrusted and therefore `Blocked` rather than merely diagnostic,
+10. `OxVba` replay-facing consumption falls outside the current scope.
 
 Operational consequence:
 1. OneCalc should surface replay capability floors, observation provenance, and projection or lossiness markers directly in the UI and retained artifacts,
