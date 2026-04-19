@@ -3632,6 +3632,10 @@ mod tests {
         explain_exit_code: i32,
         diff_equivalent: bool,
         assert_compare_inputs_ready: bool,
+        captured_cell_value: Option<Value>,
+        captured_value_repr: Option<String>,
+        captured_formula_text: Option<String>,
+        captured_effective_display_text: Option<String>,
         calls: Mutex<Vec<String>>,
     }
 
@@ -3656,6 +3660,31 @@ mod tests {
                 fs::create_dir_all(output_dir.join("views")).expect("views dir");
                 let repo_root = repo_root().expect("repo root");
                 let output_dir_repo_relative = display_repo_relative(&output_dir, &repo_root);
+                let captured_cell_value = self
+                    .captured_cell_value
+                    .clone()
+                    .unwrap_or_else(|| json!(6));
+                let captured_value_repr = self.captured_value_repr.clone().unwrap_or_else(|| {
+                    if self.diff_equivalent {
+                        "6".to_string()
+                    } else {
+                        "7".to_string()
+                    }
+                });
+                let captured_formula_text = self
+                    .captured_formula_text
+                    .clone()
+                    .unwrap_or_else(|| "=SUM(1,2,3)".to_string());
+                let captured_effective_display_text = self
+                    .captured_effective_display_text
+                    .clone()
+                    .unwrap_or_else(|| {
+                        if self.diff_equivalent {
+                            "6".to_string()
+                        } else {
+                            "$7.00".to_string()
+                        }
+                    });
                 write_json_file(
                     output_dir.join("capture.json"),
                     &json!({
@@ -3668,8 +3697,8 @@ mod tests {
                             "required": true
                         },
                         "status": "direct",
-                        "comparison_value": 6,
-                        "value_repr": if self.diff_equivalent { "6" } else { "7" },
+                        "comparison_value": captured_cell_value,
+                        "value_repr": captured_value_repr,
                         "capture_loss": "none",
                         "uncertainty": "none"
                             },
@@ -3681,7 +3710,7 @@ mod tests {
                                     "required": false
                                 },
                                 "status": "direct",
-                                "value_repr": "=SUM(1,2,3)",
+                                "value_repr": captured_formula_text,
                                 "capture_loss": "none",
                                 "uncertainty": "none"
                             },
@@ -3693,7 +3722,7 @@ mod tests {
                                     "required": true
                                 },
                                 "status": "direct",
-                                "value_repr": if self.diff_equivalent { "6" } else { "$7.00" },
+                                "value_repr": captured_effective_display_text,
                                 "capture_loss": "none",
                                 "uncertainty": "none"
                             }
@@ -3728,16 +3757,13 @@ mod tests {
                                 "view_family": "comparison_value",
                                 "value": {
                                     "boundary": "published_formula_result",
-                                    "value": {
-                                        "kind": "number",
-                                        "number": 6.0
-                                    },
+                                    "value": captured_cell_value,
                                     "wire_schema": "oxfunc_value_types.aligned_json.v1"
                                 }
                             },
                             {
                                 "view_family": "effective_display_text",
-                                "value": if self.diff_equivalent { "6" } else { "$7.00" }
+                                "value": captured_effective_display_text
                             }
                         ]
                     }),
@@ -4072,6 +4098,77 @@ mod tests {
                 .as_ref()
                 .and_then(|summary| summary.render_locale_source.as_deref()),
             Some("observation_machine_default")
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_records_separator_context_for_locale_sensitive_text_cases() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-separator-context".to_string(),
+                entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: Some(ProgrammaticFormattingContext {
+                    format_profile_id: Some("en-US".to_string()),
+                    number_format_code: Some("#,##0.00".to_string()),
+                    date1904: Some(false),
+                }),
+            }],
+        };
+        let runner = FakeVerificationRunner::default();
+
+        run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+
+        let case_dir = output_root.join("cases").join("case-separator-context");
+        let case_input: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("case-input.json")).expect("case input json"),
+        )
+        .expect("case input parse");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
+        let projection = read_json_file(case_dir.join("oxfml-v1-replay-projection.json"))
+            .expect("projection json");
+
+        assert_eq!(
+            case_input["excel_render_context"]["render_locale_pinned"],
+            json!(false)
+        );
+        assert_eq!(
+            case_input["excel_render_context"]["requested_format_profile_id"],
+            json!("en-US")
+        );
+        assert_eq!(
+            scenario["excel_render_context"]["render_locale_source"],
+            json!("observation_machine_default")
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["number_format_code"],
+            json!("#,##0.00")
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["locale_format_context"]
+                ["decimal_separator"],
+            json!(".")
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["locale_format_context"]
+                ["thousands_separator"],
+            json!(",")
         );
 
         let _ = fs::remove_dir_all(temp_root);
@@ -5233,6 +5330,81 @@ mod tests {
             .as_deref()
             .expect("render locale note")
             .contains("does not carry any Excel-side locale pin"));
+    }
+
+    #[test]
+    fn verification_batch_blocks_separator_sensitive_text_mismatch_shape_for_0288() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "FTC-0288".to_string(),
+                entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            captured_cell_value: Some(json!({
+                "kind": "text",
+                "text": "1234,567.89"
+            })),
+            captured_value_repr: Some("1234,567.89".to_string()),
+            captured_formula_text: Some("=TEXT(1234567.89,\"#,##0.00\")".to_string()),
+            captured_effective_display_text: Some("1234,567.89".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Blocked
+        );
+        assert_eq!(
+            case_report.oxfml_summary.comparison_value,
+            Some(json!({
+                "kind": "text",
+                "text": "1,234,567.89"
+            }))
+        );
+        assert_eq!(
+            case_report
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.comparison_value.clone()),
+            Some(json!({
+                "kind": "text",
+                "text": "1234,567.89"
+            }))
+        );
+        assert_eq!(case_report.value_match, Some(false));
+        assert_eq!(case_report.display_match, None);
+        assert_eq!(case_report.replay_equivalent, None);
+        assert!(case_report
+            .discrepancy_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("locale-sensitive semantic text")));
+        assert_eq!(
+            case_report
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_source.as_deref()),
+            Some("observation_machine_default")
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 
     #[test]
