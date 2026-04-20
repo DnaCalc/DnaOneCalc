@@ -21,6 +21,31 @@ pub struct ProgrammaticFormattingContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgrammaticExcelRenderContext {
+    pub render_locale_pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_locale_source: Option<String>,
+    #[serde(default)]
+    pub render_locale_recorded: bool,
+    #[serde(default)]
+    pub trusted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_format_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimal_separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thousands_separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_separator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgrammaticFormulaCase {
     pub case_id: String,
     pub entered_cell_text: String,
@@ -28,6 +53,10 @@ pub struct ProgrammaticFormulaCase {
     pub spreadsheet_xml_source: Option<ProgrammaticSpreadsheetXmlSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formatting_context: Option<ProgrammaticFormattingContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excel_render_context: Option<ProgrammaticExcelRenderContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_context_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +309,8 @@ mod tests {
                 entered_cell_text: "=SUM(1,2)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "windows-excel".to_string(),
@@ -310,6 +341,8 @@ mod tests {
                 entered_cell_text: "'123.4".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
             &ProgrammaticHostProfile {
                 profile_id: "browser".to_string(),

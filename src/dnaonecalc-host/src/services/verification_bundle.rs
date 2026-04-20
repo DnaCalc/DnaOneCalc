@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,8 +13,8 @@ use crate::services::programmatic_testing::{
     default_programmatic_corpus_formatting_context, default_verification_config,
     default_windows_excel_capability_profile,
     default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan,
-    ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticFormattingContext,
-    ProgrammaticFormulaCase, ProgrammaticHostProfile,
+    ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticExcelRenderContext,
+    ProgrammaticFormattingContext, ProgrammaticFormulaCase, ProgrammaticHostProfile,
 };
 use crate::services::spreadsheet_xml::{
     extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction, VerificationObservationScope,
@@ -46,6 +46,8 @@ pub struct VerificationBatchRequest {
     pub capabilities: ProgrammaticCapabilityProfile,
     #[serde(default = "default_verification_replay_policy")]
     pub replay_policy: VerificationReplayPolicy,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub render_contexts: BTreeMap<String, ProgrammaticExcelRenderContext>,
     pub cases: Vec<ProgrammaticFormulaCase>,
 }
 
@@ -216,6 +218,20 @@ struct OxxlplayBatchCaseOutputIndex {
     pub normalized_replay_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EffectiveExcelRenderContextProvenance {
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    render_context_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EffectiveExcelRenderContext {
+    #[serde(flatten)]
+    context: ProgrammaticExcelRenderContext,
+    provenance: EffectiveExcelRenderContextProvenance,
+}
+
 struct PreparedVerificationCase {
     case_dir: PathBuf,
     command_dir: PathBuf,
@@ -224,6 +240,7 @@ struct PreparedVerificationCase {
     scenario_path: PathBuf,
     projection_path: PathBuf,
     effective_case: ProgrammaticFormulaCase,
+    effective_excel_render_context: EffectiveExcelRenderContext,
     spreadsheet_xml_extraction: Option<SpreadsheetXmlCellExtraction>,
     upstream_gap_report: Option<VerificationObservationGapReport>,
     oxfml_result: OxfmlCaseArtifacts,
@@ -400,17 +417,7 @@ pub fn load_verification_batch_request(
             input_path.display()
         )
     })?;
-    if request.cases.is_empty() {
-        return Err("verification batch request must contain at least one case".to_string());
-    }
-    for case in &request.cases {
-        if case.entered_cell_text.trim().is_empty() && case.spreadsheet_xml_source.is_none() {
-            return Err(format!(
-                "verification case `{}` must provide entered_cell_text or spreadsheet_xml_source",
-                case.case_id
-            ));
-        }
-    }
+    validate_verification_request(&request)?;
     Ok(request)
 }
 
@@ -431,11 +438,14 @@ pub fn single_case_request_with_config(
         host_profile: config.host_profile.clone(),
         capabilities: config.capabilities.clone(),
         replay_policy: default_verification_replay_policy(),
+        render_contexts: BTreeMap::new(),
         cases: vec![ProgrammaticFormulaCase {
             case_id: case_id.into(),
             entered_cell_text: formula.into(),
             spreadsheet_xml_source: None,
             formatting_context: Some(default_programmatic_corpus_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         }],
     }
 }
@@ -464,6 +474,7 @@ pub fn single_xml_case_request_with_config(
         host_profile: config.host_profile.clone(),
         capabilities: config.capabilities.clone(),
         replay_policy: default_verification_replay_policy(),
+        render_contexts: BTreeMap::new(),
         cases: vec![ProgrammaticFormulaCase {
             case_id,
             entered_cell_text: extraction.entered_cell_text,
@@ -474,6 +485,8 @@ pub fn single_xml_case_request_with_config(
                 },
             ),
             formatting_context: None,
+            excel_render_context: None,
+            render_context_ref: None,
         }],
     })
 }
@@ -539,6 +552,7 @@ pub fn run_verification_batch_with_runner<R: VerificationCommandRunner>(
             &repo_root,
             output_root,
             case,
+            &request.render_contexts,
             &request.host_profile,
             &request.capabilities,
         )?);
@@ -664,6 +678,7 @@ fn normalize_verification_request(request: &VerificationBatchRequest) -> Verific
         host_profile: request.host_profile.clone(),
         capabilities: request.capabilities.clone(),
         replay_policy: request.replay_policy,
+        render_contexts: request.render_contexts.clone(),
         cases: request
             .cases
             .iter()
@@ -686,6 +701,8 @@ fn normalize_programmatic_formula_case(case: &ProgrammaticFormulaCase) -> Progra
         entered_cell_text: case.entered_cell_text.clone(),
         spreadsheet_xml_source: case.spreadsheet_xml_source.clone(),
         formatting_context,
+        excel_render_context: case.excel_render_context.clone(),
+        render_context_ref: case.render_context_ref.clone(),
     }
 }
 
@@ -700,6 +717,20 @@ fn validate_verification_request(request: &VerificationBatchRequest) -> Result<(
                 case.case_id
             ));
         }
+        if case.excel_render_context.is_some() && case.render_context_ref.is_some() {
+            return Err(format!(
+                "verification case `{}` must not provide both `excel_render_context` and `render_context_ref`",
+                case.case_id
+            ));
+        }
+        if let Some(render_context_ref) = case.render_context_ref.as_deref() {
+            if !request.render_contexts.contains_key(render_context_ref) {
+                return Err(format!(
+                    "verification case `{}` referenced unknown render context `{render_context_ref}`",
+                    case.case_id
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -708,6 +739,7 @@ fn prepare_verification_case(
     repo_root: &Path,
     output_root: &Path,
     case: &ProgrammaticFormulaCase,
+    render_contexts: &BTreeMap<String, ProgrammaticExcelRenderContext>,
     host_profile: &ProgrammaticHostProfile,
     capabilities: &ProgrammaticCapabilityProfile,
 ) -> Result<PreparedVerificationCase, String> {
@@ -757,6 +789,8 @@ fn prepare_verification_case(
             .unwrap_or_else(|| case.entered_cell_text.clone()),
         spreadsheet_xml_source: case.spreadsheet_xml_source.clone(),
         formatting_context: case.formatting_context.clone(),
+        excel_render_context: case.excel_render_context.clone(),
+        render_context_ref: case.render_context_ref.clone(),
     };
     let upstream_gap_report = spreadsheet_xml_extraction
         .as_ref()
@@ -765,10 +799,11 @@ fn prepare_verification_case(
         write_json_file(case_dir.join("upstream-gap-report.json"), gap_report)?;
     }
 
-    let excel_render_context = build_excel_render_context_note(
+    let effective_excel_render_context = resolve_effective_excel_render_context(
         &effective_case,
         spreadsheet_xml_extraction.as_ref(),
-    );
+        render_contexts,
+    )?;
 
     write_json_file(
         case_dir.join("case-input.json"),
@@ -779,7 +814,7 @@ fn prepare_verification_case(
             "host_profile": host_profile,
             "capabilities": capabilities,
             "spreadsheet_xml_extraction": spreadsheet_xml_extraction,
-            "excel_render_context": excel_render_context,
+            "excel_render_context": &effective_excel_render_context,
         }),
     )?;
 
@@ -805,6 +840,7 @@ fn prepare_verification_case(
         &case_dir,
         &effective_case,
         spreadsheet_xml_extraction.as_ref(),
+        &effective_excel_render_context,
     );
     write_json_file(&scenario_path, &scenario_json)?;
 
@@ -823,6 +859,7 @@ fn prepare_verification_case(
         scenario_path,
         projection_path,
         effective_case,
+        effective_excel_render_context,
         spreadsheet_xml_extraction,
         upstream_gap_report,
         oxfml_result,
@@ -890,8 +927,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     let excel_summary = if excel_outcome.ordinary_value_comparable {
         let mut summary = summarize_excel_capture(capture_path)?;
         annotate_excel_observation_render_context(
-            &prepared.effective_case,
-            prepared.spreadsheet_xml_extraction.as_ref(),
+            &prepared.effective_excel_render_context,
             &mut summary,
         );
         write_json_file(
@@ -911,6 +947,7 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     if locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
+        &prepared.effective_excel_render_context,
         &prepared.oxfml_result.replay_projection_json,
         prepared.oxfml_result.summary.comparison_value.as_ref(),
     ) {
@@ -2209,6 +2246,7 @@ fn build_oxxlplay_scenario_json(
     case_dir: &Path,
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    effective_excel_render_context: &EffectiveExcelRenderContext,
 ) -> Value {
     let scenario_id = format!("onecalc_verify_{}", sanitize_case_id(&case.case_id));
     let locator = spreadsheet_xml_extraction
@@ -2234,7 +2272,7 @@ fn build_oxxlplay_scenario_json(
         "requested_observation_scope": requested_observation_scope,
         "source_cell_locator": spreadsheet_xml_extraction.map(|extraction| extraction.locator.clone()),
         "source_workbook_path": spreadsheet_xml_extraction.map(|extraction| extraction.workbook_path.clone()),
-        "excel_render_context": build_excel_render_context_note(case, spreadsheet_xml_extraction)
+        "excel_render_context": effective_excel_render_context
     });
     if spreadsheet_xml_extraction.is_none() {
         scenario["entered_cell_text"] = Value::String(case.entered_cell_text.clone());
@@ -2321,48 +2359,82 @@ fn programmatic_effective_display_surface_requested(
         && programmatic_display_contract_is_explicit(case, spreadsheet_xml_extraction)
 }
 
-fn build_excel_render_context_note(
+fn build_default_excel_render_context(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
-) -> Value {
-    if spreadsheet_xml_extraction.is_some() {
-        json!({
-            "render_locale_pinned": false,
-            "render_locale_source": "observation_machine_default",
-            "render_locale_recorded": false,
-            "note": "SpreadsheetML-backed verification preserves workbook formatting/style evidence but DnaOneCalc does not record any separate Excel-side render-locale pin for the observation host."
-        })
-    } else {
-        json!({
-            "render_locale_pinned": false,
-            "render_locale_source": "observation_machine_default",
-            "render_locale_recorded": false,
-            "requested_format_profile_id": case
-                .formatting_context
+) -> ProgrammaticExcelRenderContext {
+    ProgrammaticExcelRenderContext {
+        render_locale_pinned: false,
+        render_locale_source: Some("observation_machine_default".to_string()),
+        render_locale_recorded: false,
+        trusted: false,
+        requested_format_profile_id: if spreadsheet_xml_extraction.is_none() {
+            case.formatting_context
                 .as_ref()
-                .and_then(|context| context.format_profile_id.clone()),
-            "note": "Programmatic-formula verification injects locale context for OxFml but the generated workbook/scenario does not carry any Excel-side locale pin or locale-capture field; Excel text rendering reflects the observation machine environment."
-        })
+                .and_then(|context| context.format_profile_id.clone())
+        } else {
+            None
+        },
+        decimal_separator: None,
+        thousands_separator: None,
+        list_separator: None,
+        date_separator: None,
+        time_separator: None,
+        note: Some(if spreadsheet_xml_extraction.is_some() {
+            "SpreadsheetML-backed verification preserves workbook formatting/style evidence but DnaOneCalc does not record any separate Excel-side render-locale pin for the observation host.".to_string()
+        } else {
+            "Programmatic-formula verification injects locale context for OxFml but the generated workbook/scenario does not carry any Excel-side locale pin or locale-capture field; Excel text rendering reflects the observation machine environment.".to_string()
+        }),
     }
 }
 
-fn annotate_excel_observation_render_context(
+fn resolve_effective_excel_render_context(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    render_contexts: &BTreeMap<String, ProgrammaticExcelRenderContext>,
+) -> Result<EffectiveExcelRenderContext, String> {
+    if let Some(render_context) = &case.excel_render_context {
+        return Ok(EffectiveExcelRenderContext {
+            context: render_context.clone(),
+            provenance: EffectiveExcelRenderContextProvenance {
+                kind: "inline".to_string(),
+                render_context_ref: None,
+            },
+        });
+    }
+
+    if let Some(render_context_ref) = case.render_context_ref.as_deref() {
+        let context = render_contexts.get(render_context_ref).ok_or_else(|| {
+            format!(
+                "verification case `{}` referenced unknown render context `{render_context_ref}`",
+                case.case_id
+            )
+        })?;
+        return Ok(EffectiveExcelRenderContext {
+            context: context.clone(),
+            provenance: EffectiveExcelRenderContextProvenance {
+                kind: "shared_ref".to_string(),
+                render_context_ref: Some(render_context_ref.to_string()),
+            },
+        });
+    }
+
+    Ok(EffectiveExcelRenderContext {
+        context: build_default_excel_render_context(case, spreadsheet_xml_extraction),
+        provenance: EffectiveExcelRenderContextProvenance {
+            kind: "fallback".to_string(),
+            render_context_ref: None,
+        },
+    })
+}
+
+fn annotate_excel_observation_render_context(
+    effective_excel_render_context: &EffectiveExcelRenderContext,
     summary: &mut ExcelObservationSummary,
 ) {
-    let context = build_excel_render_context_note(case, spreadsheet_xml_extraction);
-    summary.render_locale_pinned = context
-        .get("render_locale_pinned")
-        .and_then(Value::as_bool);
-    summary.render_locale_source = context
-        .get("render_locale_source")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    summary.render_locale_note = context
-        .get("note")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
+    summary.render_locale_pinned = Some(effective_excel_render_context.context.render_locale_pinned);
+    summary.render_locale_source = effective_excel_render_context.context.render_locale_source.clone();
+    summary.render_locale_note = effective_excel_render_context.context.note.clone();
 }
 
 fn build_oxxlplay_observable_surfaces(
@@ -2732,25 +2804,23 @@ fn preferred_excel_display_repr(summary: &ExcelObservationSummary) -> Option<&st
 }
 
 fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
-    case: &ProgrammaticFormulaCase,
+    _case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    effective_excel_render_context: &EffectiveExcelRenderContext,
     oxfml_projection: &Value,
     oxfml_value: Option<&Value>,
 ) -> bool {
     spreadsheet_xml_extraction.is_none()
-        && excel_render_locale_is_unpinned(case, spreadsheet_xml_extraction)
+        && excel_render_context_is_untrusted_or_unpinned(effective_excel_render_context)
         && oxfml_value.is_some_and(comparison_value_is_text)
         && projection_marks_locale_sensitive_semantic_text_dependency(oxfml_projection)
 }
 
-fn excel_render_locale_is_unpinned(
-    case: &ProgrammaticFormulaCase,
-    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+fn excel_render_context_is_untrusted_or_unpinned(
+    effective_excel_render_context: &EffectiveExcelRenderContext,
 ) -> bool {
-    build_excel_render_context_note(case, spreadsheet_xml_extraction)
-        .get("render_locale_pinned")
-        .and_then(Value::as_bool)
-        == Some(false)
+    !effective_excel_render_context.context.trusted
+        || !effective_excel_render_context.context.render_locale_pinned
 }
 
 fn comparison_value_is_text(value: &Value) -> bool {
@@ -3904,6 +3974,22 @@ mod tests {
         default_programmatic_corpus_formatting_context()
     }
 
+    fn sample_trusted_excel_render_context() -> ProgrammaticExcelRenderContext {
+        ProgrammaticExcelRenderContext {
+            render_locale_pinned: true,
+            render_locale_source: Some("captured_excel_host".to_string()),
+            render_locale_recorded: true,
+            trusted: true,
+            requested_format_profile_id: Some("en-US".to_string()),
+            decimal_separator: Some(".".to_string()),
+            thousands_separator: Some(",".to_string()),
+            list_separator: Some(",".to_string()),
+            date_separator: Some("/".to_string()),
+            time_separator: Some(":".to_string()),
+            note: Some("Captured Excel render context".to_string()),
+        }
+    }
+
     fn fake_diff_report(left: &Value, right: &Value) -> Value {
         let mut families = left
             .get("comparison_views")
@@ -4234,11 +4320,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4284,11 +4373,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-display-mismatch".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: Some(sample_programmatic_formatting_context()),
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4326,11 +4418,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "FTC-0448".to_string(),
                 entered_cell_text: "=LET(dict,{\"x\",LAMBDA(100);\"y\",LAMBDA(200)},GETlambda,LAMBDA(d,LAMBDA(key,LET(keys,TAKE(d,,1),objects,DROP(d,,1),obj,XLOOKUP(key,keys,objects,\"not found\"),obj()))),getter,GETlambda(dict),getter(\"y\"))".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4366,11 +4461,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-missing-compare-value".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4407,11 +4505,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-formula".to_string(),
                 entered_cell_text: "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4528,11 +4629,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-programmatic-text".to_string(),
                 entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner::default();
@@ -4558,6 +4662,11 @@ mod tests {
             json!("observation_machine_default")
         );
         assert_eq!(
+            case_input["excel_render_context"]["provenance"]["kind"],
+            json!("fallback")
+        );
+        assert_eq!(case_input["excel_render_context"]["trusted"], json!(false));
+        assert_eq!(
             scenario["excel_render_context"]["render_locale_pinned"],
             json!(false)
         );
@@ -4580,6 +4689,168 @@ mod tests {
     }
 
     #[test]
+    fn verification_batch_records_shared_render_context_refs_in_case_and_scenario() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let mut render_contexts = BTreeMap::new();
+        render_contexts.insert("ctx-1".to_string(), sample_trusted_excel_render_context());
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts,
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-shared-render-context".to_string(),
+                entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: Some("ctx-1".to_string()),
+            }],
+        };
+        let runner = FakeVerificationRunner::default();
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_dir = output_root.join("cases").join("case-shared-render-context");
+        let case_input: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("case-input.json")).expect("case input json"),
+        )
+        .expect("case input parse");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
+
+        assert_eq!(
+            case_input["excel_render_context"]["provenance"]["kind"],
+            json!("shared_ref")
+        );
+        assert_eq!(
+            case_input["excel_render_context"]["provenance"]["render_context_ref"],
+            json!("ctx-1")
+        );
+        assert_eq!(
+            case_input["excel_render_context"]["trusted"],
+            json!(true)
+        );
+        assert_eq!(
+            scenario["excel_render_context"]["render_locale_pinned"],
+            json!(true)
+        );
+        assert_eq!(
+            report.case_reports[0]
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_source.as_deref()),
+            Some("captured_excel_host")
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_records_inline_trusted_render_context_in_case_and_scenario() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-inline-render-context".to_string(),
+                entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: Some(default_programmatic_formatting_context()),
+                excel_render_context: Some(sample_trusted_excel_render_context()),
+                render_context_ref: None,
+            }],
+        };
+        let runner = FakeVerificationRunner::default();
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_dir = output_root.join("cases").join("case-inline-render-context");
+        let case_input: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("case-input.json")).expect("case input json"),
+        )
+        .expect("case input parse");
+        let scenario: Value = serde_json::from_str(
+            &fs::read_to_string(case_dir.join("scenario.json")).expect("scenario json"),
+        )
+        .expect("scenario parse");
+
+        assert_eq!(
+            case_input["excel_render_context"]["provenance"]["kind"],
+            json!("inline")
+        );
+        assert_eq!(scenario["excel_render_context"]["trusted"], json!(true));
+        assert_eq!(
+            report.case_reports[0]
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_pinned),
+            Some(true)
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn resolve_effective_excel_render_context_uses_inline_case_context() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-inline-render-context".to_string(),
+            entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: Some(sample_trusted_excel_render_context()),
+            render_context_ref: None,
+        };
+
+        let resolved = resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+            .expect("resolved render context");
+
+        assert_eq!(resolved.provenance.kind, "inline");
+        assert_eq!(resolved.provenance.render_context_ref, None);
+        assert!(resolved.context.trusted);
+        assert!(resolved.context.render_locale_pinned);
+    }
+
+    #[test]
+    fn validate_verification_request_rejects_unknown_render_context_ref() {
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "case-missing-render-context".to_string(),
+                entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: Some("missing-render-context".to_string()),
+            }],
+        };
+
+        let error = validate_verification_request(&request).expect_err("missing ref should fail");
+        assert!(error.contains("unknown render context `missing-render-context`"));
+    }
+
+    #[test]
     fn verification_batch_records_separator_context_for_locale_sensitive_text_cases() {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
@@ -4593,6 +4864,7 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-separator-context".to_string(),
                 entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
@@ -4602,6 +4874,8 @@ mod tests {
                     number_format_code: Some("#,##0.00".to_string()),
                     date1904: Some(false),
                 }),
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner::default();
@@ -4664,11 +4938,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-formula-display".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: Some(sample_programmatic_formatting_context()),
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner::default();
@@ -4712,11 +4989,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4753,11 +5033,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-default-display".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4845,6 +5128,7 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-xml".to_string(),
                 entered_cell_text: String::new(),
@@ -4855,6 +5139,8 @@ mod tests {
                     },
                 ),
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -4974,6 +5260,8 @@ mod tests {
             entered_cell_text: "=SUM(1,2,3)".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         };
 
         assert!(!programmatic_display_comparison_enabled(&case, None));
@@ -4991,6 +5279,8 @@ mod tests {
             entered_cell_text: "=SUM(1,2,3)".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: Some(sample_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         };
 
         assert!(programmatic_display_comparison_enabled(&case, None));
@@ -5015,11 +5305,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-1".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -5831,6 +6124,8 @@ mod tests {
             entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         };
         let mut summary = ExcelObservationSummary {
             comparison_value: Some(json!({"kind":"text","text":"1234,567.89"})),
@@ -5843,7 +6138,14 @@ mod tests {
             render_locale_note: None,
         };
 
-        annotate_excel_observation_render_context(&case, None, &mut summary);
+        let effective_excel_render_context = resolve_effective_excel_render_context(
+            &case,
+            None,
+            &BTreeMap::new(),
+        )
+        .expect("effective render context");
+
+        annotate_excel_observation_render_context(&effective_excel_render_context, &mut summary);
 
         assert_eq!(summary.render_locale_pinned, Some(false));
         assert_eq!(summary.render_locale_source.as_deref(), Some("observation_machine_default"));
@@ -5868,11 +6170,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "FTC-0288".to_string(),
                 entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -5940,6 +6245,8 @@ mod tests {
             entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         };
         let projection = json!({
             "comparison_views": [
@@ -5957,11 +6264,104 @@ mod tests {
             ]
         });
 
+        let effective_excel_render_context = resolve_effective_excel_render_context(
+            &case,
+            None,
+            &BTreeMap::new(),
+        )
+        .expect("effective render context");
+
         assert!(locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
             &case,
             None,
+            &effective_excel_render_context,
             &projection,
             Some(&json!({"kind":"text","text":"1,234,567.89"}))
+        ));
+    }
+
+    #[test]
+    fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible_for_untrusted_inline_context() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-0288-untrusted".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: Some(ProgrammaticExcelRenderContext {
+                trusted: false,
+                ..sample_trusted_excel_render_context()
+            }),
+            render_context_ref: None,
+        };
+        let projection = json!({
+            "comparison_views": [
+                {
+                    "view_family": "formatting_view",
+                    "value": {
+                        "format_dependency_facts": [
+                            {
+                                "dependency_class": "semantic_formatting",
+                                "dependency_token": "locale_format_context"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let effective_excel_render_context = resolve_effective_excel_render_context(
+            &case,
+            None,
+            &BTreeMap::new(),
+        )
+        .expect("effective render context");
+
+        assert!(locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+            &case,
+            None,
+            &effective_excel_render_context,
+            &projection,
+            Some(&json!({"kind":"text","text":"1,234,567.89"}))
+        ));
+    }
+
+    #[test]
+    fn locale_sensitive_programmatic_text_value_surface_allows_trusted_pinned_context() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-1028-trusted".to_string(),
+            entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: Some(sample_trusted_excel_render_context()),
+            render_context_ref: None,
+        };
+        let projection = json!({
+            "comparison_views": [
+                {
+                    "view_family": "formatting_view",
+                    "value": {
+                        "format_dependency_facts": [
+                            {
+                                "dependency_class": "semantic_formatting",
+                                "dependency_token": "locale_format_context"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let effective_excel_render_context = resolve_effective_excel_render_context(
+            &case,
+            None,
+            &BTreeMap::new(),
+        )
+        .expect("effective render context");
+
+        assert!(!locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+            &case,
+            None,
+            &effective_excel_render_context,
+            &projection,
+            Some(&json!({"kind":"text","text":"July"}))
         ));
     }
 
@@ -5972,6 +6372,8 @@ mod tests {
             entered_cell_text: "=PDURATION(0.05,1000,2000)".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
         };
         let projection = json!({
             "comparison_views": [
@@ -5984,9 +6386,17 @@ mod tests {
             ]
         });
 
+        let effective_excel_render_context = resolve_effective_excel_render_context(
+            &case,
+            None,
+            &BTreeMap::new(),
+        )
+        .expect("effective render context");
+
         assert!(!locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
             &case,
             None,
+            &effective_excel_render_context,
             &projection,
             Some(&json!({"kind":"number","number":14.206699082890463}))
         ));
@@ -6170,11 +6580,14 @@ mod tests {
             host_profile: default_windows_excel_host_profile(),
             capabilities: default_windows_excel_capability_profile(),
             replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "case-compare-ready".to_string(),
                 entered_cell_text: "=SUM(1,2,3)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
             }],
         };
         let runner = FakeVerificationRunner {
@@ -6209,6 +6622,8 @@ mod tests {
             entered_cell_text: "=1+2".to_string(),
             spreadsheet_xml_source: None,
             formatting_context: None,
+            excel_render_context: None,
+            render_context_ref: None,
         });
 
         assert_eq!(
