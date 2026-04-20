@@ -915,6 +915,20 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             .join("normalized-replay.json"),
     );
 
+    if !prepared.effective_excel_render_context.context.trusted {
+        if let Some(imported_context) = import_effective_excel_render_context_from_oxxlplay_output(
+            &prepared.effective_case,
+            &resolved_output_dir,
+        )? {
+            prepared.effective_excel_render_context = imported_context;
+            persist_effective_excel_render_context(
+                &prepared.case_dir,
+                &prepared.scenario_path,
+                &prepared.effective_excel_render_context,
+            )?;
+        }
+    }
+
     let display_comparison_enabled = programmatic_display_comparison_enabled(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
@@ -2437,6 +2451,109 @@ fn annotate_excel_observation_render_context(
     summary.render_locale_note = effective_excel_render_context.context.note.clone();
 }
 
+fn import_effective_excel_render_context_from_oxxlplay_output(
+    case: &ProgrammaticFormulaCase,
+    resolved_output_dir: &Path,
+) -> Result<Option<EffectiveExcelRenderContext>, String> {
+    let render_context_path = resolved_output_dir.join("render-context.json");
+    if !render_context_path.is_file() {
+        return Ok(None);
+    }
+
+    let artifact = read_json_file(&render_context_path)?;
+    if artifact
+        .get("render_context_schema")
+        .and_then(Value::as_str)
+        != Some("oxxlplay.excel_render_context.v1")
+    {
+        return Ok(None);
+    }
+
+    let render_formatting = match artifact.get("render_formatting").and_then(Value::as_object) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    if render_formatting
+        .get("capture_status")
+        .and_then(Value::as_str)
+        != Some("captured")
+    {
+        return Ok(None);
+    }
+
+    let use_system_separators = render_formatting
+        .get("use_system_separators")
+        .and_then(Value::as_bool);
+    let decimal_separator = render_formatting
+        .get("decimal_separator")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let thousands_separator = render_formatting
+        .get("thousands_separator")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let trusted = decimal_separator.is_some() && thousands_separator.is_some();
+    if !trusted {
+        return Ok(None);
+    }
+
+    Ok(Some(EffectiveExcelRenderContext {
+        context: ProgrammaticExcelRenderContext {
+            render_locale_pinned: !use_system_separators.unwrap_or(true),
+            render_locale_source: Some("oxxlplay_render_context_capture".to_string()),
+            render_locale_recorded: true,
+            trusted: true,
+            requested_format_profile_id: case
+                .formatting_context
+                .as_ref()
+                .and_then(|context| context.format_profile_id.clone()),
+            decimal_separator,
+            thousands_separator,
+            list_separator: None,
+            date_separator: None,
+            time_separator: None,
+            note: Some(format!(
+                "Imported trusted Excel render context from OxXlPlay render-context.json (use_system_separators={})",
+                use_system_separators
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            )),
+        },
+        provenance: EffectiveExcelRenderContextProvenance {
+            kind: "oxxlplay_capture_artifact".to_string(),
+            render_context_ref: None,
+        },
+    }))
+}
+
+fn persist_effective_excel_render_context(
+    case_dir: &Path,
+    scenario_path: &Path,
+    effective_excel_render_context: &EffectiveExcelRenderContext,
+) -> Result<(), String> {
+    let excel_render_context = serde_json::to_value(effective_excel_render_context).map_err(|error| {
+        format!(
+            "failed to serialize effective Excel render context for `{}`: {error}",
+            case_dir.display()
+        )
+    })?;
+
+    let case_input_path = case_dir.join("case-input.json");
+    if case_input_path.is_file() {
+        let mut case_input = read_json_file(&case_input_path)?;
+        case_input["excel_render_context"] = excel_render_context.clone();
+        write_json_file(&case_input_path, &case_input)?;
+    }
+
+    if scenario_path.is_file() {
+        let mut scenario = read_json_file(scenario_path)?;
+        scenario["excel_render_context"] = excel_render_context;
+        write_json_file(scenario_path, &scenario)?;
+    }
+
+    Ok(())
+}
+
 fn build_oxxlplay_observable_surfaces(
     locator: &str,
     include_effective_display: bool,
@@ -2820,7 +2937,6 @@ fn excel_render_context_is_untrusted_or_unpinned(
     effective_excel_render_context: &EffectiveExcelRenderContext,
 ) -> bool {
     !effective_excel_render_context.context.trusted
-        || !effective_excel_render_context.context.render_locale_pinned
 }
 
 fn comparison_value_is_text(value: &Value) -> bool {
@@ -3990,6 +4106,20 @@ mod tests {
         }
     }
 
+    fn sample_oxxlplay_render_context_artifact() -> Value {
+        json!({
+            "render_context_schema": "oxxlplay.excel_render_context.v1",
+            "render_context_id": "excel-primary",
+            "capture_mode": "excel_black_box_observation",
+            "render_formatting": {
+                "capture_status": "captured",
+                "use_system_separators": true,
+                "decimal_separator": ".",
+                "thousands_separator": "\u{00A0}"
+            }
+        })
+    }
+
     fn fake_diff_report(left: &Value, right: &Value) -> Value {
         let mut families = left
             .get("comparison_views")
@@ -4054,6 +4184,7 @@ mod tests {
         captured_value_repr: Option<String>,
         captured_formula_text: Option<String>,
         captured_effective_display_text: Option<String>,
+        captured_render_context_json: Option<Value>,
         calls: Mutex<Vec<String>>,
     }
 
@@ -4162,6 +4293,10 @@ mod tests {
                         }),
                     )
                     .expect("capture should write");
+                    if let Some(render_context_json) = &self.captured_render_context_json {
+                        write_json_file(output_dir.join("render-context.json"), render_context_json)
+                            .expect("render context should write");
+                    }
                     write_json_file(
                         output_dir.join("oxreplay-manifest.json"),
                         &json!({
@@ -4848,6 +4983,108 @@ mod tests {
 
         let error = validate_verification_request(&request).expect_err("missing ref should fail");
         assert!(error.contains("unknown render context `missing-render-context`"));
+    }
+
+    #[test]
+    fn import_effective_excel_render_context_from_oxxlplay_output_promotes_trusted_capture() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_root).expect("temp root");
+        write_json_file(
+            temp_root.join("render-context.json"),
+            &sample_oxxlplay_render_context_artifact(),
+        )
+        .expect("render context json");
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-captured-render-context".to_string(),
+            entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
+        };
+
+        let imported = import_effective_excel_render_context_from_oxxlplay_output(&case, &temp_root)
+            .expect("import result")
+            .expect("captured context");
+
+        assert_eq!(imported.provenance.kind, "oxxlplay_capture_artifact");
+        assert!(imported.context.trusted);
+        assert_eq!(
+            imported.context.render_locale_source.as_deref(),
+            Some("oxxlplay_render_context_capture")
+        );
+        assert_eq!(imported.context.decimal_separator.as_deref(), Some("."));
+        assert_eq!(imported.context.thousands_separator.as_deref(), Some("\u{A0}"));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_uses_captured_render_context_for_equal_locale_sensitive_text_case() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "FTC-1028".to_string(),
+                entered_cell_text: "=TEXT(DATE(2024,7,1),\"MMMM\")".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            captured_cell_value: Some(json!({"kind":"text","text":"July"})),
+            captured_value_repr: Some("July".to_string()),
+            captured_formula_text: Some("=TEXT(DATE(2024,7,1),\"MMMM\")".to_string()),
+            captured_effective_display_text: Some("July".to_string()),
+            captured_render_context_json: Some(sample_oxxlplay_render_context_artifact()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+        let case_input = read_json_file(
+            output_root
+                .join("cases")
+                .join("FTC-1028")
+                .join("case-input.json"),
+        )
+        .expect("case input");
+
+        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(case_report.value_match, Some(true));
+        assert_eq!(
+            case_report
+                .excel_summary
+                .as_ref()
+                .and_then(|summary| summary.render_locale_source.as_deref()),
+            Some("oxxlplay_render_context_capture")
+        );
+        assert_eq!(case_input["excel_render_context"]["trusted"], json!(true));
+        assert_eq!(
+            case_input["excel_render_context"]["provenance"]["kind"],
+            json!("oxxlplay_capture_artifact")
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 
     #[test]
