@@ -2551,6 +2551,18 @@ fn import_effective_excel_render_context_from_oxxlplay_output(
         .get("thousands_separator")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
+    let list_separator = render_formatting
+        .get("list_separator")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let date_separator = render_formatting
+        .get("date_separator")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let time_separator = render_formatting
+        .get("time_separator")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let trusted = decimal_separator.is_some() && thousands_separator.is_some();
     if !trusted {
         return Ok(None);
@@ -2568,9 +2580,9 @@ fn import_effective_excel_render_context_from_oxxlplay_output(
                 .and_then(|context| context.format_profile_id.clone()),
             decimal_separator,
             thousands_separator,
-            list_separator: None,
-            date_separator: None,
-            time_separator: None,
+            list_separator,
+            date_separator,
+            time_separator,
             note: Some(format!(
                 "Imported trusted Excel render context from OxXlPlay render-context.json (use_system_separators={})",
                 use_system_separators
@@ -4175,7 +4187,10 @@ mod tests {
                 "capture_status": "captured",
                 "use_system_separators": true,
                 "decimal_separator": ".",
-                "thousands_separator": "\u{00A0}"
+                "thousands_separator": "\u{00A0}",
+                "list_separator": ";",
+                "date_separator": "/",
+                "time_separator": ":"
             }
         })
     }
@@ -5169,6 +5184,9 @@ mod tests {
             imported.context.thousands_separator.as_deref(),
             Some("\u{A0}")
         );
+        assert_eq!(imported.context.list_separator.as_deref(), Some(";"));
+        assert_eq!(imported.context.date_separator.as_deref(), Some("/"));
+        assert_eq!(imported.context.time_separator.as_deref(), Some(":"));
 
         let _ = fs::remove_dir_all(temp_root);
     }
