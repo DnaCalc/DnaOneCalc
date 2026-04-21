@@ -11,10 +11,10 @@ use serde_json::{json, Value};
 use crate::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, build_programmatic_batch_plan,
     default_programmatic_corpus_formatting_context, default_verification_config,
-    default_windows_excel_capability_profile,
-    default_windows_excel_host_profile, ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan,
-    ProgrammaticCapabilityProfile, ProgrammaticComparisonStatus, ProgrammaticExcelRenderContext,
-    ProgrammaticFormattingContext, ProgrammaticFormulaCase, ProgrammaticHostProfile,
+    default_windows_excel_capability_profile, default_windows_excel_host_profile,
+    ProgrammaticArtifactCatalogEntry, ProgrammaticBatchPlan, ProgrammaticCapabilityProfile,
+    ProgrammaticComparisonStatus, ProgrammaticExcelRenderContext, ProgrammaticFormattingContext,
+    ProgrammaticFormulaCase, ProgrammaticHostProfile,
 };
 use crate::services::spreadsheet_xml::{
     extract_cell_from_spreadsheet_xml, SpreadsheetXmlCellExtraction, VerificationObservationScope,
@@ -818,7 +818,11 @@ fn prepare_verification_case(
         }),
     )?;
 
-    let oxfml_result = run_oxfml_case(&effective_case, spreadsheet_xml_extraction.as_ref())?;
+    let oxfml_result = run_oxfml_case(
+        &effective_case,
+        spreadsheet_xml_extraction.as_ref(),
+        Some(&effective_excel_render_context),
+    )?;
     let projection_path = case_dir.join("oxfml-v1-replay-projection.json");
     write_json_file(
         case_dir.join("oxfml-runtime-summary.json"),
@@ -957,7 +961,8 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         return finish_blocked_case(repo_root, prepared, failure_reason, excel_summary);
     }
 
-    let oxfml_outcome = classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json);
+    let oxfml_outcome =
+        classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json);
     if locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
@@ -981,11 +986,8 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             excel_summary,
         );
     }
-    let comparison_plan = build_replay_comparison_plan(
-        display_comparison_enabled,
-        &oxfml_outcome,
-        &excel_outcome,
-    );
+    let comparison_plan =
+        build_replay_comparison_plan(display_comparison_enabled, &oxfml_outcome, &excel_outcome);
     let requested_replay_views = comparison_plan.required_replay_views.clone();
 
     let compare_ready_projection_path = materialize_compare_ready_projection(
@@ -1359,7 +1361,8 @@ fn excel_case_output_is_programmatic_authoring_rejection(
 fn classify_excel_execution_outcome(
     batch_case_output: &OxxlplayBatchCaseOutputIndex,
 ) -> Result<ExecutionOutcomeSurface, String> {
-    if batch_case_output.status.as_deref() == Some("succeeded") && batch_case_output.error.is_none() {
+    if batch_case_output.status.as_deref() == Some("succeeded") && batch_case_output.error.is_none()
+    {
         return Ok(ExecutionOutcomeSurface {
             comparison_value: normalized_completed_execution_outcome(),
             ordinary_value_comparable: true,
@@ -1558,6 +1561,7 @@ struct OxfmlCaseArtifacts {
 fn run_oxfml_case(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    effective_excel_render_context: Option<&EffectiveExcelRenderContext>,
 ) -> Result<OxfmlCaseArtifacts, String> {
     let bridge = LiveOxfmlBridge::default();
     let formula_edit_result = bridge
@@ -1577,7 +1581,11 @@ fn run_oxfml_case(
 
     let source = FormulaSourceRecord::new(case.case_id.clone(), 1, case.entered_cell_text.clone())
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
-    let locale_ctx = verification_locale_context(case, spreadsheet_xml_extraction);
+    let locale_ctx = verification_locale_context(
+        case,
+        spreadsheet_xml_extraction,
+        effective_excel_render_context,
+    );
     let typed_query_bundle =
         TypedContextQueryBundle::new(None, None, Some(&locale_ctx), None, None);
     let include_effective_display =
@@ -1681,12 +1689,19 @@ fn run_oxfml_case(
 fn verification_locale_context(
     case: &ProgrammaticFormulaCase,
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    effective_excel_render_context: Option<&EffectiveExcelRenderContext>,
 ) -> LocaleFormatContext<'static> {
     let date_system = if effective_programmatic_date1904(case, spreadsheet_xml_extraction) {
         WorkbookDateSystem::System1904
     } else {
         WorkbookDateSystem::System1900
     };
+    let trusted_excel_separator_context =
+        trusted_excel_separator_context(effective_excel_render_context);
+    // Thread trusted captured render-context state into the locale query-bundle seam now.
+    // The current upstream locale context consumed here still resolves through
+    // profile/date-system plus parser/formatter hooks, so separator-specific runtime
+    // overrides remain a follow-up once that upstream seam can consume them directly.
     let profile = parse_programmatic_format_profile_id(
         spreadsheet_xml_extraction
             .map(|extraction| extraction.workbook_format_profile_hint.as_str())
@@ -1694,6 +1709,11 @@ fn verification_locale_context(
                 case.formatting_context
                     .as_ref()
                     .and_then(|context| context.format_profile_id.as_deref())
+            })
+            .or_else(|| {
+                trusted_excel_separator_context
+                    .as_ref()
+                    .and_then(|context| context.requested_format_profile_id)
             }),
     );
 
@@ -1703,6 +1723,41 @@ fn verification_locale_context(
         parser: &HOST_TEST_LOCALE_VALUE_PARSER,
         formatter: &HOST_TEST_FORMAT_CODE_ENGINE,
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrustedExcelSeparatorContext<'a> {
+    requested_format_profile_id: Option<&'a str>,
+    decimal_separator: Option<&'a str>,
+    thousands_separator: Option<&'a str>,
+    list_separator: Option<&'a str>,
+    date_separator: Option<&'a str>,
+    time_separator: Option<&'a str>,
+}
+
+fn trusted_excel_separator_context(
+    effective_excel_render_context: Option<&EffectiveExcelRenderContext>,
+) -> Option<TrustedExcelSeparatorContext<'_>> {
+    let context = effective_excel_render_context
+        .map(|value| &value.context)
+        .filter(|context| context.trusted)
+        .filter(|context| {
+            context.decimal_separator.is_some()
+                || context.thousands_separator.is_some()
+                || context.list_separator.is_some()
+                || context.date_separator.is_some()
+                || context.time_separator.is_some()
+                || context.requested_format_profile_id.is_some()
+        })?;
+
+    Some(TrustedExcelSeparatorContext {
+        requested_format_profile_id: context.requested_format_profile_id.as_deref(),
+        decimal_separator: context.decimal_separator.as_deref(),
+        thousands_separator: context.thousands_separator.as_deref(),
+        list_separator: context.list_separator.as_deref(),
+        date_separator: context.date_separator.as_deref(),
+        time_separator: context.time_separator.as_deref(),
+    })
 }
 
 fn effective_programmatic_date1904(
@@ -2446,8 +2501,12 @@ fn annotate_excel_observation_render_context(
     effective_excel_render_context: &EffectiveExcelRenderContext,
     summary: &mut ExcelObservationSummary,
 ) {
-    summary.render_locale_pinned = Some(effective_excel_render_context.context.render_locale_pinned);
-    summary.render_locale_source = effective_excel_render_context.context.render_locale_source.clone();
+    summary.render_locale_pinned =
+        Some(effective_excel_render_context.context.render_locale_pinned);
+    summary.render_locale_source = effective_excel_render_context
+        .context
+        .render_locale_source
+        .clone();
     summary.render_locale_note = effective_excel_render_context.context.note.clone();
 }
 
@@ -2531,12 +2590,13 @@ fn persist_effective_excel_render_context(
     scenario_path: &Path,
     effective_excel_render_context: &EffectiveExcelRenderContext,
 ) -> Result<(), String> {
-    let excel_render_context = serde_json::to_value(effective_excel_render_context).map_err(|error| {
-        format!(
-            "failed to serialize effective Excel render context for `{}`: {error}",
-            case_dir.display()
-        )
-    })?;
+    let excel_render_context =
+        serde_json::to_value(effective_excel_render_context).map_err(|error| {
+            format!(
+                "failed to serialize effective Excel render context for `{}`: {error}",
+                case_dir.display()
+            )
+        })?;
 
     let case_input_path = case_dir.join("case-input.json");
     if case_input_path.is_file() {
@@ -2958,8 +3018,7 @@ fn projection_marks_locale_sensitive_semantic_text_dependency(projection: &Value
         .and_then(Value::as_array)
         .is_some_and(|facts| {
             facts.iter().any(|fact| {
-                fact.get("dependency_class").and_then(Value::as_str)
-                    == Some("semantic_formatting")
+                fact.get("dependency_class").and_then(Value::as_str) == Some("semantic_formatting")
                     && fact.get("dependency_token").and_then(Value::as_str)
                         == Some("locale_format_context")
             })
@@ -3334,9 +3393,10 @@ fn upsert_comparison_view(
         .as_array_mut()
         .ok_or_else(|| "replay projection `comparison_views` was not an array".to_string())?;
 
-    if let Some(existing) = comparison_views.iter_mut().find(|view| {
-        view.get("view_family").and_then(Value::as_str) == Some(view_family)
-    }) {
+    if let Some(existing) = comparison_views
+        .iter_mut()
+        .find(|view| view.get("view_family").and_then(Value::as_str) == Some(view_family))
+    {
         if let Some(existing_object) = existing.as_object_mut() {
             existing_object.insert("value".to_string(), value);
         }
@@ -4294,8 +4354,11 @@ mod tests {
                     )
                     .expect("capture should write");
                     if let Some(render_context_json) = &self.captured_render_context_json {
-                        write_json_file(output_dir.join("render-context.json"), render_context_json)
-                            .expect("render context should write");
+                        write_json_file(
+                            output_dir.join("render-context.json"),
+                            render_context_json,
+                        )
+                        .expect("render context should write");
                     }
                     write_json_file(
                         output_dir.join("oxreplay-manifest.json"),
@@ -4394,10 +4457,16 @@ mod tests {
             let left = read_json_file(left_path).expect("left projection json");
             let right = read_json_file(right_path).expect("right replay json");
             if self.assert_compare_inputs_ready {
-                assert!(projection_comparison_value(&left, EXECUTION_OUTCOME_VIEW_FAMILY).is_some());
-                assert!(projection_comparison_value(&right, EXECUTION_OUTCOME_VIEW_FAMILY).is_some());
+                assert!(
+                    projection_comparison_value(&left, EXECUTION_OUTCOME_VIEW_FAMILY).is_some()
+                );
+                assert!(
+                    projection_comparison_value(&right, EXECUTION_OUTCOME_VIEW_FAMILY).is_some()
+                );
                 assert!(projection_comparison_value(&left, "comparison_value").is_some());
-                if let Some(display_value) = projection_comparison_value(&left, "effective_display_text") {
+                if let Some(display_value) =
+                    projection_comparison_value(&left, "effective_display_text")
+                {
                     assert_eq!(display_value, json!("6"));
                 }
                 assert_eq!(
@@ -4531,7 +4600,10 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Mismatched);
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Mismatched
+        );
         assert_eq!(case_report.value_match, Some(true));
         assert_eq!(case_report.display_match, Some(false));
         assert_eq!(case_report.replay_equivalent, Some(false));
@@ -4573,7 +4645,10 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Matched
+        );
         assert_eq!(case_report.value_match, None);
         assert_eq!(case_report.display_match, None);
         assert_eq!(case_report.replay_equivalent, Some(true));
@@ -4616,7 +4691,10 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Blocked);
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Blocked
+        );
         assert!(case_report
             .discrepancy_summary
             .as_deref()
@@ -4678,7 +4756,11 @@ mod tests {
         );
         assert_eq!(
             scenario["requested_observation_scope"]["oxreplay_required_views"],
-            json!(["execution_outcome", "comparison_value", "effective_display_text"])
+            json!([
+                "execution_outcome",
+                "comparison_value",
+                "effective_display_text"
+            ])
         );
         assert!(scenario["observable_surfaces"]
             .as_array()
@@ -4736,7 +4818,8 @@ mod tests {
         assert!(case_dir.join("workbook.xml").is_file());
 
         let input_request: Value = serde_json::from_str(
-            &fs::read_to_string(output_root.join("input-request.json")).expect("input request json"),
+            &fs::read_to_string(output_root.join("input-request.json"))
+                .expect("input request json"),
         )
         .expect("input request parse");
         assert_eq!(
@@ -4871,10 +4954,7 @@ mod tests {
             case_input["excel_render_context"]["provenance"]["render_context_ref"],
             json!("ctx-1")
         );
-        assert_eq!(
-            case_input["excel_render_context"]["trusted"],
-            json!(true)
-        );
+        assert_eq!(case_input["excel_render_context"]["trusted"], json!(true));
         assert_eq!(
             scenario["excel_render_context"]["render_locale_pinned"],
             json!(true)
@@ -4965,6 +5045,70 @@ mod tests {
     }
 
     #[test]
+    fn trusted_excel_separator_context_requires_trusted_render_context() {
+        let context = EffectiveExcelRenderContext {
+            context: ProgrammaticExcelRenderContext {
+                trusted: false,
+                ..sample_trusted_excel_render_context()
+            },
+            provenance: EffectiveExcelRenderContextProvenance {
+                kind: "inline".to_string(),
+                render_context_ref: None,
+            },
+        };
+
+        assert_eq!(trusted_excel_separator_context(Some(&context)), None);
+    }
+
+    #[test]
+    fn verification_locale_context_uses_trusted_render_context_profile_when_programmatic_context_is_absent(
+    ) {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-trusted-render-context-profile".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: None,
+            excel_render_context: Some(sample_trusted_excel_render_context()),
+            render_context_ref: None,
+        };
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
+
+        let locale_context =
+            verification_locale_context(&case, None, Some(&effective_excel_render_context));
+
+        assert_eq!(locale_context.profile.id, LocaleProfileId::EnUs);
+        assert_eq!(locale_context.profile.decimal_separator, ".");
+        assert_eq!(locale_context.profile.thousands_separator, ",");
+    }
+
+    #[test]
+    fn verification_locale_context_prefers_explicit_formatting_context_over_trusted_render_context_profile(
+    ) {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-explicit-format-profile-precedence".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(ProgrammaticFormattingContext {
+                format_profile_id: Some("current_excel_host".to_string()),
+                number_format_code: None,
+                date1904: Some(false),
+            }),
+            excel_render_context: Some(sample_trusted_excel_render_context()),
+            render_context_ref: None,
+        };
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
+
+        let locale_context =
+            verification_locale_context(&case, None, Some(&effective_excel_render_context));
+
+        assert_eq!(locale_context.profile.id, LocaleProfileId::CurrentExcelHost);
+    }
+
+    #[test]
     fn validate_verification_request_rejects_unknown_render_context_ref() {
         let request = VerificationBatchRequest {
             host_profile: default_windows_excel_host_profile(),
@@ -5009,9 +5153,10 @@ mod tests {
             render_context_ref: None,
         };
 
-        let imported = import_effective_excel_render_context_from_oxxlplay_output(&case, &temp_root)
-            .expect("import result")
-            .expect("captured context");
+        let imported =
+            import_effective_excel_render_context_from_oxxlplay_output(&case, &temp_root)
+                .expect("import result")
+                .expect("captured context");
 
         assert_eq!(imported.provenance.kind, "oxxlplay_capture_artifact");
         assert!(imported.context.trusted);
@@ -5020,7 +5165,10 @@ mod tests {
             Some("oxxlplay_render_context_capture")
         );
         assert_eq!(imported.context.decimal_separator.as_deref(), Some("."));
-        assert_eq!(imported.context.thousands_separator.as_deref(), Some("\u{A0}"));
+        assert_eq!(
+            imported.context.thousands_separator.as_deref(),
+            Some("\u{A0}")
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -5069,7 +5217,10 @@ mod tests {
         )
         .expect("case input");
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Matched
+        );
         assert_eq!(case_report.value_match, Some(true));
         assert_eq!(
             case_report
@@ -5289,7 +5440,10 @@ mod tests {
             run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
         let case_report = &report.case_reports[0];
 
-        assert_eq!(case_report.comparison_status, ProgrammaticComparisonStatus::Matched);
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Matched
+        );
         assert_eq!(case_report.value_match, Some(true));
         assert_eq!(case_report.display_match, None);
         assert_eq!(case_report.replay_equivalent, Some(true));
@@ -5502,7 +5656,9 @@ mod tests {
         };
 
         assert!(!programmatic_display_comparison_enabled(&case, None));
-        assert!(!programmatic_effective_display_surface_requested(&case, None));
+        assert!(!programmatic_effective_display_surface_requested(
+            &case, None
+        ));
         assert_eq!(
             effective_requested_observation_scope(&case, None).oxxlplay_required_surfaces,
             vec!["cell_value".to_string()]
@@ -5521,10 +5677,15 @@ mod tests {
         };
 
         assert!(programmatic_display_comparison_enabled(&case, None));
-        assert!(programmatic_effective_display_surface_requested(&case, None));
+        assert!(programmatic_effective_display_surface_requested(
+            &case, None
+        ));
         assert_eq!(
             effective_requested_observation_scope(&case, None).oxxlplay_required_surfaces,
-            vec!["cell_value".to_string(), "effective_display_text".to_string()]
+            vec![
+                "cell_value".to_string(),
+                "effective_display_text".to_string()
+            ]
         );
     }
 
@@ -5569,11 +5730,11 @@ mod tests {
         assert_eq!(case_report.display_match, None);
         assert_eq!(case_report.replay_equivalent, None);
         assert_eq!(case_report.replay_mismatch_records.len(), 0);
-        assert!(
-            case_report.discrepancy_summary.as_deref().is_some_and(
-                |summary| summary.contains("Comparison blocked: OxReplay validate-bundle failed (exit code 1)")
-            )
-        );
+        assert!(case_report
+            .discrepancy_summary
+            .as_deref()
+            .is_some_and(|summary| summary
+                .contains("Comparison blocked: OxReplay validate-bundle failed (exit code 1)")));
         assert_eq!(
             runner.calls.lock().expect("calls").clone(),
             vec![
@@ -6375,17 +6536,17 @@ mod tests {
             render_locale_note: None,
         };
 
-        let effective_excel_render_context = resolve_effective_excel_render_context(
-            &case,
-            None,
-            &BTreeMap::new(),
-        )
-        .expect("effective render context");
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
 
         annotate_excel_observation_render_context(&effective_excel_render_context, &mut summary);
 
         assert_eq!(summary.render_locale_pinned, Some(false));
-        assert_eq!(summary.render_locale_source.as_deref(), Some("observation_machine_default"));
+        assert_eq!(
+            summary.render_locale_source.as_deref(),
+            Some("observation_machine_default")
+        );
         assert!(summary
             .render_locale_note
             .as_deref()
@@ -6501,24 +6662,24 @@ mod tests {
             ]
         });
 
-        let effective_excel_render_context = resolve_effective_excel_render_context(
-            &case,
-            None,
-            &BTreeMap::new(),
-        )
-        .expect("effective render context");
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
 
-        assert!(locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
-            &case,
-            None,
-            &effective_excel_render_context,
-            &projection,
-            Some(&json!({"kind":"text","text":"1,234,567.89"}))
-        ));
+        assert!(
+            locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+                &case,
+                None,
+                &effective_excel_render_context,
+                &projection,
+                Some(&json!({"kind":"text","text":"1,234,567.89"}))
+            )
+        );
     }
 
     #[test]
-    fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible_for_untrusted_inline_context() {
+    fn locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible_for_untrusted_inline_context(
+    ) {
         let case = ProgrammaticFormulaCase {
             case_id: "FTC-0288-untrusted".to_string(),
             entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
@@ -6545,20 +6706,19 @@ mod tests {
                 }
             ]
         });
-        let effective_excel_render_context = resolve_effective_excel_render_context(
-            &case,
-            None,
-            &BTreeMap::new(),
-        )
-        .expect("effective render context");
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
 
-        assert!(locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
-            &case,
-            None,
-            &effective_excel_render_context,
-            &projection,
-            Some(&json!({"kind":"text","text":"1,234,567.89"}))
-        ));
+        assert!(
+            locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+                &case,
+                None,
+                &effective_excel_render_context,
+                &projection,
+                Some(&json!({"kind":"text","text":"1,234,567.89"}))
+            )
+        );
     }
 
     #[test]
@@ -6586,20 +6746,19 @@ mod tests {
                 }
             ]
         });
-        let effective_excel_render_context = resolve_effective_excel_render_context(
-            &case,
-            None,
-            &BTreeMap::new(),
-        )
-        .expect("effective render context");
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
 
-        assert!(!locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
-            &case,
-            None,
-            &effective_excel_render_context,
-            &projection,
-            Some(&json!({"kind":"text","text":"July"}))
-        ));
+        assert!(
+            !locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+                &case,
+                None,
+                &effective_excel_render_context,
+                &projection,
+                Some(&json!({"kind":"text","text":"July"}))
+            )
+        );
     }
 
     #[test]
@@ -6623,20 +6782,19 @@ mod tests {
             ]
         });
 
-        let effective_excel_render_context = resolve_effective_excel_render_context(
-            &case,
-            None,
-            &BTreeMap::new(),
-        )
-        .expect("effective render context");
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
 
-        assert!(!locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
-            &case,
-            None,
-            &effective_excel_render_context,
-            &projection,
-            Some(&json!({"kind":"number","number":14.206699082890463}))
-        ));
+        assert!(
+            !locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
+                &case,
+                None,
+                &effective_excel_render_context,
+                &projection,
+                Some(&json!({"kind":"number","number":14.206699082890463}))
+            )
+        );
     }
 
     #[test]
@@ -6804,7 +6962,8 @@ mod tests {
     }
 
     #[test]
-    fn verification_batch_prepares_value_only_compare_inputs_for_default_programmatic_formula_cases() {
+    fn verification_batch_prepares_value_only_compare_inputs_for_default_programmatic_formula_cases(
+    ) {
         let temp_root = std::env::temp_dir().join(format!(
             "onecalc-verification-test-{}",
             SystemTime::now()
@@ -6841,13 +7000,22 @@ mod tests {
 
         assert_eq!(report.case_reports.len(), 1);
         assert!(projection_comparison_value(&projection, "comparison_value").is_some());
-        assert_eq!(projection_comparison_value(&projection, "effective_display_text"), None);
-        assert_eq!(projection["verification_publication_surface"]["effective_display_text"], Value::Null);
+        assert_eq!(
+            projection_comparison_value(&projection, "effective_display_text"),
+            None
+        );
+        assert_eq!(
+            projection["verification_publication_surface"]["effective_display_text"],
+            Value::Null
+        );
         assert_eq!(
             projection["verification_publication_surface"]["format_profile"],
             Value::Null
         );
-        assert_eq!(projection["verification_publication_surface"]["date1904"], Value::Null);
+        assert_eq!(
+            projection["verification_publication_surface"]["date1904"],
+            Value::Null
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }
