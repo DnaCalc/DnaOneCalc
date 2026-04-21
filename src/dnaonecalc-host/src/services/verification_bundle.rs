@@ -34,7 +34,8 @@ use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::FormulaChannelKind;
 use oxfunc_core::locale_format::{
     excel_serial_from_ymd, format_profile, ymd_from_excel_serial, FormatCodeEngine, FormatFailure,
-    LocaleFormatContext, LocaleProfileId, LocaleValueParser, ParseFailure, WorkbookDateSystem,
+    FormatProfile, LocaleFormatContext, LocaleProfileId, LocaleValueParser, ParseFailure,
+    WorkbookDateSystem,
 };
 use oxfunc_core::value::ExcelText;
 
@@ -824,11 +825,14 @@ fn prepare_verification_case(
         Some(&effective_excel_render_context),
     )?;
     let projection_path = case_dir.join("oxfml-v1-replay-projection.json");
-    write_json_file(
-        case_dir.join("oxfml-runtime-summary.json"),
-        &oxfml_result.summary,
+    persist_oxfml_case_artifacts(&case_dir, &projection_path, &oxfml_result)?;
+    persist_oxfml_execution_context(
+        &case_dir,
+        &effective_case,
+        spreadsheet_xml_extraction.as_ref(),
+        &effective_excel_render_context,
+        "initial_pre_capture",
     )?;
-    write_json_file(&projection_path, &oxfml_result.replay_projection_json)?;
 
     let workbook_path = case_dir.join("workbook.xml");
     let workbook_write = materialize_case_workbook(
@@ -919,19 +923,11 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
             .join("normalized-replay.json"),
     );
 
-    if !prepared.effective_excel_render_context.context.trusted {
-        if let Some(imported_context) = import_effective_excel_render_context_from_oxxlplay_output(
-            &prepared.effective_case,
-            &resolved_output_dir,
-        )? {
-            prepared.effective_excel_render_context = imported_context;
-            persist_effective_excel_render_context(
-                &prepared.case_dir,
-                &prepared.scenario_path,
-                &prepared.effective_excel_render_context,
-            )?;
-        }
-    }
+    import_captured_render_context_and_refresh_oxfml_if_needed(
+        &mut prepared,
+        &resolved_output_dir,
+        run_oxfml_case,
+    )?;
 
     let display_comparison_enabled = programmatic_display_comparison_enabled(
         &prepared.effective_case,
@@ -1698,11 +1694,7 @@ fn verification_locale_context(
     };
     let trusted_excel_separator_context =
         trusted_excel_separator_context(effective_excel_render_context);
-    // Thread trusted captured render-context state into the locale query-bundle seam now.
-    // The current upstream locale context consumed here still resolves through
-    // profile/date-system plus parser/formatter hooks, so separator-specific runtime
-    // overrides remain a follow-up once that upstream seam can consume them directly.
-    let profile = parse_programmatic_format_profile_id(
+    let profile_id = parse_programmatic_format_profile_id(
         spreadsheet_xml_extraction
             .map(|extraction| extraction.workbook_format_profile_hint.as_str())
             .or_else(|| {
@@ -1716,9 +1708,14 @@ fn verification_locale_context(
                     .and_then(|context| context.requested_format_profile_id)
             }),
     );
+    let mut profile = format_profile(profile_id).clone();
+    apply_trusted_separator_overrides_to_profile(
+        &mut profile,
+        trusted_excel_separator_context.as_ref(),
+    );
 
     LocaleFormatContext {
-        profile: format_profile(profile),
+        profile,
         date_system,
         parser: &HOST_TEST_LOCALE_VALUE_PARSER,
         formatter: &HOST_TEST_FORMAT_CODE_ENGINE,
@@ -1758,6 +1755,32 @@ fn trusted_excel_separator_context(
         date_separator: context.date_separator.as_deref(),
         time_separator: context.time_separator.as_deref(),
     })
+}
+
+fn leaked_separator_token(value: &str) -> &'static str {
+    Box::leak(value.to_string().into_boxed_str())
+}
+
+fn apply_trusted_separator_overrides_to_profile(
+    profile: &mut FormatProfile,
+    trusted_excel_separator_context: Option<&TrustedExcelSeparatorContext<'_>>,
+) {
+    let Some(context) = trusted_excel_separator_context else {
+        return;
+    };
+
+    if let Some(decimal_separator) = context.decimal_separator {
+        profile.decimal_separator = leaked_separator_token(decimal_separator);
+    }
+    if let Some(thousands_separator) = context.thousands_separator {
+        profile.thousands_separator = leaked_separator_token(thousands_separator);
+    }
+    if let Some(date_separator) = context.date_separator {
+        profile.date_separator = leaked_separator_token(date_separator);
+    }
+    if let Some(time_separator) = context.time_separator {
+        profile.time_separator = leaked_separator_token(time_separator);
+    }
 }
 
 fn effective_programmatic_date1904(
@@ -2624,6 +2647,110 @@ fn persist_effective_excel_render_context(
     }
 
     Ok(())
+}
+
+fn persist_oxfml_case_artifacts(
+    case_dir: &Path,
+    projection_path: &Path,
+    oxfml_result: &OxfmlCaseArtifacts,
+) -> Result<(), String> {
+    write_json_file(
+        case_dir.join("oxfml-runtime-summary.json"),
+        &oxfml_result.summary,
+    )?;
+    write_json_file(projection_path, &oxfml_result.replay_projection_json)?;
+    Ok(())
+}
+
+fn persist_oxfml_execution_context(
+    case_dir: &Path,
+    case: &ProgrammaticFormulaCase,
+    spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
+    effective_excel_render_context: &EffectiveExcelRenderContext,
+    execution_phase: &str,
+) -> Result<(), String> {
+    let locale_context = verification_locale_context(
+        case,
+        spreadsheet_xml_extraction,
+        Some(effective_excel_render_context),
+    );
+    let trusted_separator_context =
+        trusted_excel_separator_context(Some(effective_excel_render_context));
+    write_json_file(
+        case_dir.join("oxfml-execution-context.json"),
+        &json!({
+            "execution_phase": execution_phase,
+            "effective_excel_render_context": effective_excel_render_context,
+            "locale_query_bundle": {
+                "profile_id": format!("{:?}", locale_context.profile.id),
+                "date_system": format!("{:?}", locale_context.date_system),
+                "decimal_separator": locale_context.profile.decimal_separator,
+                "thousands_separator": locale_context.profile.thousands_separator,
+                "date_separator": locale_context.profile.date_separator,
+                "time_separator": locale_context.profile.time_separator,
+            },
+            "trusted_excel_separator_context": trusted_separator_context.map(|context| {
+                json!({
+                    "requested_format_profile_id": context.requested_format_profile_id,
+                    "decimal_separator": context.decimal_separator,
+                    "thousands_separator": context.thousands_separator,
+                    "list_separator": context.list_separator,
+                    "date_separator": context.date_separator,
+                    "time_separator": context.time_separator,
+                })
+            })
+        }),
+    )
+}
+
+fn import_captured_render_context_and_refresh_oxfml_if_needed<F>(
+    prepared: &mut PreparedVerificationCase,
+    resolved_output_dir: &Path,
+    refresh_oxfml: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(
+        &ProgrammaticFormulaCase,
+        Option<&SpreadsheetXmlCellExtraction>,
+        Option<&EffectiveExcelRenderContext>,
+    ) -> Result<OxfmlCaseArtifacts, String>,
+{
+    if prepared.effective_excel_render_context.context.trusted {
+        return Ok(false);
+    }
+
+    let Some(imported_context) = import_effective_excel_render_context_from_oxxlplay_output(
+        &prepared.effective_case,
+        resolved_output_dir,
+    )?
+    else {
+        return Ok(false);
+    };
+
+    prepared.effective_excel_render_context = imported_context;
+    persist_effective_excel_render_context(
+        &prepared.case_dir,
+        &prepared.scenario_path,
+        &prepared.effective_excel_render_context,
+    )?;
+    prepared.oxfml_result = refresh_oxfml(
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        Some(&prepared.effective_excel_render_context),
+    )?;
+    persist_oxfml_case_artifacts(
+        &prepared.case_dir,
+        &prepared.projection_path,
+        &prepared.oxfml_result,
+    )?;
+    persist_oxfml_execution_context(
+        &prepared.case_dir,
+        &prepared.effective_case,
+        prepared.spreadsheet_xml_extraction.as_ref(),
+        &prepared.effective_excel_render_context,
+        "post_capture_trusted_refresh",
+    )?;
+    Ok(true)
 }
 
 fn build_oxxlplay_observable_surfaces(
@@ -5099,6 +5226,34 @@ mod tests {
     }
 
     #[test]
+    fn verification_locale_context_overrides_profile_separators_from_trusted_render_context() {
+        let case = ProgrammaticFormulaCase {
+            case_id: "case-separator-override".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: Some(ProgrammaticExcelRenderContext {
+                thousands_separator: Some("\u{A0}".to_string()),
+                list_separator: Some(";".to_string()),
+                ..sample_trusted_excel_render_context()
+            }),
+            render_context_ref: None,
+        };
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
+
+        let locale_context =
+            verification_locale_context(&case, None, Some(&effective_excel_render_context));
+
+        assert_eq!(locale_context.profile.id, LocaleProfileId::EnUs);
+        assert_eq!(locale_context.profile.decimal_separator, ".");
+        assert_eq!(locale_context.profile.thousands_separator, "\u{A0}");
+        assert_eq!(locale_context.profile.date_separator, "/");
+        assert_eq!(locale_context.profile.time_separator, ":");
+    }
+
+    #[test]
     fn verification_locale_context_prefers_explicit_formatting_context_over_trusted_render_context_profile(
     ) {
         let case = ProgrammaticFormulaCase {
@@ -5187,6 +5342,184 @@ mod tests {
         assert_eq!(imported.context.list_separator.as_deref(), Some(";"));
         assert_eq!(imported.context.date_separator.as_deref(), Some("/"));
         assert_eq!(imported.context.time_separator.as_deref(), Some(":"));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn import_captured_render_context_and_refresh_oxfml_if_needed_reruns_and_persists_outputs() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let case_dir = temp_root.join("cases").join("FTC-0288");
+        let command_dir = case_dir.join("commands");
+        let oxxlplay_dir = case_dir.join("oxxlplay");
+        let oxreplay_dir = case_dir.join("oxreplay");
+        fs::create_dir_all(&command_dir).expect("command dir");
+        fs::create_dir_all(&oxxlplay_dir).expect("oxxlplay dir");
+        fs::create_dir_all(&oxreplay_dir).expect("oxreplay dir");
+        write_json_file(
+            oxxlplay_dir.join("render-context.json"),
+            &sample_oxxlplay_render_context_artifact(),
+        )
+        .expect("render context");
+
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-0288".to_string(),
+            entered_cell_text: "=TEXT(1234567.89,\"#,##0.00\")".to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: Some(default_programmatic_formatting_context()),
+            excel_render_context: None,
+            render_context_ref: None,
+        };
+        let effective_excel_render_context =
+            resolve_effective_excel_render_context(&case, None, &BTreeMap::new())
+                .expect("effective render context");
+        let scenario_path = case_dir.join("scenario.json");
+        let projection_path = case_dir.join("oxfml-v1-replay-projection.json");
+        write_json_file(
+            case_dir.join("case-input.json"),
+            &json!({
+                "excel_render_context": &effective_excel_render_context
+            }),
+        )
+        .expect("case input");
+        write_json_file(
+            &scenario_path,
+            &json!({
+                "excel_render_context": &effective_excel_render_context
+            }),
+        )
+        .expect("scenario");
+
+        let initial_oxfml_result = OxfmlCaseArtifacts {
+            summary: OxfmlVerificationSummary {
+                evaluation_summary: Some("Text · 1,234,567.89".to_string()),
+                comparison_value: Some(json!({"kind":"text","text":"1,234,567.89"})),
+                effective_display_summary: None,
+                blocked_reason: None,
+                parse_status: Some("Valid".to_string()),
+                green_tree_key: Some("green:initial".to_string()),
+            },
+            replay_projection_json: json!({
+                "comparison_views": [
+                    {
+                        "view_family": "comparison_value",
+                        "value": {"kind":"text","text":"1,234,567.89"}
+                    }
+                ]
+            }),
+            execution_failure: None,
+        };
+        persist_oxfml_case_artifacts(&case_dir, &projection_path, &initial_oxfml_result)
+            .expect("initial oxfml artifacts");
+
+        let mut prepared = PreparedVerificationCase {
+            case_dir: case_dir.clone(),
+            command_dir,
+            oxxlplay_dir,
+            oxreplay_dir,
+            scenario_path: scenario_path.clone(),
+            projection_path: projection_path.clone(),
+            effective_case: case,
+            effective_excel_render_context,
+            spreadsheet_xml_extraction: None,
+            upstream_gap_report: None,
+            oxfml_result: initial_oxfml_result,
+            batch_case_manifest: OxxlplayBatchCaseManifest {
+                case_id: "FTC-0288".to_string(),
+                scenario_id: "onecalc_verify_FTC-0288".to_string(),
+                workbook_ref: "./workbook.xml".to_string(),
+                workbook_kind: "programmatic-formula".to_string(),
+                trigger: "open_then_recalc".to_string(),
+                case_output_dir: "./oxxlplay".to_string(),
+                observable_surfaces: Vec::new(),
+                entered_cell_text: Some("=TEXT(1234567.89,\"#,##0.00\")".to_string()),
+                requested_observation_scope: None,
+                source_cell_locator: None,
+                source_workbook_path: None,
+            },
+        };
+
+        let refresh_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let refresh_count_clone = refresh_count.clone();
+        let resolved_output_dir = prepared.oxxlplay_dir.clone();
+        let refreshed = import_captured_render_context_and_refresh_oxfml_if_needed(
+            &mut prepared,
+            &resolved_output_dir,
+            move |_case, _spreadsheet_xml_extraction, effective_excel_render_context| {
+                refresh_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(
+                    effective_excel_render_context
+                        .and_then(|value| value.context.thousands_separator.as_deref()),
+                    Some("\u{A0}")
+                );
+                Ok(OxfmlCaseArtifacts {
+                    summary: OxfmlVerificationSummary {
+                        evaluation_summary: Some("Text · 1234,567.89".to_string()),
+                        comparison_value: Some(json!({"kind":"text","text":"1234,567.89"})),
+                        effective_display_summary: None,
+                        blocked_reason: None,
+                        parse_status: Some("Valid".to_string()),
+                        green_tree_key: Some("green:refreshed".to_string()),
+                    },
+                    replay_projection_json: json!({
+                        "comparison_views": [
+                            {
+                                "view_family": "comparison_value",
+                                "value": {"kind":"text","text":"1234,567.89"}
+                            }
+                        ]
+                    }),
+                    execution_failure: None,
+                })
+            },
+        )
+        .expect("refresh should succeed");
+
+        let case_input = read_json_file(case_dir.join("case-input.json")).expect("case input");
+        let scenario = read_json_file(&scenario_path).expect("scenario");
+        let projection = read_json_file(&projection_path).expect("projection");
+        let runtime_summary =
+            read_json_file(case_dir.join("oxfml-runtime-summary.json")).expect("summary");
+        let execution_context =
+            read_json_file(case_dir.join("oxfml-execution-context.json")).expect("context");
+
+        assert!(refreshed);
+        assert_eq!(refresh_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            prepared.effective_excel_render_context.provenance.kind,
+            "oxxlplay_capture_artifact"
+        );
+        assert_eq!(
+            case_input["excel_render_context"]["provenance"]["kind"],
+            json!("oxxlplay_capture_artifact")
+        );
+        assert_eq!(scenario["excel_render_context"]["trusted"], json!(true));
+        assert_eq!(
+            projection["comparison_views"][0]["value"]["text"],
+            json!("1234,567.89")
+        );
+        assert_eq!(
+            runtime_summary["comparison_value"]["text"],
+            json!("1234,567.89")
+        );
+        assert_eq!(
+            execution_context["execution_phase"],
+            json!("post_capture_trusted_refresh")
+        );
+        assert_eq!(
+            execution_context["trusted_excel_separator_context"]["thousands_separator"],
+            json!("\u{00A0}")
+        );
+        assert_eq!(
+            execution_context["locale_query_bundle"]["thousands_separator"],
+            json!("\u{00A0}")
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }
