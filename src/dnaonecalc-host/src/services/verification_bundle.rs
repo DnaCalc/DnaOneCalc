@@ -3518,7 +3518,41 @@ fn normalize_replay_comparison_views(replay: &mut Value) {
 }
 
 fn normalize_compare_ready_comparison_value(value: &Value) -> Value {
-    let normalized = normalize_comparison_value(value);
+    let mut current = value;
+    loop {
+        let Some(object) = current.as_object() else {
+            break;
+        };
+        if object.get("boundary").and_then(Value::as_str) == Some("published_formula_result")
+            && object.get("value").is_some()
+        {
+            current = object.get("value").expect("checked is_some");
+            continue;
+        }
+        break;
+    }
+
+    let Some(object) = current.as_object() else {
+        return current.clone();
+    };
+    let Some(kind) = object
+        .get("value_kind")
+        .or_else(|| object.get("kind"))
+        .or_else(|| object.get("type"))
+        .and_then(Value::as_str)
+        .map(|value| value.to_ascii_lowercase())
+    else {
+        return current.clone();
+    };
+
+    let normalized = match kind.as_str() {
+        "number" => extract_number_comparison_value_lexeme(object)
+            .map(|number| json!({ "kind": "number", "number": number }))
+            .unwrap_or_else(|| normalize_comparison_value(current)),
+        "array" => normalize_compare_ready_array_comparison_value(object)
+            .unwrap_or_else(|| normalize_comparison_value(current)),
+        _ => normalize_comparison_value(current),
+    };
     canonicalize_array_comparison_value_for_compare_ready(&normalized)
 }
 
@@ -3718,6 +3752,42 @@ fn extract_number_comparison_value(object: &serde_json::Map<String, Value>) -> O
         .or_else(|| parse_number_comparison_value(extract_payload_comparison_value(object)?))
 }
 
+fn extract_number_comparison_value_lexeme(
+    object: &serde_json::Map<String, Value>,
+) -> Option<String> {
+    object
+        .get("number")
+        .and_then(number_comparison_value_lexeme)
+        .or_else(|| {
+            object
+                .get("numeric_value")
+                .and_then(number_comparison_value_lexeme)
+        })
+        .or_else(|| {
+            object
+                .get("published_value")
+                .and_then(number_comparison_value_lexeme)
+        })
+        .or_else(|| object.get("value").and_then(number_comparison_value_lexeme))
+        .or_else(|| {
+            nested_comparison_value_field(object, "number").and_then(number_comparison_value_lexeme)
+        })
+        .or_else(|| {
+            extract_payload_comparison_value(object).and_then(number_comparison_value_lexeme)
+        })
+}
+
+fn number_comparison_value_lexeme(value: &Value) -> Option<String> {
+    match value {
+        Value::Number(number) => Some(number.as_str().to_string()),
+        Value::String(text) => Some(text.clone()),
+        Value::Object(object) => {
+            extract_payload_comparison_value(object).and_then(number_comparison_value_lexeme)
+        }
+        _ => None,
+    }
+}
+
 fn extract_text_comparison_value(object: &serde_json::Map<String, Value>) -> Option<String> {
     object
         .get("text")
@@ -3809,6 +3879,44 @@ fn normalize_array_comparison_value(object: &serde_json::Map<String, Value>) -> 
     let normalized_cells = cells
         .iter()
         .map(normalize_comparison_value)
+        .collect::<Vec<_>>();
+    let mut normalized = serde_json::Map::new();
+    normalized.insert("kind".to_string(), Value::String("array".to_string()));
+    let shape = object.get("shape").cloned().or_else(|| {
+        let rows = object
+            .get("rows")
+            .or_else(|| object.get("row_count"))
+            .and_then(Value::as_u64);
+        let cols = object
+            .get("cols")
+            .or_else(|| object.get("columns"))
+            .or_else(|| object.get("col_count"))
+            .and_then(Value::as_u64);
+        match (rows, cols) {
+            (Some(rows), Some(cols)) => Some(json!({ "rows": rows, "cols": cols })),
+            _ => None,
+        }
+    });
+    if let Some(shape) = shape {
+        normalized.insert("shape".to_string(), shape);
+    }
+    normalized.insert("cells".to_string(), Value::Array(normalized_cells));
+    Some(Value::Object(normalized))
+}
+
+fn normalize_compare_ready_array_comparison_value(
+    object: &serde_json::Map<String, Value>,
+) -> Option<Value> {
+    let payload = extract_payload_comparison_value(object)?;
+    let cells = match payload {
+        Value::Array(cells) => cells,
+        Value::Object(nested) => extract_payload_comparison_value(nested)?.as_array()?,
+        _ => return None,
+    };
+
+    let normalized_cells = cells
+        .iter()
+        .map(normalize_compare_ready_comparison_value)
         .collect::<Vec<_>>();
     let mut normalized = serde_json::Map::new();
     normalized.insert("kind".to_string(), Value::String("array".to_string()));
@@ -6468,7 +6576,7 @@ mod tests {
             projection_comparison_value(&compare_ready, "comparison_value"),
             Some(json!({
                 "kind": "number",
-                "number": 55.0
+                "number": "55.0"
             }))
         );
         assert_eq!(
@@ -6478,6 +6586,120 @@ mod tests {
         assert_eq!(
             projection_comparison_value(&compare_ready, EXECUTION_OUTCOME_VIEW_FAMILY),
             Some(normalized_completed_execution_outcome())
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn materialize_compare_ready_normalized_replay_preserves_raw_excel_numeric_lexeme() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-compare-ready-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let input_path = temp_root.join("normalized-replay.json");
+        let output_path = temp_root.join("normalized-replay.compare-ready.json");
+        fs::create_dir_all(&temp_root).expect("temp root");
+        fs::write(
+            &input_path,
+            r#"{
+  "comparison_views": [
+    {
+      "view_family": "comparison_value",
+      "value": {
+        "wire_schema": "oxfunc_value_types.aligned_json.v1",
+        "boundary": "published_formula_result",
+        "value": {
+          "kind": "number",
+          "number": -240.30991269094474
+        }
+      }
+    }
+  ]
+}"#,
+        )
+        .expect("input replay json");
+
+        let compare_ready_path = materialize_compare_ready_normalized_replay(
+            &input_path,
+            &output_path,
+            &vec![
+                EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
+                "comparison_value".to_string(),
+            ],
+            &normalized_completed_execution_outcome(),
+        )
+        .expect("compare-ready replay");
+        let compare_ready = read_json_file(compare_ready_path).expect("compare-ready json");
+
+        assert_eq!(
+            projection_comparison_value(&compare_ready, "comparison_value"),
+            Some(json!({
+                "kind": "number",
+                "number": "-240.30991269094474"
+            }))
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn materialize_compare_ready_projection_preserves_raw_oxfml_numeric_lexeme() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-compare-ready-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let input_path = temp_root.join("oxfml-v1-replay-projection.json");
+        let output_path = temp_root.join("oxfml-v1-replay-projection.compare-ready.json");
+        fs::create_dir_all(&temp_root).expect("temp root");
+        fs::write(
+            &input_path,
+            r#"{
+  "comparison_views": [
+    {
+      "view_family": "comparison_value",
+      "value": {
+        "kind": "number",
+        "number": 12599.999999999995
+      }
+    },
+    {
+      "view_family": "execution_outcome",
+      "value": {
+        "class_id": "executed_result",
+        "outcome_kind": "executed_result",
+        "outcome_stage": "executed"
+      }
+    }
+  ]
+}"#,
+        )
+        .expect("input projection json");
+
+        let compare_ready_path = materialize_compare_ready_projection(
+            &input_path,
+            &output_path,
+            &vec![
+                EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
+                "comparison_value".to_string(),
+            ],
+            &normalized_completed_execution_outcome(),
+        )
+        .expect("compare-ready projection");
+        let compare_ready = read_json_file(compare_ready_path).expect("compare-ready json");
+
+        assert_eq!(
+            projection_comparison_value(&compare_ready, "comparison_value"),
+            Some(json!({
+                "kind": "number",
+                "number": "12599.999999999995"
+            }))
         );
 
         let _ = fs::remove_dir_all(temp_root);
@@ -6533,9 +6755,9 @@ mod tests {
                 "kind": "array",
                 "shape": { "rows": 3, "cols": 1 },
                 "cells": [
-                    [{ "kind": "number", "number": 3.0 }],
-                    [{ "kind": "number", "number": 3.0 }],
-                    [{ "kind": "number", "number": 1.0 }]
+                    [{ "kind": "number", "number": "3.0" }],
+                    [{ "kind": "number", "number": "3.0" }],
+                    [{ "kind": "number", "number": "1.0" }]
                 ]
             })
         );
