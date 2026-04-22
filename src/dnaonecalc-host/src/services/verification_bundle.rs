@@ -953,12 +953,24 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         None
     };
 
-    if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
-        return finish_blocked_case(repo_root, prepared, failure_reason, excel_summary);
-    }
-
-    let oxfml_outcome =
-        classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json);
+    let (oxfml_outcome, oxfml_execution_outcome_is_synthetic) =
+        if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
+            if let Some(outcome) = synthetic_oxfml_pre_execution_rejection_outcome_for_failure(
+                &prepared.oxfml_result.summary,
+                &failure_reason,
+                &excel_outcome,
+            ) {
+                prepared.oxfml_result.summary.blocked_reason = None;
+                (outcome, true)
+            } else {
+                return finish_blocked_case(repo_root, prepared, failure_reason, excel_summary);
+            }
+        } else {
+            (
+                classify_oxfml_execution_outcome(&prepared.oxfml_result.replay_projection_json),
+                false,
+            )
+        };
     if locale_sensitive_programmatic_text_value_surface_is_not_compare_eligible(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
@@ -986,14 +998,24 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         build_replay_comparison_plan(display_comparison_enabled, &oxfml_outcome, &excel_outcome);
     let requested_replay_views = comparison_plan.required_replay_views.clone();
 
-    let compare_ready_projection_path = materialize_compare_ready_projection(
-        &prepared.projection_path,
-        prepared
-            .oxreplay_dir
-            .join("oxfml-v1-replay-projection.compare-ready.json"),
-        &comparison_plan.required_replay_views,
-        &oxfml_outcome.comparison_value,
-    )?;
+    let compare_ready_projection_path = if oxfml_execution_outcome_is_synthetic {
+        materialize_synthetic_compare_ready_projection(
+            prepared
+                .oxreplay_dir
+                .join("oxfml-v1-replay-projection.compare-ready.json"),
+            &prepared.effective_case,
+            &oxfml_outcome.comparison_value,
+        )?
+    } else {
+        materialize_compare_ready_projection(
+            &prepared.projection_path,
+            prepared
+                .oxreplay_dir
+                .join("oxfml-v1-replay-projection.compare-ready.json"),
+            &comparison_plan.required_replay_views,
+            &oxfml_outcome.comparison_value,
+        )?
+    };
     let compare_ready_replay_path = if excel_outcome.ordinary_value_comparable {
         materialize_compare_ready_normalized_replay(
             &normalized_replay_path,
@@ -1381,6 +1403,38 @@ fn classify_excel_execution_outcome(
     }
 
     Err("OxXlPlay batch case did not provide comparable execution evidence".to_string())
+}
+
+fn oxfml_execution_failure_is_explicit_syntax_diagnostic(
+    summary: &OxfmlVerificationSummary,
+    failure_reason: &str,
+) -> bool {
+    summary.parse_status.as_deref() == Some("Diagnostics")
+        && failure_reason
+            .to_ascii_lowercase()
+            .contains("syntax diagnostics")
+}
+
+fn synthetic_oxfml_pre_execution_rejection_outcome_for_failure(
+    summary: &OxfmlVerificationSummary,
+    failure_reason: &str,
+    excel_outcome: &ExecutionOutcomeSurface,
+) -> Option<ExecutionOutcomeSurface> {
+    if !oxfml_execution_failure_is_explicit_syntax_diagnostic(summary, failure_reason) {
+        return None;
+    }
+
+    let normalized_rejection = normalized_pre_execution_rejection_outcome();
+    if excel_outcome.ordinary_value_comparable
+        || excel_outcome.comparison_value != normalized_rejection
+    {
+        return None;
+    }
+
+    Some(ExecutionOutcomeSurface {
+        comparison_value: normalized_rejection,
+        ordinary_value_comparable: false,
+    })
 }
 
 fn build_replay_comparison_plan(
@@ -3499,6 +3553,73 @@ fn materialize_synthetic_compare_ready_replay(
     Ok(output_path.to_path_buf())
 }
 
+fn materialize_synthetic_compare_ready_projection(
+    output_path: impl AsRef<Path>,
+    case: &ProgrammaticFormulaCase,
+    execution_outcome: &Value,
+) -> Result<PathBuf, String> {
+    let projection = json!({
+        "candidate_result_id": "candidate:synthetic-host-normalized",
+        "commit_decision_kind": "rejected",
+        "comparison_views": [
+            {
+                "view_family": EXECUTION_OUTCOME_VIEW_FAMILY,
+                "value": execution_outcome
+            }
+        ],
+        "formula_stable_id": case.case_id,
+        "library_context_snapshot_ref": Value::Null,
+        "phase": "CommittedOrRejected",
+        "reduction_manifest_ref": Value::Null,
+        "registry_pin": Value::Null,
+        "retention_policy_id": Value::Null,
+        "session_id": "session:synthetic-host-normalized",
+        "shared_scenario_alias": format!("onecalc_verify_{}", sanitize_case_id(&case.case_id)),
+        "source_artifact_family": "runtime_formula_result",
+        "source_bundle_ref": Value::Null,
+        "source_case_id": case.case_id,
+        "source_case_ids": [],
+        "source_fixture_family": Value::Null,
+        "source_schema_id": Value::Null,
+        "trace_event_kinds": ["AcceptedCandidateResultBuilt", "CommitRejected", "RejectIssued"],
+        "typed_query_bundle_spec": Value::Null,
+        "verification_publication_surface": {
+            "conditional_formatting_applies": [],
+            "conditional_formatting_effective_display": [],
+            "conditional_formatting_effective_fill_color": [],
+            "conditional_formatting_effective_font_color": [],
+            "conditional_formatting_operator": [],
+            "conditional_formatting_rule_kind": [],
+            "conditional_formatting_rules": [],
+            "conditional_formatting_target_ranges": [],
+            "conditional_formatting_thresholds": [],
+            "date1904": Value::Null,
+            "display_delta": Value::Null,
+            "effective_display_text": Value::Null,
+            "effective_fill_color": Value::Null,
+            "effective_font_color": Value::Null,
+            "entered_cell_text": case.entered_cell_text,
+            "fill_color": Value::Null,
+            "font_color": Value::Null,
+            "format_delta": Value::Null,
+            "format_dependency_facts": [],
+            "format_profile": Value::Null,
+            "locale_format_context": Value::Null,
+            "number_format_code": Value::Null,
+            "presentation_hint": Value::Null,
+            "published_value": Value::Null,
+            "returned_value_surface": Value::Null,
+            "style_hierarchy": [],
+            "style_id": Value::Null
+        },
+        "witness_id": Value::Null,
+        "witness_lifecycle_state": Value::Null
+    });
+    let output_path = output_path.as_ref();
+    write_json_file(output_path, &projection)?;
+    Ok(output_path.to_path_buf())
+}
+
 fn normalize_replay_comparison_views(replay: &mut Value) {
     let Some(comparison_views) = replay
         .get_mut("comparison_views")
@@ -4925,6 +5046,88 @@ mod tests {
             cases: vec![ProgrammaticFormulaCase {
                 case_id: "FTC-0448".to_string(),
                 entered_cell_text: "=LET(dict,{\"x\",LAMBDA(100);\"y\",LAMBDA(200)},GETlambda,LAMBDA(d,LAMBDA(key,LET(keys,TAKE(d,,1),objects,DROP(d,,1),obj,XLOOKUP(key,keys,objects,\"not found\"),obj()))),getter,GETlambda(dict),getter(\"y\"))".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            batch_case_status: Some("failed".to_string()),
+            batch_case_error: Some("programmatic_formula_authoring_failed: Excel COM rejected Formula2 assignment for entered_cell_text with 0x800A03EC".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Matched
+        );
+        assert_eq!(case_report.value_match, None);
+        assert_eq!(case_report.display_match, None);
+        assert_eq!(case_report.replay_equivalent, Some(true));
+        assert!(case_report.excel_summary.is_none());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn synthetic_oxfml_pre_execution_rejection_requires_excel_pre_execution_rejection() {
+        let summary = OxfmlVerificationSummary {
+            evaluation_summary: None,
+            comparison_value: None,
+            effective_display_summary: None,
+            blocked_reason: Some("syntax diagnostics".to_string()),
+            parse_status: Some("Diagnostics".to_string()),
+            green_tree_key: None,
+        };
+        let failure_reason =
+            "OxFml runtime execution failed for case `x`: formula execution rejected due to syntax diagnostics: expected ')' at 63:0";
+
+        assert!(synthetic_oxfml_pre_execution_rejection_outcome_for_failure(
+            &summary,
+            failure_reason,
+            &ExecutionOutcomeSurface {
+                comparison_value: normalized_pre_execution_rejection_outcome(),
+                ordinary_value_comparable: false,
+            }
+        )
+        .is_some());
+
+        assert!(synthetic_oxfml_pre_execution_rejection_outcome_for_failure(
+            &summary,
+            failure_reason,
+            &ExecutionOutcomeSurface {
+                comparison_value: normalized_completed_execution_outcome(),
+                ordinary_value_comparable: true,
+            }
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn verification_batch_treats_explicit_oxfml_syntax_rejection_and_excel_authoring_rejection_as_matched(
+    ) {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "FTC-0916".to_string(),
+                entered_cell_text:
+                    "=((((((((((((((((1+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
                 excel_render_context: None,
@@ -6518,6 +6721,52 @@ mod tests {
         assert_eq!(replay["lane_id"], json!("synthetic-host-observation"));
         assert_eq!(
             projection_comparison_value(&replay, EXECUTION_OUTCOME_VIEW_FAMILY),
+            Some(normalized_pre_execution_rejection_outcome())
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn materialize_synthetic_compare_ready_projection_includes_projection_identity() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-synthetic-projection-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_path = temp_root.join("oxfml-v1-replay-projection.compare-ready.json");
+        let case = ProgrammaticFormulaCase {
+            case_id: "FTC-0916".to_string(),
+            entered_cell_text: "=((((((((((((((((1+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)"
+                .to_string(),
+            spreadsheet_xml_source: None,
+            formatting_context: None,
+            excel_render_context: None,
+            render_context_ref: None,
+        };
+
+        let projection_path = materialize_synthetic_compare_ready_projection(
+            &output_path,
+            &case,
+            &normalized_pre_execution_rejection_outcome(),
+        )
+        .expect("synthetic compare-ready projection");
+        let projection = read_json_file(projection_path).expect("synthetic projection json");
+
+        assert_eq!(
+            projection["source_artifact_family"],
+            json!("runtime_formula_result")
+        );
+        assert_eq!(projection["source_case_id"], json!("FTC-0916"));
+        assert_eq!(projection["commit_decision_kind"], json!("rejected"));
+        assert_eq!(
+            projection["shared_scenario_alias"],
+            json!("onecalc_verify_FTC-0916")
+        );
+        assert_eq!(
+            projection_comparison_value(&projection, EXECUTION_OUTCOME_VIEW_FAMILY),
             Some(normalized_pre_execution_rejection_outcome())
         );
 
