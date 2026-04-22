@@ -3512,9 +3512,55 @@ fn normalize_replay_comparison_views(replay: &mut Value) {
             continue;
         }
         if let Some(value) = view.get_mut("value") {
-            *value = normalize_comparison_value(value);
+            *value = normalize_compare_ready_comparison_value(value);
         }
     }
+}
+
+fn normalize_compare_ready_comparison_value(value: &Value) -> Value {
+    let normalized = normalize_comparison_value(value);
+    canonicalize_array_comparison_value_for_compare_ready(&normalized)
+}
+
+fn canonicalize_array_comparison_value_for_compare_ready(value: &Value) -> Value {
+    let Some(object) = value.as_object() else {
+        return value.clone();
+    };
+    if object.get("kind").and_then(Value::as_str) != Some("array") {
+        return value.clone();
+    }
+    let Some(shape) = object.get("shape").and_then(Value::as_object) else {
+        return value.clone();
+    };
+    let Some(rows) = shape.get("rows").and_then(Value::as_u64) else {
+        return value.clone();
+    };
+    let Some(cols) = shape.get("cols").and_then(Value::as_u64) else {
+        return value.clone();
+    };
+    let Some(cells) = object.get("cells").and_then(Value::as_array) else {
+        return value.clone();
+    };
+
+    let rows = rows as usize;
+    let cols = cols as usize;
+    if rows == 0 || cols == 0 || rows.saturating_mul(cols) != cells.len() {
+        return value.clone();
+    }
+    if cells.iter().all(Value::is_array) {
+        return value.clone();
+    }
+
+    let mut matrix_rows = Vec::with_capacity(rows);
+    for row_index in 0..rows {
+        let start = row_index * cols;
+        let end = start + cols;
+        matrix_rows.push(Value::Array(cells[start..end].to_vec()));
+    }
+
+    let mut canonical = object.clone();
+    canonical.insert("cells".to_string(), Value::Array(matrix_rows));
+    Value::Object(canonical)
 }
 
 fn upsert_comparison_view(
@@ -6432,6 +6478,66 @@ mod tests {
         assert_eq!(
             projection_comparison_value(&compare_ready, EXECUTION_OUTCOME_VIEW_FAMILY),
             Some(normalized_completed_execution_outcome())
+        );
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn materialize_compare_ready_normalized_replay_canonicalizes_flat_column_array_payload() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "dnaonecalc-compare-ready-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let input_path = temp_root.join("normalized-replay.json");
+        let output_path = temp_root.join("normalized-replay.compare-ready.json");
+        write_json_file(
+            &input_path,
+            &json!({
+                "comparison_views": [
+                    {
+                        "view_family": "comparison_value",
+                        "value": {
+                            "kind": "array",
+                            "shape": { "rows": 3, "cols": 1 },
+                            "cells": [
+                                { "kind": "number", "number": 3.0 },
+                                { "kind": "number", "number": 3.0 },
+                                { "kind": "number", "number": 1.0 }
+                            ]
+                        }
+                    }
+                ]
+            }),
+        )
+        .expect("input replay json");
+
+        let compare_ready_path = materialize_compare_ready_normalized_replay(
+            &input_path,
+            &output_path,
+            &vec![
+                EXECUTION_OUTCOME_VIEW_FAMILY.to_string(),
+                "comparison_value".to_string(),
+            ],
+            &normalized_completed_execution_outcome(),
+        )
+        .expect("compare-ready replay");
+        let compare_ready = read_json_file(compare_ready_path).expect("compare-ready json");
+
+        assert_eq!(
+            compare_ready["comparison_views"][0]["value"],
+            json!({
+                "kind": "array",
+                "shape": { "rows": 3, "cols": 1 },
+                "cells": [
+                    [{ "kind": "number", "number": 3.0 }],
+                    [{ "kind": "number", "number": 3.0 }],
+                    [{ "kind": "number", "number": 1.0 }]
+                ]
+            })
         );
 
         let _ = fs::remove_dir_all(temp_root);
