@@ -933,6 +933,8 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
         &prepared.effective_case,
         prepared.spreadsheet_xml_extraction.as_ref(),
     );
+    let excel_programmatic_authoring_rejection =
+        excel_case_output_is_programmatic_authoring_rejection(batch_case_output);
     let excel_outcome = match classify_excel_execution_outcome(batch_case_output) {
         Ok(outcome) => outcome,
         Err(reason) => return finish_blocked_case(repo_root, prepared, reason, None),
@@ -954,7 +956,16 @@ fn finalize_excel_case<R: VerificationCommandRunner>(
     };
 
     let (oxfml_outcome, oxfml_execution_outcome_is_synthetic) =
-        if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
+        if excel_programmatic_authoring_rejection {
+            prepared.oxfml_result.summary.blocked_reason = None;
+            (
+                ExecutionOutcomeSurface {
+                    comparison_value: normalized_pre_execution_rejection_outcome(),
+                    ordinary_value_comparable: false,
+                },
+                true,
+            )
+        } else if let Some(failure_reason) = prepared.oxfml_result.execution_failure.clone() {
             if let Some(outcome) = synthetic_oxfml_pre_execution_rejection_outcome_for_failure(
                 &prepared.oxfml_result.summary,
                 &failure_reason,
@@ -5128,6 +5139,52 @@ mod tests {
                 case_id: "FTC-0916".to_string(),
                 entered_cell_text:
                     "=((((((((((((((((1+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)+1)".to_string(),
+                spreadsheet_xml_source: None,
+                formatting_context: None,
+                excel_render_context: None,
+                render_context_ref: None,
+            }],
+        };
+        let runner = FakeVerificationRunner {
+            batch_case_status: Some("failed".to_string()),
+            batch_case_error: Some("programmatic_formula_authoring_failed: Excel COM rejected Formula2 assignment for entered_cell_text with 0x800A03EC".to_string()),
+            ..Default::default()
+        };
+
+        let report =
+            run_verification_batch_with_runner(&request, &output_root, &runner).expect("report");
+        let case_report = &report.case_reports[0];
+
+        assert_eq!(
+            case_report.comparison_status,
+            ProgrammaticComparisonStatus::Matched
+        );
+        assert_eq!(case_report.value_match, None);
+        assert_eq!(case_report.display_match, None);
+        assert_eq!(case_report.replay_equivalent, Some(true));
+        assert!(case_report.excel_summary.is_none());
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[test]
+    fn verification_batch_treats_completed_oxfml_and_excel_authoring_rejection_as_matched() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "onecalc-verification-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let output_root = temp_root.join("bundle");
+        let request = VerificationBatchRequest {
+            host_profile: default_windows_excel_host_profile(),
+            capabilities: default_windows_excel_capability_profile(),
+            replay_policy: default_verification_replay_policy(),
+            render_contexts: BTreeMap::new(),
+            cases: vec![ProgrammaticFormulaCase {
+                case_id: "FTC-0050".to_string(),
+                entered_cell_text: "=1E+308*2".to_string(),
                 spreadsheet_xml_source: None,
                 formatting_context: None,
                 excel_render_context: None,
