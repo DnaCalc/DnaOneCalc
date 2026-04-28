@@ -13,6 +13,7 @@
 //!
 //! Reference: `docs/WS14_PRE_MVP_PATH.md` §4 Step 2.
 
+use crate::adapters::oxfml::{worksheet_error_literal, EvalValue};
 use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource};
 use crate::ui::editor::state::EditorSurfaceState;
 
@@ -104,7 +105,7 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         };
     }
 
-    // Blocked or diagnostic surfaces project to Error.
+    // Host-derived blocked reason wins regardless of value type.
     if let Some(reason) = formula_space.context.blocked_reason.as_deref() {
         return ResultView::Error {
             code: "BLOCKED".to_string(),
@@ -112,6 +113,17 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         };
     }
 
+    // Typed dispatch on the bridge's published `EvalValue`. This is the
+    // primary path: when the bridge produced a value, we dispatch on its
+    // discriminator (Number / Text / Logical / Error / Array / Reference /
+    // Lambda) without parsing string summaries.
+    if let Some(published_value) = bridge_published_value(formula_space) {
+        return project_typed_value(formula_space, published_value);
+    }
+
+    // Fallback: bridge produced no typed value (call errored, local
+    // fallback path, blocked surface). Classify from the legacy string
+    // summary if any.
     if let Some(summary) = formula_space.latest_evaluation_summary.as_deref() {
         if let Some(detail) = summary.strip_prefix("Diagnostic · ") {
             return ResultView::Error {
@@ -126,9 +138,6 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
             };
         }
         if let Some(detail) = summary.strip_prefix("Number · ") {
-            // Prefer the effective display when present (preserves locale + format
-            // application from the OxFml publication pipeline); fall back to the
-            // bare number if no effective display has been computed yet.
             let text = formula_space
                 .effective_display_summary
                 .clone()
@@ -150,8 +159,6 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
                 kind: ResultKind::Logical,
             };
         }
-        // Unknown kind prefix; fall back to displaying the effective display
-        // when present, otherwise the raw evaluation summary.
         let text = formula_space
             .effective_display_summary
             .clone()
@@ -162,9 +169,55 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         };
     }
 
-    // Have text but no evaluation summary yet — bridge is in flight or
-    // local fallback hasn't classified.
     ResultView::Pending
+}
+
+fn bridge_published_value(formula_space: &FormulaSpaceState) -> Option<&EvalValue> {
+    formula_space
+        .editor_document
+        .as_ref()
+        .and_then(|doc| doc.value_presentation.as_ref())
+        .map(|vp| &vp.published_value)
+}
+
+fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> ResultView {
+    let display_text = || {
+        formula_space
+            .effective_display_summary
+            .clone()
+            .unwrap_or_default()
+    };
+    match value {
+        EvalValue::Number(_) => ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Number,
+        },
+        EvalValue::Text(_) => ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Text,
+        },
+        EvalValue::Logical(_) => ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Logical,
+        },
+        EvalValue::Error(code) => ResultView::Error {
+            code: worksheet_error_literal(*code).to_string(),
+            surface_repr: None,
+        },
+        EvalValue::Array(_) => {
+            // Array path normally goes through formula_space.array_preview
+            // (handled above). If we reach here without a preview, surface
+            // the effective display string.
+            ResultView::Display {
+                text: display_text(),
+                kind: ResultKind::Other,
+            }
+        }
+        EvalValue::Reference(_) | EvalValue::Lambda(_) => ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Other,
+        },
+    }
 }
 
 fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {

@@ -45,7 +45,7 @@ impl Default for OneCalcHostState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceShellState {
     pub active_formula_space_id: Option<FormulaSpaceId>,
     pub open_formula_space_order: Vec<FormulaSpaceId>,
@@ -70,7 +70,9 @@ impl Default for WorkspaceShellState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+// `Eq` cannot be derived: the upstream `EvalValue` carried inside
+// `FormulaValuePresentation.published_value` contains `f64` (not `Eq`).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct FormulaSpaceCollectionState {
     pub spaces: BTreeMap<FormulaSpaceId, FormulaSpaceState>,
 }
@@ -90,7 +92,9 @@ impl FormulaSpaceCollectionState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` cannot be derived: `editor_document.value_presentation.published_value`
+// is an upstream `EvalValue` containing `f64` (not `Eq`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct FormulaSpaceState {
     pub formula_space_id: FormulaSpaceId,
     pub raw_entered_cell_text: String,
@@ -342,7 +346,7 @@ impl CapabilityDiffTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClosedFormulaSpaceRecord {
     pub formula_space: FormulaSpaceState,
     pub last_active_mode: AppMode,

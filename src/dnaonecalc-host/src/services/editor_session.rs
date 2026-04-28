@@ -223,25 +223,23 @@ mod tests {
         EditorDocument {
             source_text: source_text.to_string(),
             text_change_range: None,
-            editor_syntax_snapshot: EditorSyntaxSnapshot {
-                formula_stable_id: "formula-1".to_string(),
-                green_tree_key: "green-1".to_string(),
-                tokens: vec![],
-            },
-            live_diagnostics: LiveDiagnosticSnapshot::default(),
+            editor_syntax_snapshot: crate::test_support::make_editor_syntax_snapshot(
+                "formula-1",
+                "green-1",
+                vec![],
+            ),
+            live_diagnostics: crate::test_support::empty_live_diagnostic_snapshot(),
             reuse_summary: FormulaEditReuseSummary {
                 reused_green_tree: true,
                 reused_red_projection: true,
                 reused_bound_formula: false,
             },
-            signature_help: Some(SignatureHelpContext {
-                callee_text: "SUM".to_string(),
-                call_span: FormulaTextSpan {
-                    start: 0,
-                    len: source_text.chars().count(),
-                },
-                active_argument_index: 1,
-            }),
+            signature_help: Some(crate::test_support::make_signature_help_context(
+                "SUM",
+                0,
+                source_text.chars().count(),
+                1,
+            )),
             function_help: None,
             completion_proposals: vec![CompletionProposal {
                 proposal_id: "proposal-1".to_string(),

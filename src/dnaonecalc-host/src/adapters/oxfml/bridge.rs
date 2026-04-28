@@ -16,7 +16,9 @@ pub struct FormulaEditRequest {
     pub analysis_stage: EditorAnalysisStage,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` cannot be derived: `EditorDocument.value_presentation.published_value`
+// is the upstream `EvalValue`, which contains `f64` (not `Eq`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct FormulaEditResult {
     pub document: EditorDocument,
 }

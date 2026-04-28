@@ -2,8 +2,12 @@ use crate::adapters::oxfml::{
     BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
     EditorToken, EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan,
     FormulaWalkNode, FormulaWalkNodeState, FunctionHelpPacket, FunctionHelpSignatureForm,
-    LiveDiagnostic, LiveDiagnosticSnapshot, ParseSummary, ProvenanceSummary, SignatureHelpContext,
+    LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot, LiveDiagnosticStage,
+    ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
+use oxfml_core::source::FormulaChannelKind;
+use oxfml_core::syntax::green::SyntaxKind;
+use oxfml_core::syntax::token::TokenKind;
 
 pub fn sample_editor_document(source_text: &str) -> EditorDocument {
     sample_editor_document_with_green_key(source_text, "green-1")
@@ -24,16 +28,19 @@ pub fn sample_editor_document_with_green_key(
         }),
         editor_syntax_snapshot: EditorSyntaxSnapshot {
             formula_stable_id: "formula-1".to_string(),
+            formula_channel_kind: FormulaChannelKind::WorksheetA1,
             green_tree_key: green_tree_key.to_string(),
             tokens,
         },
         live_diagnostics: LiveDiagnosticSnapshot {
-            diagnostics: vec![LiveDiagnostic {
-                diagnostic_id: "diag-1".to_string(),
-                message: "sample diagnostic".to_string(),
-                span_start: 0,
-                span_len: source_text.chars().count(),
-            }],
+            formula_stable_id: "formula-1".to_string(),
+            formula_token: "formula-1".to_string(),
+            diagnostics: vec![sample_live_diagnostic(
+                "diag-1",
+                "sample diagnostic",
+                0,
+                source_text.chars().count(),
+            )],
         },
         reuse_summary: FormulaEditReuseSummary {
             reused_green_tree: false,
@@ -47,9 +54,11 @@ pub fn sample_editor_document_with_green_key(
                 len: source_text.chars().count(),
             },
             active_argument_index: 0,
+            invocation_kind: SyntaxKind::CallExpr,
         }),
         function_help: Some(FunctionHelpPacket {
             lookup_key: "SUM".to_string(),
+            library_context_snapshot_ref: None,
             display_name: "SUM".to_string(),
             signature_forms: vec![FunctionHelpSignatureForm {
                 display_signature: "SUM(number1, number2, ...)".to_string(),
@@ -104,12 +113,14 @@ pub fn sample_editor_document_with_green_key(
 pub fn diagnostic_editor_document(source_text: &str) -> EditorDocument {
     let mut document = sample_editor_document_with_green_key(source_text, "green-diag-1");
     document.live_diagnostics = LiveDiagnosticSnapshot {
-        diagnostics: vec![LiveDiagnostic {
-            diagnostic_id: "diag-missing-arg".to_string(),
-            message: "Missing trailing argument".to_string(),
-            span_start: source_text.len().saturating_sub(2),
-            span_len: 1,
-        }],
+        formula_stable_id: "formula-1".to_string(),
+        formula_token: "formula-1".to_string(),
+        diagnostics: vec![sample_live_diagnostic(
+            "diag-missing-arg",
+            "Missing trailing argument",
+            source_text.len().saturating_sub(2),
+            1,
+        )],
     };
     document.parse_summary = Some(ParseSummary {
         status: "Recoverable".to_string(),
@@ -126,6 +137,7 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
     let mut document = sample_editor_document_with_green_key(source_text, "green-array-1");
     document.function_help = Some(FunctionHelpPacket {
         lookup_key: "SEQUENCE".to_string(),
+        library_context_snapshot_ref: None,
         display_name: "SEQUENCE".to_string(),
         signature_forms: vec![FunctionHelpSignatureForm {
             display_signature: "SEQUENCE(rows, columns, start, step)".to_string(),
@@ -149,6 +161,7 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
             len: source_text.chars().count(),
         },
         active_argument_index: 1,
+        invocation_kind: SyntaxKind::CallExpr,
     });
     document.formula_walk = vec![FormulaWalkNode {
         node_id: "node-sequence".to_string(),
@@ -229,8 +242,129 @@ fn sample_editor_tokens(source_text: &str) -> Vec<EditorToken> {
 
 fn token(text: &str, span_start: usize) -> EditorToken {
     EditorToken {
+        kind: TokenKind::Identifier,
         text: text.to_string(),
-        span_start,
-        span_len: text.chars().count(),
+        leading_trivia: Vec::new(),
+        trailing_trivia: Vec::new(),
+        span: FormulaTextSpan {
+            start: span_start,
+            len: text.chars().count(),
+        },
+    }
+}
+
+fn sample_live_diagnostic(
+    diagnostic_id: &str,
+    message: &str,
+    span_start: usize,
+    span_len: usize,
+) -> LiveDiagnostic {
+    LiveDiagnostic {
+        diagnostic_id: diagnostic_id.to_string(),
+        severity: LiveDiagnosticSeverity::Error,
+        stage: LiveDiagnosticStage::Bind,
+        message: message.to_string(),
+        primary_span: FormulaTextSpan {
+            start: span_start,
+            len: span_len,
+        },
+        related_spans: Vec::new(),
+        code: None,
+        suggested_fix_kind: None,
+    }
+}
+
+/// Public helper for legacy tests that want a default-shaped
+/// `LiveDiagnosticSnapshot`. Upstream's `LiveDiagnosticSnapshot` doesn't
+/// derive `Default`, so this wraps the empty-vector + empty-id case.
+pub fn empty_live_diagnostic_snapshot() -> LiveDiagnosticSnapshot {
+    LiveDiagnosticSnapshot {
+        formula_stable_id: String::new(),
+        formula_token: String::new(),
+        diagnostics: Vec::new(),
+    }
+}
+
+/// Public helper for legacy tests that build a `LiveDiagnosticSnapshot`
+/// from a vector of diagnostics with default identity.
+pub fn live_diagnostic_snapshot_with(diagnostics: Vec<LiveDiagnostic>) -> LiveDiagnosticSnapshot {
+    LiveDiagnosticSnapshot {
+        formula_stable_id: String::new(),
+        formula_token: String::new(),
+        diagnostics,
+    }
+}
+
+/// Public helper for legacy tests that build a `LiveDiagnostic` with
+/// the host-mirror's earlier `(diagnostic_id, message, span_start,
+/// span_len)` shape. Severity defaults to Error and stage to Bind.
+pub fn make_live_diagnostic(
+    diagnostic_id: &str,
+    message: &str,
+    span_start: usize,
+    span_len: usize,
+) -> LiveDiagnostic {
+    sample_live_diagnostic(diagnostic_id, message, span_start, span_len)
+}
+
+/// Public helper for legacy tests that build an `EditorToken` with
+/// the host-mirror's earlier `(text, span_start, span_len)` shape.
+pub fn make_editor_token(text: &str, span_start: usize) -> EditorToken {
+    token(text, span_start)
+}
+
+/// Public helper for legacy tests that build a default-shaped
+/// `EditorSyntaxSnapshot` from `(formula_stable_id, green_tree_key, tokens)`.
+pub fn make_editor_syntax_snapshot(
+    formula_stable_id: &str,
+    green_tree_key: &str,
+    tokens: Vec<EditorToken>,
+) -> EditorSyntaxSnapshot {
+    EditorSyntaxSnapshot {
+        formula_stable_id: formula_stable_id.to_string(),
+        formula_channel_kind: FormulaChannelKind::WorksheetA1,
+        green_tree_key: green_tree_key.to_string(),
+        tokens,
+    }
+}
+
+/// Public helper for legacy tests that build a default-shaped
+/// `SignatureHelpContext`.
+pub fn make_signature_help_context(
+    callee_text: &str,
+    span_start: usize,
+    span_len: usize,
+    active_argument_index: usize,
+) -> SignatureHelpContext {
+    SignatureHelpContext {
+        callee_text: callee_text.to_string(),
+        call_span: FormulaTextSpan {
+            start: span_start,
+            len: span_len,
+        },
+        active_argument_index,
+        invocation_kind: SyntaxKind::CallExpr,
+    }
+}
+
+/// Public helper for legacy tests that build a default-shaped
+/// `FunctionHelpPacket`.
+pub fn make_function_help_packet(
+    lookup_key: &str,
+    display_name: &str,
+    signature_forms: Vec<FunctionHelpSignatureForm>,
+    argument_help: Vec<String>,
+    short_description: Option<String>,
+    availability_summary: Option<String>,
+) -> FunctionHelpPacket {
+    FunctionHelpPacket {
+        lookup_key: lookup_key.to_string(),
+        library_context_snapshot_ref: None,
+        display_name: display_name.to_string(),
+        signature_forms,
+        argument_help,
+        short_description,
+        availability_summary,
+        deferred_or_profile_limited: false,
     }
 }

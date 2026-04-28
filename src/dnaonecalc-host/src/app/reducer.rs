@@ -677,12 +677,12 @@ mod tests {
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=SU".to_string(),
             text_change_range: None,
-            editor_syntax_snapshot: EditorSyntaxSnapshot {
-                formula_stable_id: "formula-1".to_string(),
-                green_tree_key: "green-1".to_string(),
-                tokens: vec![],
-            },
-            live_diagnostics: LiveDiagnosticSnapshot::default(),
+            editor_syntax_snapshot: crate::test_support::make_editor_syntax_snapshot(
+                "formula-1",
+                "green-1",
+                vec![],
+            ),
+            live_diagnostics: crate::test_support::empty_live_diagnostic_snapshot(),
             reuse_summary: FormulaEditReuseSummary {
                 reused_green_tree: false,
                 reused_red_projection: false,

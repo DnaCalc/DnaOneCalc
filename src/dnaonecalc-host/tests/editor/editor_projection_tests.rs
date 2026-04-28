@@ -1,24 +1,16 @@
-use dnaonecalc_host::adapters::oxfml::{EditorSyntaxSnapshot, EditorToken};
+use dnaonecalc_host::test_support::{make_editor_syntax_snapshot, make_editor_token};
 use dnaonecalc_host::ui::editor::render_projection::syntax_runs_from_snapshot;
 
 #[test]
 fn ex_01_projection_uses_editor_syntax_snapshot_as_render_source() {
-    let snapshot = EditorSyntaxSnapshot {
-        formula_stable_id: "formula-1".to_string(),
-        green_tree_key: "green-42".to_string(),
-        tokens: vec![
-            EditorToken {
-                text: "=LET(".to_string(),
-                span_start: 0,
-                span_len: 5,
-            },
-            EditorToken {
-                text: "values".to_string(),
-                span_start: 5,
-                span_len: 6,
-            },
+    let snapshot = make_editor_syntax_snapshot(
+        "formula-1",
+        "green-42",
+        vec![
+            make_editor_token("=LET(", 0),
+            make_editor_token("values", 5),
         ],
-    };
+    );
 
     let runs = syntax_runs_from_snapshot(&snapshot);
     assert_eq!(runs.len(), 2);

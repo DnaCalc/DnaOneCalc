@@ -132,8 +132,8 @@ pub fn build_explore_view_model(
                 .map(|diagnostic| ExploreDiagnosticView {
                     diagnostic_id: diagnostic.diagnostic_id.clone(),
                     message: diagnostic.message.clone(),
-                    span_start: diagnostic.span_start,
-                    span_len: diagnostic.span_len,
+                    span_start: diagnostic.primary_span.start,
+                    span_len: diagnostic.primary_span.len,
                 })
                 .collect(),
             Some(document.green_tree_key().to_string()),
@@ -317,42 +317,28 @@ mod tests {
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=SUM(1,2)".to_string(),
             text_change_range: None,
-            editor_syntax_snapshot: EditorSyntaxSnapshot {
-                formula_stable_id: "formula-1".to_string(),
-                green_tree_key: "green-1".to_string(),
-                tokens: vec![
-                    EditorToken {
-                        text: "=".to_string(),
-                        span_start: 0,
-                        span_len: 1,
-                    },
-                    EditorToken {
-                        text: "SUM".to_string(),
-                        span_start: 1,
-                        span_len: 3,
-                    },
+            editor_syntax_snapshot: crate::test_support::make_editor_syntax_snapshot(
+                "formula-1",
+                "green-1",
+                vec![
+                    crate::test_support::make_editor_token("=", 0),
+                    crate::test_support::make_editor_token("SUM", 1),
                 ],
-            },
-            live_diagnostics: LiveDiagnosticSnapshot {
-                diagnostics: vec![LiveDiagnostic {
-                    diagnostic_id: "diag-1".to_string(),
-                    message: "sample".to_string(),
-                    span_start: 1,
-                    span_len: 3,
-                }],
-            },
+            ),
+            live_diagnostics: crate::test_support::live_diagnostic_snapshot_with(vec![
+                crate::test_support::make_live_diagnostic("diag-1", "sample", 1, 3),
+            ]),
             reuse_summary: FormulaEditReuseSummary {
                 reused_green_tree: true,
                 reused_red_projection: false,
                 reused_bound_formula: false,
             },
-            signature_help: Some(SignatureHelpContext {
-                callee_text: "SUM".to_string(),
-                call_span: FormulaTextSpan { start: 0, len: 9 },
-                active_argument_index: 1,
-            }),
+            signature_help: Some(crate::test_support::make_signature_help_context(
+                "SUM", 0, 9, 1,
+            )),
             function_help: Some(FunctionHelpPacket {
                 lookup_key: "SUM".to_string(),
+                library_context_snapshot_ref: None,
                 display_name: "SUM".to_string(),
                 signature_forms: vec![FunctionHelpSignatureForm {
                     display_signature: "SUM(number1, number2, ...)".to_string(),
@@ -437,12 +423,12 @@ mod tests {
         formula_space.editor_document = Some(EditorDocument {
             source_text: "=SUM(1,2)".to_string(),
             text_change_range: None,
-            editor_syntax_snapshot: EditorSyntaxSnapshot {
-                formula_stable_id: "formula-1".to_string(),
-                green_tree_key: "green-1".to_string(),
-                tokens: vec![],
-            },
-            live_diagnostics: LiveDiagnosticSnapshot::default(),
+            editor_syntax_snapshot: crate::test_support::make_editor_syntax_snapshot(
+                "formula-1",
+                "green-1",
+                vec![],
+            ),
+            live_diagnostics: crate::test_support::empty_live_diagnostic_snapshot(),
             reuse_summary: FormulaEditReuseSummary {
                 reused_green_tree: true,
                 reused_red_projection: false,

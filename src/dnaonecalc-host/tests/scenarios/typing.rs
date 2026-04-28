@@ -100,14 +100,14 @@ fn typing_an_invalid_formula_surfaces_a_diagnostic_in_the_cluster() {
     // `derive_formula_presentation`.
     let (mut state, _space) = fresh_state_with_active_space();
     let mut document = sample_editor_document("=SUM(");
-    document.live_diagnostics = LiveDiagnosticSnapshot {
-        diagnostics: vec![LiveDiagnostic {
-            diagnostic_id: "diag-1".to_string(),
-            message: "unmatched '('".to_string(),
-            span_start: 4,
-            span_len: 1,
-        }],
-    };
+    document.live_diagnostics = dnaonecalc_host::test_support::live_diagnostic_snapshot_with(
+        vec![dnaonecalc_host::test_support::make_live_diagnostic(
+            "diag-1",
+            "unmatched '('",
+            4,
+            1,
+        )],
+    );
     let bridge = DiagnosticFakeBridge { document };
 
     apply_live_editor_input(

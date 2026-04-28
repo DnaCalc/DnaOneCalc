@@ -8,9 +8,11 @@ pub use bridge::{
 };
 pub use live_bridge::LiveOxfmlBridge;
 pub use types::{
-    BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
-    EditorToken, EvalSummary, FormulaArrayPreview, FormulaEditReuseSummary, FormulaTextChangeRange,
-    FormulaTextSpan, FormulaValuePresentation, FormulaWalkNode, FormulaWalkNodeState,
-    FunctionHelpPacket, FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSnapshot,
-    ParseSummary, ProvenanceSummary, SignatureHelpContext,
+    worksheet_error_literal, ArrayCellValue, BindSummary, CompletionProposal,
+    CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot, EditorToken, EvalSummary,
+    EvalValue, FormulaArrayPreview, FormulaEditReuseSummary, FormulaTextChangeRange,
+    FormulaTextSpan, FormulaValueKind, FormulaValuePresentation, FormulaWalkNode,
+    FormulaWalkNodeState, FunctionHelpPacket, FunctionHelpSignatureForm, LiveDiagnostic,
+    LiveDiagnosticSeverity, LiveDiagnosticSnapshot, LiveDiagnosticStage, ParseSummary,
+    ProvenanceSummary, SignatureHelpContext, WorksheetErrorCode,
 };
