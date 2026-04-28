@@ -263,7 +263,7 @@ fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresenta
     };
 
     FormulaValuePresentation {
-        evaluation_summary: format_eval_summary(&result.evaluation.result.payload_summary),
+        evaluation_summary: evaluation_summary_from_value(&result.published_worksheet_value),
         effective_display_summary: Some(format_eval_value_for_display(
             &result.published_worksheet_value,
             array_preview.as_ref(),
@@ -290,38 +290,25 @@ fn blocked_reason_from_runtime(result: &RuntimeFormulaResult) -> Option<String> 
         })
 }
 
-fn format_eval_summary(payload_summary: &str) -> String {
-    if let Some(inner) = payload_summary
-        .strip_prefix("Number(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return format!("Number · {inner}");
+/// Produce the host's compact `evaluation_summary` string directly from
+/// the upstream typed `EvalValue`. Replaces an earlier helper that
+/// re-parsed `RuntimeFormulaResult.evaluation.result.payload_summary`
+/// with `strip_prefix("Number(")` etc., which silently lost the typed
+/// discriminator and forced a downstream string round-trip to recover it.
+fn evaluation_summary_from_value(value: &EvalValue) -> String {
+    match value {
+        EvalValue::Number(number) => format!("Number · {}", format_number(*number)),
+        EvalValue::Text(text) => format!("Text · {}", text.to_string_lossy()),
+        EvalValue::Logical(true) => "Logical · TRUE".to_string(),
+        EvalValue::Logical(false) => "Logical · FALSE".to_string(),
+        EvalValue::Error(code) => format!("Error · {}", worksheet_error_literal(*code)),
+        EvalValue::Array(array) => {
+            let shape = array.shape();
+            format!("Array · {}x{} dynamic result", shape.rows, shape.cols)
+        }
+        EvalValue::Reference(reference) => format!("Reference · {}", reference.target),
+        EvalValue::Lambda(lambda) => format!("Lambda · {}", lambda.callable_token),
     }
-    if let Some(inner) = payload_summary
-        .strip_prefix("Text(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return format!("Text · {inner}");
-    }
-    if let Some(inner) = payload_summary
-        .strip_prefix("Logical(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return format!("Logical · {inner}");
-    }
-    if let Some(inner) = payload_summary
-        .strip_prefix("Array(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return format!("Array · {inner} dynamic result");
-    }
-    if let Some(inner) = payload_summary
-        .strip_prefix("Error(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return format!("Error · {}", worksheet_error_literal_from_name(inner));
-    }
-    payload_summary.to_string()
 }
 
 fn format_eval_value_for_display(
@@ -371,28 +358,6 @@ fn format_array_cell_value(cell: &ArrayCellValue) -> String {
         ArrayCellValue::Error(code) => worksheet_error_literal(*code).to_string(),
         ArrayCellValue::EmptyCell => String::new(),
     }
-}
-
-fn worksheet_error_literal_from_name(name: &str) -> String {
-    use oxfunc_core::value::WorksheetErrorCode as Code;
-    let code = match name {
-        "Null" => Code::Null,
-        "Div0" => Code::Div0,
-        "Value" => Code::Value,
-        "Ref" => Code::Ref,
-        "Name" => Code::Name,
-        "Num" => Code::Num,
-        "NA" => Code::NA,
-        "Busy" => Code::Busy,
-        "GettingData" => Code::GettingData,
-        "Spill" => Code::Spill,
-        "Calc" => Code::Calc,
-        "Field" => Code::Field,
-        "Blocked" => Code::Blocked,
-        "Connect" => Code::Connect,
-        _ => return name.to_string(),
-    };
-    worksheet_error_literal(code).to_string()
 }
 
 fn format_number(number: f64) -> String {
