@@ -25,12 +25,15 @@ use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent};
 use crate::adapters::oxfml::OxfmlEditorBridge;
 use crate::app::reducer::apply_editor_input_to_active_formula_space;
 use crate::services::home_shell_view_model::{
-    build_home_shell_view_model, BridgeHealth, ResultKind, ResultView, StatusView,
+    build_home_shell_view_model, BridgeHealth, ContextChipField, DiagnosticSquiggle,
+    EditorMetricsChip, EntryModePill, ResultClassPill, ResultContextChip, ResultKind, ResultView,
+    StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
 use crate::ui::editor::commands::{classify_dom_input, EditorInputEvent, EditorInputKind};
+use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 
 #[component]
 pub fn HomeShell(
@@ -63,6 +66,17 @@ pub fn HomeShell(
             .unwrap_or_default()
     };
     let has_active_formula_space = move || view_model.get().is_some();
+    let entry_mode_pill = move || view_model.get().map(|vm| vm.entry_mode_pill);
+    let result_class_pill = move || view_model.get().and_then(|vm| vm.result_class_pill);
+    let syntax_runs = move || view_model.get().map(|vm| vm.syntax_runs).unwrap_or_default();
+    let diagnostic_squiggles = move || {
+        view_model
+            .get()
+            .map(|vm| vm.diagnostic_squiggles)
+            .unwrap_or_default()
+    };
+    let editor_metrics = move || view_model.get().map(|vm| vm.editor_metrics);
+    let result_context = move || view_model.get().map(|vm| vm.result_context);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
 
@@ -83,48 +97,77 @@ pub fn HomeShell(
                     }
                 >
                     <section class="onecalc-home-shell__editor">
-                        <div class="onecalc-home-shell__caption">"formula"</div>
-                        <textarea
-                            class="onecalc-home-shell__textarea"
-                            spellcheck="false"
-                            autocomplete="off"
-                            aria-label="formula editor"
-                            prop:value=textarea_value
-                            on:input=move |ev| {
-                                let textarea = event_target::<HtmlTextAreaElement>(&ev);
-                                let web_input_event = ev.dyn_ref::<WebInputEvent>();
-                                let event = EditorInputEvent {
-                                    text: event_target_value(&ev),
-                                    selection_start: textarea
-                                        .selection_start()
-                                        .ok()
-                                        .flatten()
-                                        .map(|offset| offset as usize),
-                                    selection_end: textarea
-                                        .selection_end()
-                                        .ok()
-                                        .flatten()
-                                        .map(|offset| offset as usize),
-                                    input_kind: web_input_event
-                                        .map(|input_event| {
-                                            classify_dom_input(&input_event.input_type())
-                                        })
-                                        .unwrap_or(EditorInputKind::Other),
-                                    inserted_text: web_input_event
-                                        .and_then(|input_event| input_event.data()),
-                                };
-                                on_editor_input.run(event);
-                            }
-                        ></textarea>
+                        <div class="onecalc-home-shell__caption-row">
+                            <span class="onecalc-home-shell__caption">"formula ▸"</span>
+                            {move || render_entry_mode_pill(entry_mode_pill())}
+                        </div>
+                        <div class="onecalc-home-shell__editor-frame">
+                            <div
+                                class="onecalc-home-shell__editor-overlay"
+                                aria-hidden="true"
+                            >
+                                {move || render_syntax_overlay(syntax_runs(), textarea_value())}
+                            </div>
+                            <div
+                                class="onecalc-home-shell__editor-squiggles"
+                                aria-hidden="true"
+                            >
+                                {move || render_diagnostic_squiggle_overlay(
+                                    diagnostic_squiggles(),
+                                    textarea_value(),
+                                )}
+                            </div>
+                            <textarea
+                                class="onecalc-home-shell__textarea"
+                                spellcheck="false"
+                                autocomplete="off"
+                                aria-label="formula editor"
+                                prop:value=textarea_value
+                                on:input=move |ev| {
+                                    let textarea = event_target::<HtmlTextAreaElement>(&ev);
+                                    let web_input_event = ev.dyn_ref::<WebInputEvent>();
+                                    let event = EditorInputEvent {
+                                        text: event_target_value(&ev),
+                                        selection_start: textarea
+                                            .selection_start()
+                                            .ok()
+                                            .flatten()
+                                            .map(|offset| offset as usize),
+                                        selection_end: textarea
+                                            .selection_end()
+                                            .ok()
+                                            .flatten()
+                                            .map(|offset| offset as usize),
+                                        input_kind: web_input_event
+                                            .map(|input_event| {
+                                                classify_dom_input(&input_event.input_type())
+                                            })
+                                            .unwrap_or(EditorInputKind::Other),
+                                        inserted_text: web_input_event
+                                            .and_then(|input_event| input_event.data()),
+                                    };
+                                    on_editor_input.run(event);
+                                }
+                            ></textarea>
+                        </div>
+                        <div class="onecalc-home-shell__foot-row">
+                            {move || render_editor_metrics_chip(editor_metrics())}
+                        </div>
                     </section>
 
                     <section class="onecalc-home-shell__result-section">
-                        <div class="onecalc-home-shell__caption">"result"</div>
+                        <div class="onecalc-home-shell__caption-row">
+                            <span class="onecalc-home-shell__caption">"result ▸"</span>
+                            {move || render_result_class_pill(result_class_pill())}
+                        </div>
                         <div
                             class="onecalc-home-shell__result-block"
                             data-kind=move || result_view().map(result_kind_attr).unwrap_or("none")
                         >
                             {move || render_result_view(result_view())}
+                        </div>
+                        <div class="onecalc-home-shell__foot-row">
+                            {move || render_result_context_chip(result_context())}
                         </div>
                     </section>
                 </Show>
@@ -236,6 +279,227 @@ fn render_result_view(view: Option<ResultView>) -> AnyView {
         }
         .into_any(),
     }
+}
+
+/// Render the syntax-coloured overlay that sits behind the textarea.
+///
+/// When `runs` is empty (no editor document, or document is a stale
+/// snapshot from a prior keystroke), fall back to rendering the raw
+/// textarea text uncoloured so the overlay stays character-aligned with
+/// the textarea contents and the user never sees coloured tokens at the
+/// wrong offset. The trailing newline preserves the textarea's last line
+/// height in the overlay box (`white-space: pre-wrap` swallows it
+/// otherwise).
+fn render_syntax_overlay(runs: Vec<SyntaxRun>, fallback_text: String) -> AnyView {
+    if runs.is_empty() {
+        return view! {
+            <span class="syn-text">{fallback_text}{"\n"}</span>
+        }
+        .into_any();
+    }
+    let spans: Vec<AnyView> = runs
+        .into_iter()
+        .map(|run| {
+            let class = format!("syn {}", role_class(run.role));
+            view! { <span class=class>{run.text}</span> }.into_any()
+        })
+        .collect();
+    view! {
+        <>
+            {spans}
+            {"\n"}
+        </>
+    }
+    .into_any()
+}
+
+/// Render the diagnostic-squiggle overlay. Splits `text` into alternating
+/// non-squiggled / squiggled segments by character offset, so that the
+/// wavy underline lines up with the textarea characters at each
+/// `LiveDiagnostic.primary_span`. Squiggled segments are also given a
+/// `title` attribute so a browser-native hover-tooltip carries the
+/// `diagnostic_id: message` summary without any JS popover work.
+///
+/// Both layers (this one and the syntax overlay) render the same text;
+/// CSS makes only the wavy underlines visible by setting the text colour
+/// transparent here.
+fn render_diagnostic_squiggle_overlay(
+    squiggles: Vec<DiagnosticSquiggle>,
+    text: String,
+) -> AnyView {
+    if squiggles.is_empty() {
+        // No diagnostics: render the raw text invisibly so the squiggle
+        // box keeps the same height as the textarea (whitespace-pre-wrap
+        // collapses zero-content boxes otherwise).
+        return view! { <span>{text}{"\n"}</span> }.into_any();
+    }
+
+    // Walk the text in character offsets, building segments. The
+    // squiggle list is already sorted-and-deduped by the projector.
+    let chars: Vec<char> = text.chars().collect();
+    let mut segments: Vec<AnyView> = Vec::new();
+    let mut cursor: usize = 0;
+    for squiggle in squiggles {
+        let span_start = squiggle.span_start.min(chars.len());
+        let span_end = span_start
+            .saturating_add(squiggle.span_len)
+            .min(chars.len());
+        if span_start > cursor {
+            let segment: String = chars[cursor..span_start].iter().collect();
+            segments.push(view! { <span>{segment}</span> }.into_any());
+        }
+        if span_end > span_start {
+            let segment: String = chars[span_start..span_end].iter().collect();
+            let class = format!("squiggle squiggle--{}", squiggle.severity.slug());
+            let title = format!("{}: {}", squiggle.diagnostic_id, squiggle.message);
+            segments.push(
+                view! {
+                    <span
+                        class=class
+                        data-diagnostic-id=squiggle.diagnostic_id
+                        data-severity=squiggle.severity.slug()
+                        title=title
+                    >
+                        {segment}
+                    </span>
+                }
+                .into_any(),
+            );
+            cursor = span_end;
+        } else if cursor < span_start {
+            cursor = span_start;
+        }
+    }
+    if cursor < chars.len() {
+        let trailing: String = chars[cursor..].iter().collect();
+        segments.push(view! { <span>{trailing}</span> }.into_any());
+    }
+    view! {
+        <>
+            {segments}
+            {"\n"}
+        </>
+    }
+    .into_any()
+}
+
+/// Render the editor-foot live-metrics chip:
+/// `tokens N · functions M · diagnostics K`. Counts come straight from
+/// the view-model; rendering does no arithmetic.
+fn render_editor_metrics_chip(metrics: Option<EditorMetricsChip>) -> AnyView {
+    let Some(metrics) = metrics else {
+        return view! { <span></span> }.into_any();
+    };
+    let summary = format!(
+        "tokens {} · functions {} · diagnostics {}",
+        metrics.token_count, metrics.function_count, metrics.diagnostic_count
+    );
+    view! {
+        <span
+            class="onecalc-home-shell__chip onecalc-home-shell__chip--metrics"
+            data-tokens=metrics.token_count.to_string()
+            data-functions=metrics.function_count.to_string()
+            data-diagnostics=metrics.diagnostic_count.to_string()
+        >
+            {summary}
+        </span>
+    }
+    .into_any()
+}
+
+/// Render the result-foot active-context chip: `locale · format · policy`.
+/// Each field is rendered as its own span; SEAM-pending fields carry a
+/// trailing `<NOT IMPL:SEAM-id>` sentinel with `data-seam-id` and an
+/// `aria-describedby`-style attribute so the seam-status board (later
+/// bead) can surface them.
+fn render_result_context_chip(chip: Option<ResultContextChip>) -> AnyView {
+    let Some(chip) = chip else {
+        return view! { <span></span> }.into_any();
+    };
+    view! {
+        <span class="onecalc-home-shell__chip onecalc-home-shell__chip--context">
+            {render_context_field(&chip.locale, "locale")}
+            <span class="onecalc-home-shell__chip-sep">" · "</span>
+            {render_context_field(&chip.format, "format")}
+            <span class="onecalc-home-shell__chip-sep">" · "</span>
+            {render_context_field(&chip.policy, "policy")}
+        </span>
+    }
+    .into_any()
+}
+
+fn render_context_field(field: &ContextChipField, role: &'static str) -> AnyView {
+    let value = field.value().to_string();
+    match field.seam_id() {
+        None => view! {
+            <span class="onecalc-home-shell__chip-field" data-role=role>
+                {value}
+            </span>
+        }
+        .into_any(),
+        Some(seam_id) => {
+            let seam_owned = seam_id.to_string();
+            let seam_label = format!("<NOT IMPL:{seam_id}>");
+            let aria_owned = seam_id.to_string();
+            view! {
+                <span
+                    class="onecalc-home-shell__chip-field onecalc-home-shell__chip-field--seam"
+                    data-role=role
+                    data-seam-id=seam_owned
+                    aria-describedby=aria_owned
+                >
+                    {value}
+                    <span class="onecalc-home-shell__chip-seam">{seam_label}</span>
+                </span>
+            }
+            .into_any()
+        }
+    }
+}
+
+fn role_class(role: SyntaxTokenRole) -> &'static str {
+    match role {
+        SyntaxTokenRole::Operator => "syn-op",
+        SyntaxTokenRole::Function => "syn-fn",
+        SyntaxTokenRole::Number => "syn-num",
+        SyntaxTokenRole::Delimiter => "syn-delim",
+        SyntaxTokenRole::Identifier => "syn-id",
+        SyntaxTokenRole::Text => "syn-text",
+    }
+}
+
+/// Render the editor-caption entry-mode pill. The pill is always present
+/// (even for `Empty`) so the caption row keeps a stable height.
+fn render_entry_mode_pill(pill: Option<EntryModePill>) -> AnyView {
+    let Some(pill) = pill else {
+        return view! { <span></span> }.into_any();
+    };
+    view! {
+        <span
+            class="onecalc-home-shell__caption-pill onecalc-home-shell__caption-pill--entry"
+            data-mode=pill.slug()
+        >
+            {pill.label()}
+        </span>
+    }
+    .into_any()
+}
+
+/// Render the result-caption result-class pill. Suppressed entirely for
+/// `Empty` and `Pending` so the caption reads simply "result ▸".
+fn render_result_class_pill(pill: Option<ResultClassPill>) -> AnyView {
+    let Some(pill) = pill else {
+        return view! { <span></span> }.into_any();
+    };
+    view! {
+        <span
+            class="onecalc-home-shell__caption-pill onecalc-home-shell__caption-pill--result"
+            data-class=pill.slug()
+        >
+            {pill.label()}
+        </span>
+    }
+    .into_any()
 }
 
 fn result_kind_attr(view: ResultView) -> &'static str {

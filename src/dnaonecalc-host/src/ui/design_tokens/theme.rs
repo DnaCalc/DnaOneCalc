@@ -2919,39 +2919,270 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-style: italic;
 }
 
+.onecalc-home-shell__caption-row {
+  display: flex;
+  align-items: center;
+  gap: var(--oc-space-2);
+  margin-bottom: var(--oc-space-2);
+}
+
 .onecalc-home-shell__caption {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--oc-color-ink);
   letter-spacing: 0.01em;
-  margin-bottom: var(--oc-space-2);
+}
+
+.onecalc-home-shell__caption-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 1.2rem;
+  padding: 0 var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  font-family: var(--oc-font-ui);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--oc-color-border);
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__caption-pill--entry[data-mode="formula"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__caption-pill--entry[data-mode="value"] {
+  background: #eef0e6;
+  color: var(--oc-color-success);
+  border-color: rgba(79, 123, 87, 0.25);
+}
+
+.onecalc-home-shell__caption-pill--entry[data-mode="text"] {
+  background: #f1ece1;
+  color: var(--oc-color-ink);
+}
+
+.onecalc-home-shell__caption-pill--entry[data-mode="empty"] {
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+  font-style: italic;
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="number"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="text"] {
+  background: #f1ece1;
+  color: var(--oc-color-ink);
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="logical"] {
+  background: #eef0e6;
+  color: var(--oc-color-success);
+  border-color: rgba(79, 123, 87, 0.25);
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="error"] {
+  background: #fff0ea;
+  color: var(--oc-color-warm);
+  border-color: rgba(183, 101, 69, 0.3);
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="array"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__caption-pill--result[data-class="other"] {
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
 }
 
 .onecalc-home-shell__editor {
   display: grid;
 }
 
-.onecalc-home-shell__textarea {
-  width: 100%;
-  min-height: 5.5rem;
-  padding: var(--oc-space-4);
+/* Layered editor frame: the overlay (syntax colouring) stacks underneath
+   the textarea with identical box geometry so character offsets align.
+   The textarea has transparent text + visible caret; what the user sees
+   is the overlay's coloured tokens. */
+.onecalc-home-shell__editor-frame {
+  position: relative;
   background: var(--oc-color-surface);
   border: 1px solid var(--oc-color-border);
   border-radius: var(--oc-radius-panel);
   box-shadow: var(--oc-shadow-panel);
-  font-family: var(--oc-font-mono);
-  font-size: 0.95rem;
-  line-height: 1.55;
-  color: var(--oc-color-ink);
-  resize: vertical;
-  outline: none;
 }
 
-.onecalc-home-shell__textarea:focus-visible {
+.onecalc-home-shell__editor-frame:focus-within {
   border-color: var(--oc-color-accent);
   box-shadow:
     var(--oc-shadow-panel),
     0 0 0 2px rgba(36, 93, 90, 0.35);
+}
+
+.onecalc-home-shell__editor-overlay {
+  position: absolute;
+  inset: 0;
+  padding: var(--oc-space-4);
+  font-family: var(--oc-font-mono);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+  user-select: none;
+  color: var(--oc-color-ink);
+  overflow: hidden;
+}
+
+.onecalc-home-shell__editor-overlay .syn-op {
+  color: var(--oc-color-accent);
+  font-weight: 600;
+}
+
+.onecalc-home-shell__editor-overlay .syn-fn {
+  color: var(--oc-color-accent);
+  font-weight: 700;
+}
+
+.onecalc-home-shell__editor-overlay .syn-num {
+  color: var(--oc-color-success);
+}
+
+.onecalc-home-shell__editor-overlay .syn-delim {
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__editor-overlay .syn-id {
+  color: var(--oc-color-ink);
+}
+
+.onecalc-home-shell__editor-overlay .syn-text {
+  color: var(--oc-color-ink);
+}
+
+/* Diagnostic squiggle overlay: shares geometry with the syntax overlay
+   and sits in the same stacking position. Text is invisible; only the
+   wavy underline shows, drawing attention to the diagnostic span. */
+.onecalc-home-shell__editor-squiggles {
+  position: absolute;
+  inset: 0;
+  padding: var(--oc-space-4);
+  font-family: var(--oc-font-mono);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+  user-select: none;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  overflow: hidden;
+}
+
+.onecalc-home-shell__editor-squiggles .squiggle {
+  /* `auto` allows hover tooltips even though the overlay is
+     pointer-events:none; squiggle re-enables pointer events for itself. */
+  pointer-events: auto;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+
+.onecalc-home-shell__editor-squiggles .squiggle--error {
+  text-decoration-color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__editor-squiggles .squiggle--warning {
+  text-decoration-color: var(--oc-color-warning);
+}
+
+.onecalc-home-shell__editor-squiggles .squiggle--info {
+  text-decoration-color: var(--oc-color-muted);
+}
+
+/* Foot rows: small caption row under each section carrying live counts
+   and active-context summaries. */
+.onecalc-home-shell__foot-row {
+  display: flex;
+  align-items: center;
+  gap: var(--oc-space-2);
+  margin-top: var(--oc-space-2);
+  font-size: 0.78rem;
+  font-family: var(--oc-font-ui);
+  color: var(--oc-color-muted);
+  letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--oc-space-1);
+  padding: 2px var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  background: var(--oc-color-panel);
+  border: 1px solid var(--oc-color-border);
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-mono);
+}
+
+.onecalc-home-shell__chip--metrics {
+  font-variant-numeric: tabular-nums;
+}
+
+.onecalc-home-shell__chip-sep {
+  color: var(--oc-color-border);
+}
+
+.onecalc-home-shell__chip-field {
+  color: var(--oc-color-ink);
+}
+
+.onecalc-home-shell__chip-field--seam {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__chip-seam {
+  margin-left: var(--oc-space-1);
+  font-size: 0.72rem;
+  color: var(--oc-color-warm);
+  background: rgba(183, 101, 69, 0.10);
+  padding: 0 var(--oc-space-1);
+  border-radius: 3px;
+}
+
+.onecalc-home-shell__textarea {
+  position: relative;
+  width: 100%;
+  min-height: 5.5rem;
+  padding: var(--oc-space-4);
+  background: transparent;
+  border: 0;
+  border-radius: var(--oc-radius-panel);
+  font-family: var(--oc-font-mono);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: transparent;
+  caret-color: var(--oc-color-ink);
+  -webkit-text-fill-color: transparent;
+  resize: vertical;
+  outline: none;
+}
+
+.onecalc-home-shell__textarea::selection {
+  background: rgba(36, 93, 90, 0.18);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .onecalc-home-shell__result-section {
