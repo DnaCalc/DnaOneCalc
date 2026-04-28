@@ -2,10 +2,6 @@ use std::sync::Arc;
 
 use crate::adapters::oxfml::LiveOxfmlBridge;
 use crate::adapters::oxfml::OxfmlEditorBridge;
-use leptos::prelude::*;
-
-use crate::state::OneCalcHostState;
-use crate::ui::components::app_shell::OneCalcShellApp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMountTarget {
@@ -34,65 +30,9 @@ pub fn bootstrap_editor_bridge(
     Arc::new(LiveOxfmlBridge::default())
 }
 
-pub fn render_shell_html(target: HostMountTarget, initial_state: OneCalcHostState) -> String {
-    let host_label = match target {
-        HostMountTarget::DesktopTauri => "desktop-tauri",
-        HostMountTarget::WebBrowser => "web-browser",
-    };
-    let spec = bootstrap_spec(target);
-
-    let editor_bridge = bootstrap_editor_bridge(target);
-    let body =
-        view! { <OneCalcShellApp initial_state=initial_state editor_bridge=Some(editor_bridge) /> }
-            .to_html();
-    format!(
-        "<div id=\"{}\" data-host-target=\"{host_label}\" data-shell-root=\"onecalc\">{body}</div>",
-        spec.mount_element_id
-    )
-}
-
-pub fn render_shell_document(target: HostMountTarget, initial_state: OneCalcHostState) -> String {
-    let host_label = match target {
-        HostMountTarget::DesktopTauri => "desktop-tauri",
-        HostMountTarget::WebBrowser => "web-browser",
-    };
-    let spec = bootstrap_spec(target);
-    let body = render_shell_html(target, initial_state);
-
-    format!(
-        "<!doctype html><html data-host-target=\"{host_label}\"><head><meta charset=\"utf-8\"><title>{}</title></head><body>{body}</body></html>",
-        spec.document_title
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn render_shell_html_wraps_shared_app_for_desktop() {
-        let html = render_shell_html(HostMountTarget::DesktopTauri, OneCalcHostState::default());
-        assert!(html.contains("data-host-target=\"desktop-tauri\""));
-        assert!(html.contains("DNA OneCalc"));
-    }
-
-    #[test]
-    fn render_shell_html_wraps_shared_app_for_web() {
-        let html = render_shell_html(HostMountTarget::WebBrowser, OneCalcHostState::default());
-        assert!(html.contains("data-host-target=\"web-browser\""));
-        assert!(html.contains("DNA OneCalc"));
-    }
-
-    #[test]
-    fn render_shell_document_wraps_shell_in_html_document() {
-        let html =
-            render_shell_document(HostMountTarget::DesktopTauri, OneCalcHostState::default());
-        assert!(html.starts_with("<!doctype html>"));
-        assert!(html.contains("<title>DNA OneCalc</title>"));
-        assert!(html.contains("data-shell-root=\"onecalc\""));
-        assert!(html.contains("id=\"onecalc-root\""));
-        assert!(html.contains("data-host-target=\"desktop-tauri\""));
-    }
 
     #[test]
     fn bootstrap_editor_bridge_is_available_for_desktop_and_web() {
@@ -117,5 +57,13 @@ mod tests {
                 analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
             })
             .is_ok());
+    }
+
+    #[test]
+    fn bootstrap_spec_carries_canonical_mount_id_and_title() {
+        let spec = bootstrap_spec(HostMountTarget::DesktopTauri);
+        assert_eq!(spec.mount_element_id, "onecalc-root");
+        assert_eq!(spec.document_title, "DNA OneCalc");
+        assert_eq!(spec.target, HostMountTarget::DesktopTauri);
     }
 }

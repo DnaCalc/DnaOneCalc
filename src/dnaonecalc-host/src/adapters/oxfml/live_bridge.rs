@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use oxfml_core::consumer::editor::{
-    EditorAnalysisStage as UpstreamEditorAnalysisStage, EditorDocument as UpstreamEditorDocument,
-    EditorEditService, EditorEnvironment,
+    EditorDocument as UpstreamEditorDocument, EditorEditService, EditorEnvironment,
     EditorInteractionResult as UpstreamEditorInteractionResult,
 };
 use oxfml_core::consumer::runtime::{
@@ -14,8 +13,7 @@ use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::{BindContext, FormulaChannelKind};
 
 use super::bridge::{
-    EditorAnalysisStage, FormulaEditRequest, FormulaEditResult, OxfmlEditorBridge,
-    OxfmlEditorBridgeError,
+    FormulaEditRequest, FormulaEditResult, OxfmlEditorBridge, OxfmlEditorBridgeError,
 };
 use super::types::{
     worksheet_error_literal, ArrayCellValue, BindSummary, EditorDocument, EvalSummary, EvalValue,
@@ -45,7 +43,7 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
         let interaction = service.apply_edit(
             source.clone(),
             previous_document.as_ref(),
-            map_analysis_stage(request.analysis_stage),
+            request.analysis_stage,
             None,
         );
         let runtime_result = RuntimeEnvironment::new()
@@ -91,14 +89,6 @@ impl LiveOxfmlBridge {
         })?;
         cached_documents.insert(formula_stable_id, document);
         Ok(())
-    }
-}
-
-fn map_analysis_stage(stage: EditorAnalysisStage) -> UpstreamEditorAnalysisStage {
-    match stage {
-        EditorAnalysisStage::SyntaxOnly => UpstreamEditorAnalysisStage::SyntaxOnly,
-        EditorAnalysisStage::SyntaxAndBind => UpstreamEditorAnalysisStage::SyntaxAndBind,
-        EditorAnalysisStage::FullSemanticPlan => UpstreamEditorAnalysisStage::FullSemanticPlan,
     }
 }
 

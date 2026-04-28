@@ -14,10 +14,10 @@
 // ---------------------------------------------------------------------------
 
 pub use oxfml_core::consumer::editor::{
-    CompletionProposal, CompletionProposalKind, EditorSyntaxSnapshot, EditorToken,
-    FormulaEditReuseSummary, FormulaTextChangeRange, FunctionHelpPacket, FunctionHelpSignatureForm,
-    LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot, LiveDiagnosticStage,
-    SignatureHelpContext,
+    CompletionProposal, CompletionProposalKind, EditorAnalysisStage, EditorSyntaxSnapshot,
+    EditorToken, FormulaEditReuseSummary, FormulaTextChangeRange, FunctionHelpPacket,
+    FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot,
+    LiveDiagnosticStage, SignatureHelpContext,
 };
 pub use oxfml_core::syntax::token::TextSpan as FormulaTextSpan;
 pub use oxfunc_core::value::{ArrayCellValue, EvalValue, WorksheetErrorCode};

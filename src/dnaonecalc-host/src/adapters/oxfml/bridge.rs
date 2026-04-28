@@ -1,11 +1,4 @@
-use super::types::EditorDocument;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditorAnalysisStage {
-    SyntaxOnly,
-    SyntaxAndBind,
-    FullSemanticPlan,
-}
+use super::types::{EditorAnalysisStage, EditorDocument};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormulaEditRequest {

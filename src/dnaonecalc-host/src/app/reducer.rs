@@ -663,8 +663,8 @@ mod tests {
     #[test]
     fn accept_completion_from_tab_replaces_anchor_span_and_lands_caret_at_end() {
         use crate::adapters::oxfml::{
-            CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
-            FormulaEditReuseSummary, FormulaTextSpan, LiveDiagnosticSnapshot,
+            CompletionProposal, CompletionProposalKind, EditorDocument, FormulaEditReuseSummary,
+            FormulaTextSpan,
         };
 
         let formula_space_id = FormulaSpaceId::new("space-1");

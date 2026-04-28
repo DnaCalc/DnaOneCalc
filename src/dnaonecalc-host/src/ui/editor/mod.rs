@@ -1,5 +1,4 @@
 pub mod bracket_matcher;
-pub mod browser_measurement;
 pub mod commands;
 pub mod geometry;
 pub mod reference_cycle;

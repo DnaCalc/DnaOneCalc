@@ -214,9 +214,8 @@ pub enum EditorSessionError {
 mod tests {
     use super::*;
     use crate::adapters::oxfml::{
-        CompletionProposal, CompletionProposalKind, EditorAnalysisStage, EditorSyntaxSnapshot,
-        FormulaEditResult, FormulaEditReuseSummary, FormulaTextSpan, LiveDiagnosticSnapshot,
-        ProvenanceSummary, SignatureHelpContext,
+        CompletionProposal, CompletionProposalKind, EditorAnalysisStage, FormulaEditResult,
+        FormulaEditReuseSummary, ProvenanceSummary,
     };
 
     fn sample_document(source_text: &str) -> EditorDocument {

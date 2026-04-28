@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dnaonecalc_host::app::host_mount::{render_shell_document, HostMountTarget};
-use dnaonecalc_host::app::OneCalcHostApp;
 use dnaonecalc_host::services::programmatic_testing::{
     default_verification_config, load_verification_config_xml, ProgrammaticComparisonStatus,
 };
@@ -27,12 +25,7 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
         None => {
-            let app = OneCalcHostApp::new();
-            println!("{}", app.launch_message());
-            println!(
-                "{}",
-                render_shell_document(HostMountTarget::DesktopTauri, app.state().clone())
-            );
+            print_help();
             ExitCode::SUCCESS
         }
     }

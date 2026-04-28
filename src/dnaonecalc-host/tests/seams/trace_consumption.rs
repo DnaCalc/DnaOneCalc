@@ -1,8 +1,8 @@
 //! SEAM-ONECALC-TRACE-CONSUMPTION
 //!
-//! Target: `RetainedArtifactRecord` carries `oxreplay` trace events and
-//! the Workbench cluster exposes a trace timeline. Today no trace events
-//! are carried.
+//! Target: `RetainedArtifactRecord` carries `oxreplay` trace events and the
+//! home-shell compare drill-down exposes a trace timeline. Today no trace
+//! events are carried.
 
 use super::common::seam_pending;
 
@@ -13,7 +13,7 @@ use super::common::seam_pending;
 /// Passes when a bundle import that includes trace events produces a
 /// retained artifact record with the event list populated.
 ///
-/// Ownership: Phase B step 5 (Parity Matrix) or a dedicated trace bead.
+/// Ownership: WS-14 Compare-with-Excel epic.
 #[test]
 #[ignore = "pending SEAM-ONECALC-TRACE-CONSUMPTION"]
 fn retained_artifact_carries_oxreplay_trace_events() {
@@ -23,13 +23,13 @@ fn retained_artifact_carries_oxreplay_trace_events() {
     );
 }
 
-/// Pending SEAM-ONECALC-TRACE-CONSUMPTION: the Workbench cluster projects
-/// the trace events as a timeline with query id linkage.
+/// Pending SEAM-ONECALC-TRACE-CONSUMPTION: the compare drill-down view-model
+/// projects the trace events as a timeline with query id linkage.
 #[test]
 #[ignore = "pending SEAM-ONECALC-TRACE-CONSUMPTION"]
-fn workbench_cluster_exposes_trace_timeline() {
+fn compare_drill_exposes_trace_timeline() {
     seam_pending(
         "SEAM-ONECALC-TRACE-CONSUMPTION",
-        "WorkbenchViewModel must expose a typed trace_timeline linked by query_id",
+        "Compare drill-down view-model must expose a typed trace_timeline linked by query_id",
     );
 }
