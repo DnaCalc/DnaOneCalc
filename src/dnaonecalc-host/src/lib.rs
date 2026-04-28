@@ -30,12 +30,15 @@ pub fn mount_onecalc_preview(element_id: &str) -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("preview mount element not found"))?
         .dyn_into::<web_sys::HtmlElement>()?;
 
-    let initial_state = app::preview_state::preview_host_state();
+    // WS-14 Pre-MVP P7: mount the new minimal HomeShell instead of the legacy
+    // three-mode OneCalcShellApp. The legacy shell + mode shells stay compiled
+    // in tree until the WS-14 cleanup phase retires them.
+    let initial_state = app::preview_state::preview_minimal_host_state();
     let editor_bridge =
         app::host_mount::bootstrap_editor_bridge(app::host_mount::HostMountTarget::WebBrowser);
     let mount_handle = mount_to(host, move || {
         view! {
-            <ui::components::app_shell::OneCalcShellApp
+            <ui::components::home_shell::HomeShell
                 initial_state=initial_state.clone()
                 editor_bridge=Some(editor_bridge.clone())
             />

@@ -2874,6 +2874,183 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-muted);
   font-style: italic;
 }
+
+/* ============================================================================
+   WS-14 Pre-MVP home shell — minimal editor + result + status foot.
+   No drill-downs, no breadcrumb, no compare in this slice.
+   ============================================================================ */
+
+.onecalc-home-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  font-family: var(--oc-font-ui);
+  color: var(--oc-color-ink);
+  background: var(--oc-color-bg);
+}
+
+.onecalc-home-shell__titlebar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--oc-space-5);
+  background: var(--oc-color-night);
+  color: #e6efef;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.onecalc-home-shell__brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__body {
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--oc-space-5);
+  display: grid;
+  gap: var(--oc-space-5);
+  align-content: start;
+}
+
+.onecalc-home-shell__no-formula-space {
+  color: var(--oc-color-muted);
+  font-style: italic;
+}
+
+.onecalc-home-shell__caption {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--oc-color-ink);
+  letter-spacing: 0.01em;
+  margin-bottom: var(--oc-space-2);
+}
+
+.onecalc-home-shell__editor {
+  display: grid;
+}
+
+.onecalc-home-shell__textarea {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: var(--oc-space-4);
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-panel);
+  font-family: var(--oc-font-mono);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--oc-color-ink);
+  resize: vertical;
+  outline: none;
+}
+
+.onecalc-home-shell__textarea:focus-visible {
+  border-color: var(--oc-color-accent);
+  box-shadow:
+    var(--oc-shadow-panel),
+    0 0 0 2px rgba(36, 93, 90, 0.35);
+}
+
+.onecalc-home-shell__result-section {
+  display: grid;
+}
+
+.onecalc-home-shell__result-block {
+  min-height: 4.5rem;
+  padding: var(--oc-space-4) var(--oc-space-5);
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-panel);
+  display: grid;
+  place-items: center;
+  font-family: var(--oc-font-mono);
+}
+
+.onecalc-home-shell__result-block .muted {
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-ui);
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+.onecalc-home-shell__result-block .value {
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--oc-color-ink);
+  letter-spacing: -0.005em;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.onecalc-home-shell__result-block .value.array {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__result-block[data-kind="error"] {
+  background: #fff0ea;
+  border-color: rgba(183, 101, 69, 0.3);
+}
+
+.onecalc-home-shell__result-block .value.error {
+  display: grid;
+  gap: var(--oc-space-1);
+  text-align: center;
+}
+
+.onecalc-home-shell__result-block .value.error .value__code {
+  color: var(--oc-color-warm);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__result-block .value.error .value__surface {
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-ui);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.onecalc-home-shell__statusfoot {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--oc-space-2);
+  padding: 0 var(--oc-space-5);
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+  border-top: 1px solid var(--oc-color-border);
+  font-family: var(--oc-font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__statusfoot-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--oc-color-muted);
+  margin-right: var(--oc-space-1);
+}
+
+.onecalc-home-shell__statusfoot-dot[data-health="live"] {
+  background: var(--oc-color-success);
+}
+
+.onecalc-home-shell__statusfoot-dot[data-health="stale"] {
+  background: var(--oc-color-warning);
+}
+
+.onecalc-home-shell__statusfoot-sep {
+  color: var(--oc-color-border);
+}
 "#;
 
 #[component]
