@@ -4897,11 +4897,17 @@ mod tests {
                 {
                     assert_eq!(display_value, json!("6"));
                 }
+                // The right path is the compare-ready normalized replay
+                // (Excel-side observation). With `diff_equivalent: false`,
+                // the fake runner seeds Excel value `7.0` to simulate
+                // divergence from OxFml's `=SUM(1,2,3) = 6`. The
+                // compare-ready normalization preserves numeric witnesses
+                // as their lexeme strings (see `normalize_compare_ready_comparison_value`).
                 assert_eq!(
                     projection_comparison_value(&right, "comparison_value"),
                     Some(json!({
                         "kind": "number",
-                        "number": 6.0
+                        "number": "7.0"
                     }))
                 );
             }
@@ -5306,26 +5312,33 @@ mod tests {
             "=LET(a,{1,2,3},b,{4,5,6},SUM(a*b))"
         );
         assert_eq!(scenario["workbook_ref"], "./workbook.xml");
+        // The case carries `formatting_context: None`, so
+        // `programmatic_display_contract_is_explicit` returns false (no
+        // number_format_code), and `effective_requested_observation_scope`
+        // selects the without-display variant. Display surfaces drop out
+        // of the required scope; cell_value remains.
         assert_eq!(
             scenario["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
         assert_eq!(
             scenario["requested_observation_scope"]["oxreplay_required_views"],
-            json!([
-                "execution_outcome",
-                "comparison_value",
-                "effective_display_text"
-            ])
+            json!(["execution_outcome", "comparison_value"])
         );
-        assert!(scenario["observable_surfaces"]
+        // With no explicit display contract, the effective_display_text
+        // observable surface is omitted entirely (not merely downgraded
+        // to required=false). The case ships only cell_value (required)
+        // and formula_text (optional) as observable surfaces.
+        let observable_surfaces = scenario["observable_surfaces"]
             .as_array()
-            .expect("observable surfaces")
+            .expect("observable surfaces");
+        assert!(observable_surfaces
             .iter()
-            .any(|surface| {
-                surface["surface_kind"] == "effective_display_text"
-                    && surface["required"] == json!(true)
-            }));
+            .any(|surface| surface["surface_kind"] == "cell_value"
+                && surface["required"] == json!(true)));
+        assert!(!observable_surfaces
+            .iter()
+            .any(|surface| surface["surface_kind"] == "effective_display_text"));
         let requested_scope: Value = serde_json::from_str(
             &fs::read_to_string(case_dir.join("required-observation-scope.json"))
                 .expect("requested observation scope json"),
@@ -5333,18 +5346,11 @@ mod tests {
         .expect("requested observation scope parse");
         assert_eq!(
             requested_scope["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
         assert_eq!(
             requested_scope["oxfml_required_scope"],
-            json!([
-                "entered_cell_text",
-                "returned_value_surface",
-                "format_profile",
-                "date1904",
-                "number_format_code",
-                "effective_display_text"
-            ])
+            json!(["entered_cell_text", "returned_value_surface"])
         );
         let batch_manifest: Value = serde_json::from_str(
             &fs::read_to_string(
@@ -5361,16 +5367,18 @@ mod tests {
             .expect("manifest case");
         assert_eq!(
             manifest_case["requested_observation_scope"]["oxxlplay_required_surfaces"],
-            json!(["cell_value", "effective_display_text"])
+            json!(["cell_value"])
         );
-        assert!(manifest_case["observable_surfaces"]
+        let manifest_observable_surfaces = manifest_case["observable_surfaces"]
             .as_array()
-            .expect("manifest observable surfaces")
+            .expect("manifest observable surfaces");
+        assert!(manifest_observable_surfaces
             .iter()
-            .any(|surface| {
-                surface["surface_kind"] == "effective_display_text"
-                    && surface["required"] == json!(true)
-            }));
+            .any(|surface| surface["surface_kind"] == "cell_value"
+                && surface["required"] == json!(true)));
+        assert!(!manifest_observable_surfaces
+            .iter()
+            .any(|surface| surface["surface_kind"] == "effective_display_text"));
         assert!(case_dir.join("workbook.xml").is_file());
 
         let input_request: Value = serde_json::from_str(
@@ -7175,6 +7183,10 @@ mod tests {
                 "text": "Hello"
             })
         );
+        // Wire-form error code (`#VALUE!`) canonicalizes through
+        // `normalize_error_code_alias` to the PascalCase canonical name
+        // (`Value`); see `normalize_comparison_value_canonicalizes_error_code_case_aliases`
+        // for the inverse case (`na` -> `NA`).
         assert_eq!(
             normalize_comparison_value(&json!({
                 "kind": "error",
@@ -7184,13 +7196,16 @@ mod tests {
             })),
             json!({
                 "kind": "error",
-                "code": "#VALUE!"
+                "code": "Value"
             })
         );
     }
 
     #[test]
     fn normalize_comparison_value_coalesces_aligned_error_aliases() {
+        // Wire-form `#N/A` and `#DIV/0!` canonicalize through
+        // `normalize_error_code_alias` to their PascalCase canonical names
+        // (`NA`, `Div0`).
         assert_eq!(
             normalize_comparison_value(&json!({
                 "kind": "error",
@@ -7198,7 +7213,7 @@ mod tests {
             })),
             json!({
                 "kind": "error",
-                "code": "#N/A"
+                "code": "NA"
             })
         );
         assert_eq!(
@@ -7214,7 +7229,7 @@ mod tests {
             })),
             json!({
                 "kind": "error",
-                "code": "#DIV/0!"
+                "code": "Div0"
             })
         );
     }
@@ -7392,11 +7407,13 @@ mod tests {
         .expect("error capture json");
 
         let error_summary = summarize_excel_capture(path.clone()).expect("error capture summary");
+        // Wire-form `#N/A` canonicalizes to PascalCase canonical name `NA`
+        // via normalize_error_code_alias.
         assert_eq!(
             error_summary.comparison_value,
             Some(json!({
                 "kind": "error",
-                "code": "#N/A"
+                "code": "NA"
             }))
         );
 

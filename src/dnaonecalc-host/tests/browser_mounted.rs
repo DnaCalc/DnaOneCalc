@@ -252,6 +252,13 @@ fn sample_verification_bundle_report_json() -> String {
                 effective_display_text: Some("$6.00".to_string()),
                 observed_formula_repr: Some("=SUM(1,2,3)".to_string()),
                 capture_status: "captured".to_string(),
+                // Render-locale provenance fields added by upstream commit
+                // 3110e1c "Feed captured separators into verification locale
+                // context"; left absent here because the fixture doesn't
+                // exercise locale-pinning behavior.
+                render_locale_pinned: None,
+                render_locale_source: None,
+                render_locale_note: None,
             }),
             spreadsheet_xml_extraction: Some(SpreadsheetXmlCellExtraction {
                 workbook_path: "C:/tmp/browser-workbook.xml".to_string(),

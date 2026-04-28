@@ -246,27 +246,49 @@ pub fn build_workbench_view_model(
             }
             items
         },
-        recommended_action: match retained_artifact.map(|artifact| artifact.comparison_status) {
-            Some(
-                crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched,
-            ) => {
-                if !blocked_dimensions.is_empty() {
-                    "Review blocked dimensions and prepare widening request".to_string()
-                } else {
-                    "Review discrepancy in workbench".to_string()
+        recommended_action: {
+            // Projection coverage gaps mean a comparison view family is
+            // missing on one side; the engines may not actually disagree.
+            // Recommend reviewing the gap before claiming semantic mismatch
+            // — even when other (semantic) mismatch records coexist.
+            let has_projection_coverage_gap = retained_artifact
+                .map(|artifact| {
+                    artifact
+                        .replay_mismatch_records
+                        .iter()
+                        .any(|record| record.mismatch_kind == "projection_coverage_gap")
+                })
+                .unwrap_or(false);
+            match retained_artifact.map(|artifact| artifact.comparison_status) {
+                Some(
+                    crate::services::programmatic_testing::ProgrammaticComparisonStatus::Mismatched,
+                ) => {
+                    if has_projection_coverage_gap {
+                        "Review projection coverage gaps before claiming semantic mismatch"
+                            .to_string()
+                    } else if !blocked_dimensions.is_empty() {
+                        "Review blocked dimensions and prepare widening request".to_string()
+                    } else {
+                        "Review discrepancy in workbench".to_string()
+                    }
                 }
-            }
-            Some(crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked) => {
-                if !blocked_dimensions.is_empty() {
-                    "Review blocked comparison and prepare widening request".to_string()
-                } else {
-                    "Review blocked comparison and host policy".to_string()
+                Some(
+                    crate::services::programmatic_testing::ProgrammaticComparisonStatus::Blocked,
+                ) => {
+                    if has_projection_coverage_gap {
+                        "Review projection coverage gaps before claiming blocked comparison"
+                            .to_string()
+                    } else if !blocked_dimensions.is_empty() {
+                        "Review blocked comparison and prepare widening request".to_string()
+                    } else {
+                        "Review blocked comparison and host policy".to_string()
+                    }
                 }
+                _ if formula_space.latest_evaluation_summary.is_some() => {
+                    "Retain and compare".to_string()
+                }
+                _ => "Evaluate before retaining evidence".to_string(),
             }
-            _ if formula_space.latest_evaluation_summary.is_some() => {
-                "Retain and compare".to_string()
-            }
-            _ => "Evaluate before retaining evidence".to_string(),
         },
         retained_artifact_id: retained_artifact.map(|artifact| artifact.artifact_id.clone()),
         retained_case_id: retained_artifact.map(|artifact| artifact.case_id.clone()),
