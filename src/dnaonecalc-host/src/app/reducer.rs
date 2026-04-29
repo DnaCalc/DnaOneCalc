@@ -1,3 +1,8 @@
+use crate::services::completion_popup::{
+    accept_selected_completion as popup_accept_selected,
+    dismiss_completion_popup as popup_dismiss, move_completion_selection as popup_move_selection,
+    CompletionAcceptance,
+};
 use crate::services::retained_artifacts::{
     import_manual_artifact_for_active_formula_space, import_verification_bundle_report_json,
     open_retained_artifact_by_id, open_retained_artifact_in_inspect_by_id,
@@ -173,6 +178,41 @@ pub fn apply_editor_overlay_measurement_to_active_formula_space(
 
     formula_space.editor_overlay_geometry = Some(measurement_event.snapshot);
     true
+}
+
+/// Move the completion popup's selected index by `delta` (typically
+/// `+1` for ArrowDown / `-1` for ArrowUp). Wraps at both ends. No-op
+/// when the popup is `Hidden`. Returns `true` when state changed.
+pub fn move_completion_popup_selection_on_active_formula_space(
+    state: &mut OneCalcHostState,
+    delta: i32,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    popup_move_selection(&mut formula_space.completion_popup, delta)
+}
+
+/// Force the completion popup to `Hidden`. No-op when already
+/// `Hidden`. Returns `true` when state changed.
+pub fn dismiss_completion_popup_on_active_formula_space(state: &mut OneCalcHostState) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    popup_dismiss(&mut formula_space.completion_popup)
+}
+
+/// Accept the popup's currently-selected completion. Returns the
+/// `CompletionAcceptance` describing the splice the editor layer
+/// should apply, plus transitions the popup to `Hidden`. Returns
+/// `None` when the popup is `Hidden` (no acceptance to apply) or
+/// when there is no active formula space.
+pub fn accept_selected_completion_on_active_formula_space(
+    state: &mut OneCalcHostState,
+) -> Option<CompletionAcceptance> {
+    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let formula_space = active_formula_space_mut(state)?;
+    popup_accept_selected(&mut formula_space.completion_popup, &raw_text)
 }
 
 /// Set or update the browser-measured textarea metrics on the active

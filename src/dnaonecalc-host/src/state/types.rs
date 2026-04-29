@@ -17,6 +17,7 @@ use crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction;
 use crate::services::verification_bundle::{
     OxReplayExplainRecord, OxReplayMismatchRecord, VerificationObservationGapReport,
 };
+use crate::services::completion_popup::CompletionPopupState;
 use crate::ui::editor::geometry::{EditorOverlayGeometrySnapshot, TextareaMeasurementMetrics};
 use crate::ui::editor::state::{EditorLiveState, EditorSettings, EditorSurfaceState};
 
@@ -114,6 +115,11 @@ pub struct FormulaSpaceState {
     pub editor_box_metrics_tick: u64,
     pub editor_document: Option<EditorDocument>,
     pub completion_help: CompletionHelpState,
+    /// Completion popup lifecycle for this formula space. Default
+    /// [`CompletionPopupState::Hidden`]. The reducer auto-opens this
+    /// when the bridge returns a non-empty proposals list and
+    /// auto-closes it when the proposals empty out.
+    pub completion_popup: CompletionPopupState,
     pub latest_evaluation_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub context: FormulaSpaceContextState,
@@ -136,6 +142,7 @@ impl FormulaSpaceState {
             editor_box_metrics_tick: 0,
             editor_document: None,
             completion_help: CompletionHelpState::default(),
+            completion_popup: CompletionPopupState::default(),
             latest_evaluation_summary: None,
             effective_display_summary: None,
             context: FormulaSpaceContextState {

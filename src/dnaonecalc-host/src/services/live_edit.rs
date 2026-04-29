@@ -4,6 +4,9 @@ use crate::app::reducer::{
     apply_editor_command_to_active_formula_space, apply_editor_input_to_active_formula_space,
 };
 use crate::domain::ids::FormulaSpaceId;
+use crate::services::completion_popup::{
+    sync_completion_popup_with_proposals, CompletionPopupItem,
+};
 use crate::services::editor_session::{EditorSessionError, EditorSessionService};
 use crate::state::{FormulaSpaceState, OneCalcHostState};
 use crate::ui::editor::commands::{EditorCommand, EditorInputEvent};
@@ -88,7 +91,80 @@ fn refresh_active_formula_space_from_bridge(
         .map_err(|error| match error {
             EditorSessionError::UnknownFormulaSpace(id) => LiveEditError::UnknownFormulaSpace(id),
             EditorSessionError::Bridge(bridge_error) => LiveEditError::Bridge(bridge_error),
-        })
+        })?;
+    sync_completion_popup_after_bridge_refresh(state, formula_space_id);
+    Ok(())
+}
+
+/// Apply the popup auto-open / auto-close policy after a successful
+/// bridge refresh. Pulls `editor_document.completion_proposals` off
+/// the formula space, lifts each proposal to a [`CompletionPopupItem`]
+/// at the popup-state layer, and dispatches
+/// [`sync_completion_popup_with_proposals`].
+///
+/// Anchor offset comes from the proposal's `replacement_span.start`
+/// when present (matches Excel's authoring behaviour where the popup
+/// anchors at the start of the partial token being completed); falls
+/// back to the current caret offset otherwise. The same anchor is
+/// used for every item in the list because the bridge returns
+/// proposals for one trigger position.
+///
+/// Host-side filter: when the raw textarea text is empty OR when no
+/// proposal has a non-zero replacement-span length, drop the
+/// proposals to an empty list before syncing. The upstream bridge
+/// returns ALL function names for an empty prefix (67 items at the
+/// time of writing); surfacing that as a popup is poor UX. The
+/// filter mirrors Excel's behaviour of suppressing the function
+/// dropdown until the user has typed at least one character of a
+/// function name.
+///
+/// No-op when the formula space is missing (bridge already errored).
+fn sync_completion_popup_after_bridge_refresh(
+    state: &mut OneCalcHostState,
+    formula_space_id: &FormulaSpaceId,
+) {
+    let Some(formula_space) = state.formula_spaces.get_mut(formula_space_id) else {
+        return;
+    };
+    let document = match &formula_space.editor_document {
+        Some(document) => document,
+        None => {
+            // No document yet means no proposals to drive the popup;
+            // ensure it is closed.
+            let _ = sync_completion_popup_with_proposals(
+                &mut formula_space.completion_popup,
+                formula_space.editor_surface_state.caret.offset,
+                Vec::new(),
+            );
+            return;
+        }
+    };
+    let raw_is_empty = formula_space.raw_entered_cell_text.is_empty();
+    let has_useful_prefix = document
+        .completion_proposals
+        .iter()
+        .any(|proposal| proposal.replacement_span.is_some_and(|span| span.len > 0));
+    let items: Vec<CompletionPopupItem> = if raw_is_empty || !has_useful_prefix {
+        Vec::new()
+    } else {
+        document
+            .completion_proposals
+            .iter()
+            .cloned()
+            .map(CompletionPopupItem::from_proposal)
+            .collect()
+    };
+    let anchor_offset = document
+        .completion_proposals
+        .first()
+        .and_then(|proposal| proposal.replacement_span)
+        .map(|span| span.start)
+        .unwrap_or(formula_space.editor_surface_state.caret.offset);
+    let _ = sync_completion_popup_with_proposals(
+        &mut formula_space.completion_popup,
+        anchor_offset,
+        items,
+    );
 }
 
 fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEditIntent {

@@ -8,7 +8,13 @@ use oxfml_core::consumer::editor::{
 use oxfml_core::consumer::runtime::{
     RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult,
 };
-use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
+use oxfml_core::interface::{
+    HostProviderOutcomeKind, InMemoryLibraryContextProvider, TypedContextQueryBundle,
+};
+use oxfml_core::semantics::{
+    LibraryAvailabilityState, LibraryContextSnapshot, LibraryContextSnapshotEntry,
+    RegistrationSourceKind,
+};
 use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::{BindContext, FormulaChannelKind};
 
@@ -26,6 +32,63 @@ pub struct LiveOxfmlBridge {
     cached_documents: Mutex<BTreeMap<String, UpstreamEditorDocument>>,
 }
 
+/// Curated list of common Excel function names the home shell seeds
+/// into its library context. Without a populated library context the
+/// upstream `collect_completion_proposals` returns an empty list, so
+/// completion popups, signature help, and function help would never
+/// fire. The list is deliberately short and uncontroversial; richer
+/// admission lifecycles (FeatureGated / CompatibilityGated, version
+/// metadata, locale-specific names) are SEAM-pending for the eventual
+/// "real catalog from OxFunc" plumbing — see
+/// `SEAM-ONECALC-LIBRARY-CONTEXT-FROM-OXFUNC-CATALOG`.
+const DEFAULT_FUNCTION_NAMES: &[&str] = &[
+    "ABS", "AND", "AVERAGE", "AVERAGEIF", "CEILING", "CHOOSE", "CONCAT", "CONCATENATE", "COUNT",
+    "COUNTA", "COUNTIF", "COUNTIFS", "DATE", "DAY", "FILTER", "FLOOR", "HOUR", "IF", "IFERROR",
+    "IFNA", "IFS", "INDEX", "INDIRECT", "ISBLANK", "ISERROR", "ISNUMBER", "ISTEXT", "LEFT", "LEN",
+    "LET", "LOOKUP", "LOWER", "MATCH", "MAX", "MID", "MIN", "MINUTE", "MOD", "MONTH", "NOT", "NOW",
+    "OR", "RIGHT", "ROUND", "ROUNDDOWN", "ROUNDUP", "SEARCH", "SEQUENCE", "SORT", "SQRT", "SUBSTITUTE",
+    "SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "TEXT", "TIME", "TODAY", "TRIM", "TRUE", "UNIQUE",
+    "UPPER", "VALUE", "VLOOKUP", "XLOOKUP", "XMATCH", "YEAR",
+];
+
+/// Build a default library snapshot from [`DEFAULT_FUNCTION_NAMES`].
+/// Each entry is registered as a `BuiltIn` with `CatalogKnown`
+/// availability so the editor proposal collector treats it as a
+/// reachable function name.
+fn default_function_library_snapshot() -> LibraryContextSnapshot {
+    LibraryContextSnapshot {
+        snapshot_id: "dnaonecalc.default-functions".to_string(),
+        snapshot_version: "v1".to_string(),
+        entries: DEFAULT_FUNCTION_NAMES
+            .iter()
+            .map(|name| LibraryContextSnapshotEntry {
+                surface_name: name.to_string(),
+                canonical_id: Some(format!("FUNC.{name}")),
+                surface_stable_id: Some(format!("surface.{}", name.to_ascii_lowercase())),
+                name_resolution_table_ref: Some("name-table:default".to_string()),
+                semantic_trait_profile_ref: Some(format!("trait:{}", name.to_ascii_lowercase())),
+                gating_profile_ref: Some("gate:default".to_string()),
+                metadata_status: Some("stable".to_string()),
+                special_interface_kind: None,
+                admission_interface_kind: Some("ordinary".to_string()),
+                preparation_owner: Some("OxFunc".to_string()),
+                runtime_boundary_kind: Some("ordinary".to_string()),
+                arity_shape_note: Some("variadic".to_string()),
+                interface_contract_ref: Some(format!("contract:{}", name.to_ascii_lowercase())),
+                registration_source_kind: RegistrationSourceKind::BuiltIn,
+                parse_bind_state: LibraryAvailabilityState::CatalogKnown,
+                semantic_plan_state: LibraryAvailabilityState::CatalogKnown,
+                runtime_capability_state: Some(LibraryAvailabilityState::CatalogKnown),
+                post_dispatch_state: Some(LibraryAvailabilityState::CatalogKnown),
+            })
+            .collect(),
+    }
+}
+
+fn default_library_context_provider() -> InMemoryLibraryContextProvider {
+    InMemoryLibraryContextProvider::new(default_function_library_snapshot())
+}
+
 impl OxfmlEditorBridge for LiveOxfmlBridge {
     fn apply_formula_edit(
         &self,
@@ -39,13 +102,24 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
 
         let previous_document = self.previous_document(&request)?;
-        let service = EditorEditService::new(EditorEnvironment::new(BindContext::default()));
-        let interaction = service.apply_edit(
+        let library_provider = default_library_context_provider();
+        let environment = EditorEnvironment::new(BindContext::default())
+            .with_library_context_provider(&library_provider);
+        let service = EditorEditService::new(environment);
+        // `apply_edit` parses + binds; the returned `EditorInteractionResult`
+        // does NOT carry completion proposals / signature help / function
+        // help. Run `interact_at_cursor` on the resulting document at the
+        // request's cursor offset to populate those — without this the
+        // popup, signature line, and hover surfaces have nothing to
+        // render. The two calls share the green-tree from `apply_edit`,
+        // so re-running interaction is cheap.
+        let edit_result = service.apply_edit(
             source.clone(),
             previous_document.as_ref(),
             request.analysis_stage,
             None,
         );
+        let interaction = service.interact_at_cursor(&edit_result.document, request.cursor_offset);
         let runtime_result = RuntimeEnvironment::new()
             .execute(RuntimeFormulaRequest::new(
                 source,

@@ -8,3 +8,6 @@
 
 #[path = "scenarios/typing.rs"]
 mod typing;
+
+#[path = "scenarios/completion.rs"]
+mod completion;
