@@ -17,7 +17,7 @@ use crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction;
 use crate::services::verification_bundle::{
     OxReplayExplainRecord, OxReplayMismatchRecord, VerificationObservationGapReport,
 };
-use crate::ui::editor::geometry::EditorOverlayGeometrySnapshot;
+use crate::ui::editor::geometry::{EditorOverlayGeometrySnapshot, TextareaMeasurementMetrics};
 use crate::ui::editor::state::{EditorLiveState, EditorSettings, EditorSurfaceState};
 
 #[derive(Debug, Clone)]
@@ -100,6 +100,18 @@ pub struct FormulaSpaceState {
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
     pub editor_overlay_geometry: Option<EditorOverlayGeometrySnapshot>,
+    /// Browser-measured textarea metrics (char-box width / line-height /
+    /// scroll position). `None` until the home-shell mount runs the
+    /// caret-box measurement adapter for the first time. The popup
+    /// view-model treats `None` as "geometry not yet available" and
+    /// suppresses caret-anchored surfaces until measurement lands.
+    pub editor_box_metrics: Option<TextareaMeasurementMetrics>,
+    /// Monotonic counter that increments every time the editor box
+    /// metrics are re-measured (mount, window resize, textarea resize).
+    /// Surfaced as a `data-measure-tick` attribute for browser tests so
+    /// they can detect re-measurement without comparing pixel values
+    /// (which may be identical after a no-op resize).
+    pub editor_box_metrics_tick: u64,
     pub editor_document: Option<EditorDocument>,
     pub completion_help: CompletionHelpState,
     pub latest_evaluation_summary: Option<String>,
@@ -120,6 +132,8 @@ impl FormulaSpaceState {
             raw_entered_cell_text: raw_entered_cell_text.clone(),
             editor_surface_state: EditorSurfaceState::for_text(&raw_entered_cell_text),
             editor_overlay_geometry: None,
+            editor_box_metrics: None,
+            editor_box_metrics_tick: 0,
             editor_document: None,
             completion_help: CompletionHelpState::default(),
             latest_evaluation_summary: None,

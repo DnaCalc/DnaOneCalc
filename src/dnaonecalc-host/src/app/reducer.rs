@@ -7,7 +7,7 @@ use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
-use crate::ui::editor::geometry::EditorOverlayMeasurementEvent;
+use crate::ui::editor::geometry::{EditorOverlayMeasurementEvent, TextareaMeasurementMetrics};
 use crate::ui::editor::state::EditorSurfaceState;
 
 pub fn apply_editor_input_to_active_formula_space(
@@ -172,6 +172,27 @@ pub fn apply_editor_overlay_measurement_to_active_formula_space(
     };
 
     formula_space.editor_overlay_geometry = Some(measurement_event.snapshot);
+    true
+}
+
+/// Set or update the browser-measured textarea metrics on the active
+/// formula space. Returns `true` when the metrics actually changed so
+/// the home shell can short-circuit no-op re-renders. Increments the
+/// monotonic `editor_box_metrics_tick` counter on every change so
+/// browser tests can detect re-measurement even when the values are
+/// numerically identical.
+pub fn apply_editor_box_metrics_to_active_formula_space(
+    state: &mut OneCalcHostState,
+    metrics: TextareaMeasurementMetrics,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.editor_box_metrics == Some(metrics) {
+        return false;
+    }
+    formula_space.editor_box_metrics = Some(metrics);
+    formula_space.editor_box_metrics_tick = formula_space.editor_box_metrics_tick.wrapping_add(1);
     true
 }
 
@@ -748,6 +769,111 @@ mod tests {
             .editor_surface_state
             .completion_selected_index
             .is_none());
+    }
+
+    // ----------------------------------------------------------------
+    // Browser-measured caret-box metrics (bead dno-xcq.22)
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn editor_box_metrics_default_to_none_with_zero_tick() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("u-1"), "=SUM(1,2)");
+        assert!(formula_space.editor_box_metrics.is_none());
+        assert_eq!(formula_space.editor_box_metrics_tick, 0);
+    }
+
+    #[test]
+    fn applying_editor_box_metrics_sets_state_and_increments_tick() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let changed = apply_editor_box_metrics_to_active_formula_space(&mut state, metrics);
+        assert!(changed, "first metric application changes state");
+
+        let active = state.formula_spaces.get(&formula_space_id).expect("space");
+        assert_eq!(active.editor_box_metrics, Some(metrics));
+        assert_eq!(active.editor_box_metrics_tick, 1);
+    }
+
+    #[test]
+    fn applying_identical_editor_box_metrics_is_a_noop_and_does_not_increment_tick() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let _ = apply_editor_box_metrics_to_active_formula_space(&mut state, metrics);
+        let changed_again = apply_editor_box_metrics_to_active_formula_space(&mut state, metrics);
+        assert!(!changed_again, "identical metric is a no-op");
+
+        let active = state.formula_spaces.get(&formula_space_id).expect("space");
+        assert_eq!(
+            active.editor_box_metrics_tick, 1,
+            "tick stays at 1 across identical re-applications",
+        );
+    }
+
+    #[test]
+    fn changing_editor_box_metrics_increments_tick_and_updates_state() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+
+        let initial = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let resized = TextareaMeasurementMetrics {
+            char_width_px: 8,
+            line_height_px: 20,
+            scroll_top_px: 22,
+            scroll_left_px: 0,
+        };
+        let _ = apply_editor_box_metrics_to_active_formula_space(&mut state, initial);
+        let changed = apply_editor_box_metrics_to_active_formula_space(&mut state, resized);
+        assert!(changed);
+
+        let active = state.formula_spaces.get(&formula_space_id).expect("space");
+        assert_eq!(active.editor_box_metrics, Some(resized));
+        assert_eq!(active.editor_box_metrics_tick, 2);
+    }
+
+    #[test]
+    fn applying_editor_box_metrics_without_an_active_space_returns_false() {
+        let mut state = OneCalcHostState::default();
+        let changed = apply_editor_box_metrics_to_active_formula_space(
+            &mut state,
+            TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            },
+        );
+        assert!(!changed, "no active space -> no change reported");
     }
 
     #[test]

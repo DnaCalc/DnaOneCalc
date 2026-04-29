@@ -23,7 +23,9 @@ use wasm_bindgen::JsCast;
 use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent};
 
 use crate::adapters::oxfml::OxfmlEditorBridge;
-use crate::app::reducer::apply_editor_input_to_active_formula_space;
+use crate::app::reducer::{
+    apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
+};
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, ContextChipField, DiagnosticSquiggle,
     EditorMetricsChip, EntryModePill, ResultClassPill, ResultContextChip, ResultKind, ResultView,
@@ -32,6 +34,7 @@ use crate::services::home_shell_view_model::{
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
+use crate::ui::editor::caret_box_measurement::measure_textarea_box;
 use crate::ui::editor::commands::{classify_dom_input, EditorInputEvent, EditorInputKind};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 
@@ -79,6 +82,37 @@ pub fn HomeShell(
     let result_context = move || view_model.get().map(|vm| vm.result_context);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
+    // Browser-measured caret-box metrics surfaced as data-attributes on
+    // the editor frame. The corpus uses these to assert that
+    // measurement actually happened on the first keystroke.
+    let editor_box_char_width = move || {
+        state.with(|s| {
+            s.workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| s.formula_spaces.get(id))
+                .and_then(|fs| fs.editor_box_metrics.map(|m| m.char_width_px))
+        })
+    };
+    let editor_box_line_height = move || {
+        state.with(|s| {
+            s.workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| s.formula_spaces.get(id))
+                .and_then(|fs| fs.editor_box_metrics.map(|m| m.line_height_px))
+        })
+    };
+    let editor_box_measure_tick = move || {
+        state.with(|s| {
+            s.workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| s.formula_spaces.get(id))
+                .map(|fs| fs.editor_box_metrics_tick)
+                .unwrap_or(0)
+        })
+    };
 
     view! {
         <ThemeStyleTag />
@@ -101,7 +135,20 @@ pub fn HomeShell(
                             <span class="onecalc-home-shell__caption">"formula ▸"</span>
                             {move || render_entry_mode_pill(entry_mode_pill())}
                         </div>
-                        <div class="onecalc-home-shell__editor-frame">
+                        <div
+                            class="onecalc-home-shell__editor-frame"
+                            data-char-width=move || {
+                                editor_box_char_width()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "0".to_string())
+                            }
+                            data-line-height=move || {
+                                editor_box_line_height()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "0".to_string())
+                            }
+                            data-measure-tick=move || editor_box_measure_tick().to_string()
+                        >
                             <div
                                 class="onecalc-home-shell__editor-overlay"
                                 aria-hidden="true"
@@ -146,6 +193,28 @@ pub fn HomeShell(
                                         inserted_text: web_input_event
                                             .and_then(|input_event| input_event.data()),
                                     };
+                                    // Measure first so the geometry layer
+                                    // has fresh metrics by the time the
+                                    // popup view-model needs them this
+                                    // tick. Self-correcting on resize and
+                                    // first input: even if the very-first
+                                    // mount happens before any layout,
+                                    // the user's first keystroke will
+                                    // measure before any popup is shown.
+                                    if let Some(document) = web_sys::window()
+                                        .and_then(|w| w.document())
+                                    {
+                                        if let Some(metrics) =
+                                            measure_textarea_box(&textarea, &document)
+                                        {
+                                            state.update(|state| {
+                                                let _ =
+                                                    apply_editor_box_metrics_to_active_formula_space(
+                                                        state, metrics,
+                                                    );
+                                            });
+                                        }
+                                    }
                                     on_editor_input.run(event);
                                 }
                             ></textarea>

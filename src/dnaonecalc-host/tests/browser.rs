@@ -15,3 +15,6 @@ mod scaffold;
 
 #[path = "browser/editor_core.rs"]
 mod editor_core;
+
+#[path = "browser/caret_geometry.rs"]
+mod caret_geometry;
