@@ -136,9 +136,27 @@ pub fn HomeShell(
     // preventDefault's them. Every other key is allowed through to
     // the textarea unchanged.
     let on_textarea_keydown = move |ev: WebKeyboardEvent| {
-        let popup_open = view_model
-            .with_untracked(|vm| vm.as_ref().map(|vm| vm.completion_popup.is_some()))
-            .unwrap_or(false);
+        // Read popup-open state directly from the source signal, NOT
+        // via the `view_model` memo. The memo recomputes lazily and
+        // synthetic-event keystrokes fire inside `dispatchEvent`
+        // synchronously — there is no microtask boundary between the
+        // last reducer-driven state mutation and the keydown handler,
+        // so the memo's cached value can be one tick behind. Reading
+        // the popup state straight off `FormulaSpaceState` sidesteps
+        // any memo staleness.
+        let popup_open = state.with_untracked(|s| {
+            s.workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| s.formula_spaces.get(id))
+                .map(|fs| {
+                    matches!(
+                        fs.completion_popup,
+                        crate::services::completion_popup::CompletionPopupState::Open { .. }
+                    )
+                })
+                .unwrap_or(false)
+        });
         if !popup_open {
             return;
         }
@@ -774,6 +792,7 @@ fn role_class(role: SyntaxTokenRole) -> &'static str {
         SyntaxTokenRole::Delimiter => "syn-delim",
         SyntaxTokenRole::Identifier => "syn-id",
         SyntaxTokenRole::Text => "syn-text",
+        SyntaxTokenRole::Trivia => "syn-trivia",
     }
 }
 

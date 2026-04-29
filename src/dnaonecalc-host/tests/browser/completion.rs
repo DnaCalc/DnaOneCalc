@@ -517,6 +517,388 @@ async fn focusout_dismisses_open_popup() {
     shell.tear_down();
 }
 
+/// REPRODUCTION: after a popup acceptance the textarea's caret should
+/// land at the end of the inserted text. Today the reducer updates the
+/// FormulaSpaceState's caret offset, but the DOM textarea's
+/// `selectionStart` is never written — so visually the caret stays
+/// wherever it was before the user pressed Tab.
+#[wasm_bindgen_test(async)]
+async fn caret_lands_at_end_of_inserted_text_after_keyboard_acceptance() {
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+
+    // Type `=SU` (3 chars). selectionStart is 3 right after dispatch.
+    dispatch_input(&textarea, "=SU");
+    let selection_before_accept = textarea.selection_start().ok().flatten();
+    assert_eq!(
+        selection_before_accept,
+        Some(3),
+        "precondition: caret at offset 3 after typing `=SU`",
+    );
+
+    // Wait for popup to mount; record the value before acceptance.
+    let _ = wait_for(&shell, ".onecalc-completion-popup", |el| {
+        el.get_attribute("data-item-count")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
+    .await;
+    let value_before = textarea.value();
+    assert_eq!(value_before, "=SU");
+
+    // Press Tab to accept the selected (first) proposal.
+    dispatch_keydown(&textarea, "Tab");
+
+    // Wait for the textarea's value to differ from `=SU` (acceptance
+    // splice applied through the synthetic input event).
+    let textarea_for_value = textarea.clone();
+    let value_after = wait_for(&shell, ".onecalc-home-shell__textarea", move |_| {
+        let value = textarea_for_value.value();
+        if value != "=SU" && value.starts_with('=') && value.chars().count() > 3 {
+            Some(value)
+        } else {
+            None
+        }
+    })
+    .await
+    .expect("textarea value updated after Tab acceptance");
+
+    let expected_caret = value_after.chars().count() as u32;
+    let actual_caret = textarea
+        .selection_start()
+        .ok()
+        .flatten()
+        .expect("selectionStart readable");
+
+    assert_eq!(
+        actual_caret, expected_caret,
+        "post-acceptance caret should land at the end of `{value_after}` \
+         (expected offset {expected_caret}); actual selectionStart = {actual_caret}. \
+         If this fails the textarea's DOM selection is not following the reducer's \
+         caret update — the home shell's acceptance flow needs to call \
+         `textarea.set_selection_range(new_caret, new_caret)` after splicing the value.",
+    );
+
+    shell.tear_down();
+}
+
+/// REPRODUCTION (real bug found): the syntax-coloring overlay only
+/// renders `token.text` for each token, NOT the surrounding trivia
+/// (whitespace, comments). For an input like `= SUM` the upstream
+/// editor splits this into:
+///   - `=`   token (span 0..1)
+///   - ` `   whitespace trivia between the tokens
+///   - `SUM` token (span 2..5)
+/// `syntax_runs_from_snapshot` (in `ui/editor/render_projection.rs`)
+/// emits only the two tokens, producing "=SUM" — 4 visible glyphs
+/// where the textarea has 5 characters. The caret renders at offset 5
+/// in the textarea (which is at the trailing edge of "M" if the
+/// overlay had 5 chars, but at column 5 of an overlay that only has
+/// 4 visible glyphs — i.e. one glyph past the end of the visible
+/// coloured text).
+///
+/// This invariant pins the contract: the syntax overlay's combined
+/// text must exactly match `textarea.value`, character-for-character.
+#[wasm_bindgen_test(async)]
+async fn syntax_overlay_text_must_match_textarea_value_exactly() {
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+    dispatch_input(&textarea, "= SUM");
+
+    // Wait for the bridge round-trip so the overlay is populated.
+    let _ = super::scaffold::flush_microtasks(15).await;
+
+    let textarea_value = textarea.value();
+    assert_eq!(textarea_value, "= SUM");
+
+    let overlay_element = shell
+        .select(".onecalc-home-shell__editor-overlay")
+        .expect("syntax overlay mounted");
+    let overlay_text = overlay_element.text_content().unwrap_or_default();
+    // The overlay appends a trailing newline so its line-box has
+    // height even when the last line is empty; strip exactly that
+    // one trailing `\n` (not whitespace in general — we want to
+    // catch missing-space bugs, which this test exists to detect).
+    let overlay_text_stripped = overlay_text
+        .strip_suffix('\n')
+        .map(|s| s.to_string())
+        .unwrap_or(overlay_text);
+
+    assert_eq!(
+        overlay_text_stripped, textarea_value,
+        "syntax overlay text must equal textarea.value character-for-character. \
+         Mismatch causes caret position to drift visually away from the textarea \
+         content at any offset past a missing trivia run. textarea_value = \
+         {textarea_value:?} ({} chars), overlay_text = {overlay_text_stripped:?} \
+         ({} chars).",
+        textarea_value.chars().count(),
+        overlay_text_stripped.chars().count(),
+    );
+
+    shell.tear_down();
+}
+
+/// REPRODUCTION (user-reported "caret offset from insertion point"):
+/// the bug is that after a popup acceptance the home shell does NOT
+/// explicitly synchronise the textarea's `selectionStart` to the
+/// acceptance's `new_caret_offset`. It relies on whatever the browser
+/// happens to do when `textarea.value` is rewritten by Leptos's
+/// `prop:value` reactivity. Headless Edge moves the caret to the end
+/// of the new value (which usually masks the bug); other browsers
+/// preserve the prior `selectionStart` (clamped to the new length),
+/// which lands the caret in the middle of the just-inserted token.
+///
+/// We force the bug deterministically by:
+/// 1. Typing `=SU` (popup opens, caret at offset 3).
+/// 2. Programmatically moving `selectionStart` to 1 — simulates a
+///    browser that, on the post-acceptance `value` change, leaves
+///    the cursor at its prior offset rather than auto-moving to end.
+/// 3. Pressing Tab to accept.
+///
+/// After acceptance, the home shell's reducer puts state-side caret
+/// at `replacement_span.start + insert_text.chars().count()` (e.g.
+/// `1 + len("SUBSTITUTE") = 11`). The DOM's `selectionStart` should
+/// match. Without an explicit `textarea.set_selection_range(...)`
+/// call after the splice, the DOM caret stays at 1 — which is
+/// exactly the user's report: typing the next character lands
+/// right after the `=` instead of after the inserted function name.
+#[wasm_bindgen_test(async)]
+async fn caret_dom_selection_is_synced_to_acceptance_offset_after_tab() {
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+    dispatch_input(&textarea, "=SU");
+
+    let _ = wait_for(&shell, ".onecalc-completion-popup", |el| {
+        el.get_attribute("data-item-count")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
+    .await;
+
+    // Clobber selection to simulate the cross-browser case where
+    // textarea.value rewrites do NOT auto-move the caret to the
+    // value's end. After this, the DOM selectionStart is 1 even
+    // though we just typed three characters.
+    textarea
+        .set_selection_range(1, 1)
+        .expect("set selection range");
+    assert_eq!(
+        textarea.selection_start().ok().flatten(),
+        Some(1),
+        "precondition: caret pinned at offset 1 before Tab",
+    );
+
+    dispatch_keydown(&textarea, "Tab");
+
+    let textarea_for_value = textarea.clone();
+    let value_after = wait_for(&shell, ".onecalc-home-shell__textarea", move |_| {
+        let value = textarea_for_value.value();
+        if value != "=SU" && value.starts_with('=') && value.chars().count() > 3 {
+            Some(value)
+        } else {
+            None
+        }
+    })
+    .await
+    .expect("value spliced after Tab");
+
+    let expected_caret = value_after.chars().count() as u32;
+    let actual_caret = textarea
+        .selection_start()
+        .ok()
+        .flatten()
+        .expect("selectionStart readable");
+
+    assert_eq!(
+        actual_caret, expected_caret,
+        "DOM caret should be explicitly synced to the acceptance's \
+         new_caret_offset (`{expected_caret}` for `{value_after}`); \
+         actual = {actual_caret}. The fix is to call \
+         `textarea.set_selection_range(new_caret, new_caret)` after \
+         the splice in the home shell's apply_acceptance.",
+    );
+
+    shell.tear_down();
+}
+
+/// REPRODUCTION (user-reported): type `= SUM` (note the space between
+/// `=` and `SUM`), then press Tab. The caret should land at the end of
+/// the spliced result. The user-typed sequence puts the popup-trigger
+/// prefix `SUM` starting at offset 2 (after `= `), and the bridge's
+/// proposals will use a `replacement_span` starting at offset 2.
+///
+/// The acceptance reducer computes `new_caret_offset = span.start +
+/// insert_text.chars().count()` = `2 + 10` for `SUBSTITUTE`. If
+/// anything in the splice / state / DOM-sync chain disagrees with that
+/// arithmetic — for example using `caret_offset + insert_len` instead
+/// of `span.start + insert_len`, or applying the splice to a stale
+/// raw_text snapshot — the textarea will end up with the caret offset
+/// from the end of the inserted token.
+#[wasm_bindgen_test(async)]
+async fn caret_lands_at_end_when_prefix_starts_inside_text_not_at_offset_zero() {
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+
+    // Build "= SUM" via successive input events to mirror the
+    // user's interactive sequence as closely as possible (each
+    // dispatch is a separate bridge round-trip + popup sync).
+    dispatch_input(&textarea, "=");
+    dispatch_input(&textarea, "= ");
+    dispatch_input(&textarea, "= S");
+    dispatch_input(&textarea, "= SU");
+    dispatch_input(&textarea, "= SUM");
+
+    // Wait for the popup to mount with proposals matching `SUM`.
+    let popup_count = wait_for(&shell, ".onecalc-completion-popup", |el| {
+        el.get_attribute("data-item-count")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
+    .await;
+    assert!(
+        popup_count.is_some_and(|n| n >= 1),
+        "popup must be Open before Tab — typing `= SUM` should produce SUM-family proposals; \
+         got popup count = {popup_count:?}",
+    );
+
+    let value_before = textarea.value();
+    assert_eq!(value_before, "= SUM");
+    assert_eq!(
+        textarea.selection_start().ok().flatten(),
+        Some(5),
+        "precondition: caret at offset 5 after typing `= SUM`",
+    );
+
+    // Snapshot popup state BEFORE Tab so we can confirm it's actually
+    // mounted. Read each item's proposal_id + data-selected to see the
+    // shape of what acceptance is supposed to apply.
+    let popup_before_attrs = shell
+        .select(".onecalc-completion-popup")
+        .map(|el| {
+            (
+                el.get_attribute("data-item-count").unwrap_or_default(),
+                el.get_attribute("data-selected-index").unwrap_or_default(),
+            )
+        });
+    let first_item_id = shell
+        .select(".onecalc-completion-popup__item")
+        .and_then(|el| el.get_attribute("data-proposal-id"));
+    assert!(
+        popup_before_attrs.is_some(),
+        "diagnostic: popup mounted before Tab? attrs = {popup_before_attrs:?}",
+    );
+    assert!(
+        first_item_id.is_some(),
+        "diagnostic: first item present before Tab? id = {first_item_id:?}",
+    );
+
+    dispatch_keydown(&textarea, "Tab");
+    super::scaffold::flush_microtasks(15).await;
+
+    // After Tab — accepting SUM in `= SUM` SPLICES nothing visible (the
+    // proposal's insert_text equals the existing 'SUM') so the textarea
+    // value stays "= SUM". The interesting thing is what the DOM
+    // selection actually is. Then dispatch ONE more character to
+    // reveal where subsequent typing lands — this is the user-visible
+    // proxy for "caret is offset".
+    let value_mid = textarea.value();
+    let selection_mid = textarea.selection_start().ok().flatten();
+    let value_after_extra = {
+        // Type "(" — emulates the natural follow-up after accepting a
+        // function name. The browser's textarea normally inserts the
+        // character at selectionStart and advances the caret.
+        let current = textarea.value();
+        let caret = textarea
+            .selection_start()
+            .ok()
+            .flatten()
+            .unwrap_or(current.chars().count() as u32) as usize;
+        let chars: Vec<char> = current.chars().collect();
+        let mut next: String = chars[..caret].iter().collect();
+        next.push('(');
+        let trailing: String = chars[caret..].iter().collect();
+        next.push_str(&trailing);
+        dispatch_input(&textarea, &next);
+        next
+    };
+    let value_final = textarea.value();
+    let selection_final = textarea.selection_start().ok().flatten();
+
+    // The user-reported bug: after Tab acceptance, typing the next
+    // character lands at the wrong offset. The expected "(" lands at
+    // the END of the function name; if the caret drifted backward
+    // (e.g. to the post-acceptance state's caret offset 5 from the
+    // splice arithmetic, while the DOM held a different number), the
+    // "(" splice from `dispatch_input` would put it elsewhere.
+    let expected_after_extra = "= SUM(";
+    assert_eq!(
+        value_final, expected_after_extra,
+        "expected `{expected_after_extra}` after Tab + `(` keystroke; \
+         got value_final = {value_final:?}. value_mid = {value_mid:?}, \
+         selection_mid = {selection_mid:?}, simulated_typed_value = \
+         {value_after_extra:?}, selection_final = {selection_final:?}",
+    );
+
+    shell.tear_down();
+}
+
+/// REPRODUCTION (mouse path): same caret invariant but driven through a
+/// mousedown click on a popup row instead of Tab. Pins that the click
+/// path has the same caret-sync contract as the keyboard path so a
+/// future fix doesn't accidentally leave one of them unrepaired.
+#[wasm_bindgen_test(async)]
+async fn caret_lands_at_end_of_inserted_text_after_mouse_acceptance() {
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+    dispatch_input(&textarea, "=SU");
+
+    let _ = wait_for(&shell, ".onecalc-completion-popup", |el| {
+        el.get_attribute("data-item-count")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
+    .await;
+
+    // Click the first row.
+    let first = shell
+        .select(".onecalc-completion-popup__item")
+        .expect("first item present");
+    let mousedown_init = web_sys::MouseEventInit::new();
+    mousedown_init.set_bubbles(true);
+    mousedown_init.set_cancelable(true);
+    let mousedown =
+        web_sys::MouseEvent::new_with_mouse_event_init_dict("mousedown", &mousedown_init)
+            .expect("mousedown event");
+    first.dispatch_event(&mousedown).expect("dispatch mousedown");
+
+    let textarea_for_value = textarea.clone();
+    let value_after = wait_for(&shell, ".onecalc-home-shell__textarea", move |_| {
+        let value = textarea_for_value.value();
+        if value != "=SU" && value.starts_with('=') && value.chars().count() > 3 {
+            Some(value)
+        } else {
+            None
+        }
+    })
+    .await
+    .expect("textarea value updated after mouse acceptance");
+
+    let expected_caret = value_after.chars().count() as u32;
+    let actual_caret = textarea
+        .selection_start()
+        .ok()
+        .flatten()
+        .expect("selectionStart readable");
+
+    assert_eq!(
+        actual_caret, expected_caret,
+        "post-acceptance caret should land at end of `{value_after}` \
+         (offset {expected_caret}); actual = {actual_caret}",
+    );
+
+    shell.tear_down();
+}
+
 /// Suppression-after-accept: a keyboard acceptance (Tab) closes the
 /// popup, and the synthetic input event that propagates the new
 /// textarea value through the bridge does NOT re-open the popup
