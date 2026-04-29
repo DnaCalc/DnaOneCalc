@@ -120,6 +120,15 @@ pub struct FormulaSpaceState {
     /// when the bridge returns a non-empty proposals list and
     /// auto-closes it when the proposals empty out.
     pub completion_popup: CompletionPopupState,
+    /// Set true by `accept_selected_completion` to suppress the
+    /// auto-open hook on the IMMEDIATELY-following bridge refresh.
+    /// Without this, accepting a proposal then re-running the bridge
+    /// (which is what the synthetic input event after acceptance
+    /// triggers) would re-populate the popup with proposals matching
+    /// the newly-inserted name, producing a UX wart where the popup
+    /// re-appears the moment the user accepts. The sync hook clears
+    /// this flag after consuming it once.
+    pub completion_popup_suppressed_until_next_input: bool,
     pub latest_evaluation_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub context: FormulaSpaceContextState,
@@ -143,6 +152,7 @@ impl FormulaSpaceState {
             editor_document: None,
             completion_help: CompletionHelpState::default(),
             completion_popup: CompletionPopupState::default(),
+            completion_popup_suppressed_until_next_input: false,
             latest_evaluation_summary: None,
             effective_display_summary: None,
             context: FormulaSpaceContextState {

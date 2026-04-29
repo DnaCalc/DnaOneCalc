@@ -208,3 +208,56 @@ pub fn text_of(shell: &MountedShell, selector: &str) -> Option<String> {
         .select(selector)
         .map(|el| el.text_content().unwrap_or_default().trim().to_string())
 }
+
+/// Dispatch a synthetic keydown event with the given `key` value
+/// (matches `KeyboardEvent.key`, e.g. "ArrowDown", "Tab", "Escape").
+/// `cancelable: true` so `preventDefault` calls actually take effect
+/// when the application's keydown handler intercepts the event.
+///
+/// Synthetic key events do NOT trigger the browser's native textarea
+/// behaviour (e.g. arrow keys do not move the caret) — they DO
+/// trigger any JS-installed `on:keydown` handlers, which is exactly
+/// what the popup keyboard policy tests need to assert.
+pub fn dispatch_keydown(textarea: &web_sys::HtmlTextAreaElement, key: &str) {
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_key(key);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let event = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+        .expect("keydown event");
+    textarea
+        .dispatch_event(&event)
+        .expect("dispatch keydown");
+}
+
+/// Dispatch a synthetic focusout event on the textarea.
+pub fn dispatch_focusout(textarea: &web_sys::HtmlTextAreaElement) {
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let event = web_sys::Event::new_with_event_init_dict("focusout", &init)
+        .expect("focusout event");
+    textarea
+        .dispatch_event(&event)
+        .expect("dispatch focusout");
+}
+
+/// Read the popup's `data-selected-index` attribute as a `usize`.
+/// `None` when the popup is not mounted.
+pub fn popup_selected_index(shell: &MountedShell) -> Option<usize> {
+    shell
+        .select(".onecalc-completion-popup")
+        .and_then(|el| el.get_attribute("data-selected-index"))
+        .and_then(|s| s.parse().ok())
+}
+
+/// Read the popup's `data-item-count` attribute as a `usize`. `None`
+/// when the popup is not mounted; `Some(0)` is theoretically possible
+/// but the auto-open policy never produces it (zero items keep the
+/// state Hidden, which suppresses the popup div entirely).
+pub fn popup_item_count(shell: &MountedShell) -> Option<usize> {
+    shell
+        .select(".onecalc-completion-popup")
+        .and_then(|el| el.get_attribute("data-item-count"))
+        .and_then(|s| s.parse().ok())
+}

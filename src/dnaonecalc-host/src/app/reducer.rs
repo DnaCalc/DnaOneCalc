@@ -205,7 +205,25 @@ pub fn accept_completion_by_proposal_id_on_active_formula_space(
     } else {
         return None;
     }
-    popup_accept_selected(&mut formula_space.completion_popup, &raw_text)
+    let acceptance = popup_accept_selected(&mut formula_space.completion_popup, &raw_text)?;
+    formula_space.completion_popup_suppressed_until_next_input = true;
+    Some(acceptance)
+}
+
+/// Accept the popup's currently-selected completion (the keyboard
+/// path: Tab / Enter from a popup-Open state). Mirrors the
+/// proposal-id variant for the click path; both set the
+/// `completion_popup_suppressed_until_next_input` flag so the next
+/// bridge refresh does not re-open the popup over the just-accepted
+/// proposal.
+pub fn accept_selected_completion_with_suppression_on_active_formula_space(
+    state: &mut OneCalcHostState,
+) -> Option<crate::services::completion_popup::CompletionAcceptance> {
+    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let formula_space = active_formula_space_mut(state)?;
+    let acceptance = popup_accept_selected(&mut formula_space.completion_popup, &raw_text)?;
+    formula_space.completion_popup_suppressed_until_next_input = true;
+    Some(acceptance)
 }
 
 /// Move the completion popup's selected index by `delta` (typically

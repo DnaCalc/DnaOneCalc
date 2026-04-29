@@ -20,13 +20,17 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent};
+use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent as WebKeyboardEvent};
 
 use crate::adapters::oxfml::{FormulaTextSpan, OxfmlEditorBridge};
 use crate::app::reducer::{
     accept_completion_by_proposal_id_on_active_formula_space,
+    accept_selected_completion_with_suppression_on_active_formula_space,
     apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
+    dismiss_completion_popup_on_active_formula_space,
+    move_completion_popup_selection_on_active_formula_space,
 };
+use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
     ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, ResultClassPill,
@@ -61,18 +65,18 @@ pub fn HomeShell(
         });
     });
 
-    // Click-to-accept closure for popup rows. Splices the proposal's
-    // `insert_text` into the textarea's value at `replacement_span`,
-    // moves the caret to the end of the inserted text, dispatches a
-    // synthetic input event so the bridge re-runs, then transitions
-    // the popup to Hidden via the reducer entry point.
+    // Helper: apply a CompletionAcceptance — splice the textarea
+    // value, build a synthetic input event, and run it through the
+    // bridge so proposals / diagnostics / metrics refresh. Used by
+    // both the click-to-accept and keyboard-accept paths. Wrapped
+    // in a `Callback` so multiple long-lived event listeners can
+    // share it without each needing a unique clone of every captured
+    // state slot.
     let editor_bridge_for_accept = editor_bridge.clone();
-    let on_completion_click = Callback::new(move |proposal_id: String| {
-        let mut accepted_event: Option<EditorInputEvent> = None;
-        state.update(|state| {
-            if let Some(acceptance) =
-                accept_completion_by_proposal_id_on_active_formula_space(state, &proposal_id)
-            {
+    let apply_acceptance: Callback<CompletionAcceptance> =
+        Callback::new(move |acceptance: CompletionAcceptance| {
+            let bridge = editor_bridge_for_accept.clone();
+            state.update(|state| {
                 if let Some(formula_space) = state
                     .workspace_shell
                     .active_formula_space_id
@@ -84,26 +88,108 @@ pub fn HomeShell(
                         acceptance.replacement_span,
                         &acceptance.insert_text,
                     );
-                    accepted_event = Some(EditorInputEvent {
+                    let event = EditorInputEvent {
                         text: new_text,
                         selection_start: Some(acceptance.new_caret_offset),
                         selection_end: Some(acceptance.new_caret_offset),
                         input_kind: EditorInputKind::InsertText,
                         inserted_text: Some(acceptance.insert_text),
-                    });
-                }
-            }
-        });
-        if let Some(event) = accepted_event {
-            state.update(|state| {
-                if let Some(bridge) = editor_bridge_for_accept.as_ref() {
-                    let _ = apply_live_editor_input(bridge.as_ref(), state, event);
-                } else {
-                    let _ = apply_editor_input_to_active_formula_space(state, event);
+                    };
+                    if let Some(bridge) = bridge.as_ref() {
+                        let _ = apply_live_editor_input(bridge.as_ref(), state, event);
+                    } else {
+                        let _ = apply_editor_input_to_active_formula_space(state, event);
+                    }
                 }
             });
+        });
+
+    // Click-to-accept closure for popup rows. Splices the proposal's
+    // `insert_text` into the textarea's value at `replacement_span`,
+    // moves the caret to the end of the inserted text, dispatches a
+    // synthetic input event so the bridge re-runs, then transitions
+    // the popup to Hidden via the reducer entry point. The reducer
+    // entry point also sets the suppression flag so the bridge
+    // refresh that the synthetic input triggers does NOT auto-reopen
+    // the popup over the just-accepted proposal.
+    let on_completion_click = Callback::new(move |proposal_id: String| {
+        let mut acceptance_holder: Option<CompletionAcceptance> = None;
+        state.update(|state| {
+            acceptance_holder =
+                accept_completion_by_proposal_id_on_active_formula_space(state, &proposal_id);
+        });
+        if let Some(acceptance) = acceptance_holder {
+            apply_acceptance.run(acceptance);
         }
     });
+
+    // Keyboard policy. The handler is INSTALLED unconditionally on
+    // the textarea, but is a no-op (no preventDefault, no reducer
+    // call) when the popup is Hidden — so native textarea behaviour
+    // (Arrow / Home / End / Backspace / Delete / IME / clipboard /
+    // selection) is preserved verbatim. This is the discipline WS-13
+    // got wrong: handlers leaked onto the textarea even when no
+    // popup was visible.
+    //
+    // When the popup IS Open, the handler intercepts ONLY the five
+    // popup keys (ArrowUp, ArrowDown, Tab, Enter, Escape) and
+    // preventDefault's them. Every other key is allowed through to
+    // the textarea unchanged.
+    let on_textarea_keydown = move |ev: WebKeyboardEvent| {
+        let popup_open = view_model
+            .with_untracked(|vm| vm.as_ref().map(|vm| vm.completion_popup.is_some()))
+            .unwrap_or(false);
+        if !popup_open {
+            return;
+        }
+        match ev.key().as_str() {
+            "ArrowDown" => {
+                ev.prevent_default();
+                state.update(|state| {
+                    let _ = move_completion_popup_selection_on_active_formula_space(state, 1);
+                });
+            }
+            "ArrowUp" => {
+                ev.prevent_default();
+                state.update(|state| {
+                    let _ = move_completion_popup_selection_on_active_formula_space(state, -1);
+                });
+            }
+            "Tab" | "Enter" => {
+                ev.prevent_default();
+                let mut acceptance_holder: Option<CompletionAcceptance> = None;
+                state.update(|state| {
+                    acceptance_holder =
+                        accept_selected_completion_with_suppression_on_active_formula_space(
+                            state,
+                        );
+                });
+                if let Some(acceptance) = acceptance_holder {
+                    apply_acceptance.run(acceptance);
+                }
+            }
+            "Escape" => {
+                ev.prevent_default();
+                state.update(|state| {
+                    let _ = dismiss_completion_popup_on_active_formula_space(state);
+                });
+            }
+            _ => {
+                // All other keys (Arrow Left/Right, plain typing, IME
+                // composition, clipboard shortcuts) fall through to
+                // the textarea's native handling. NO preventDefault.
+            }
+        }
+    };
+
+    // Focus-out: when the textarea loses focus (user clicks
+    // elsewhere, Tab navigates away, ...) dismiss the popup so it
+    // doesn't sit stale on an unfocused editor.
+    let on_textarea_focusout = move |_| {
+        state.update(|state| {
+            let _ = dismiss_completion_popup_on_active_formula_space(state);
+        });
+    };
 
     // Reactive readers. Each closure runs whenever the underlying signal
     // it touches changes; Leptos handles the diff.
@@ -216,6 +302,8 @@ pub fn HomeShell(
                                 autocomplete="off"
                                 aria-label="formula editor"
                                 prop:value=textarea_value
+                                on:keydown=on_textarea_keydown
+                                on:focusout=on_textarea_focusout
                                 on:input=move |ev| {
                                     let textarea = event_target::<HtmlTextAreaElement>(&ev);
                                     let web_input_event = ev.dyn_ref::<WebInputEvent>();

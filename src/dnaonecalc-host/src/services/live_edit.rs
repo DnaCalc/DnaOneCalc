@@ -144,7 +144,9 @@ fn sync_completion_popup_after_bridge_refresh(
         .completion_proposals
         .iter()
         .any(|proposal| proposal.replacement_span.is_some_and(|span| span.len > 0));
-    let items: Vec<CompletionPopupItem> = if raw_is_empty || !has_useful_prefix {
+    let was_suppressed = formula_space.completion_popup_suppressed_until_next_input;
+    formula_space.completion_popup_suppressed_until_next_input = false;
+    let items: Vec<CompletionPopupItem> = if raw_is_empty || !has_useful_prefix || was_suppressed {
         Vec::new()
     } else {
         document
