@@ -22,14 +22,15 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent};
 
-use crate::adapters::oxfml::OxfmlEditorBridge;
+use crate::adapters::oxfml::{FormulaTextSpan, OxfmlEditorBridge};
 use crate::app::reducer::{
+    accept_completion_by_proposal_id_on_active_formula_space,
     apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
 };
 use crate::services::home_shell_view_model::{
-    build_home_shell_view_model, BridgeHealth, ContextChipField, DiagnosticSquiggle,
-    EditorMetricsChip, EntryModePill, ResultClassPill, ResultContextChip, ResultKind, ResultView,
-    StatusView,
+    build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
+    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, ResultClassPill,
+    ResultContextChip, ResultKind, ResultView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
@@ -60,6 +61,50 @@ pub fn HomeShell(
         });
     });
 
+    // Click-to-accept closure for popup rows. Splices the proposal's
+    // `insert_text` into the textarea's value at `replacement_span`,
+    // moves the caret to the end of the inserted text, dispatches a
+    // synthetic input event so the bridge re-runs, then transitions
+    // the popup to Hidden via the reducer entry point.
+    let editor_bridge_for_accept = editor_bridge.clone();
+    let on_completion_click = Callback::new(move |proposal_id: String| {
+        let mut accepted_event: Option<EditorInputEvent> = None;
+        state.update(|state| {
+            if let Some(acceptance) =
+                accept_completion_by_proposal_id_on_active_formula_space(state, &proposal_id)
+            {
+                if let Some(formula_space) = state
+                    .workspace_shell
+                    .active_formula_space_id
+                    .clone()
+                    .and_then(|id| state.formula_spaces.get(&id))
+                {
+                    let new_text = splice_textarea_value(
+                        &formula_space.raw_entered_cell_text,
+                        acceptance.replacement_span,
+                        &acceptance.insert_text,
+                    );
+                    accepted_event = Some(EditorInputEvent {
+                        text: new_text,
+                        selection_start: Some(acceptance.new_caret_offset),
+                        selection_end: Some(acceptance.new_caret_offset),
+                        input_kind: EditorInputKind::InsertText,
+                        inserted_text: Some(acceptance.insert_text),
+                    });
+                }
+            }
+        });
+        if let Some(event) = accepted_event {
+            state.update(|state| {
+                if let Some(bridge) = editor_bridge_for_accept.as_ref() {
+                    let _ = apply_live_editor_input(bridge.as_ref(), state, event);
+                } else {
+                    let _ = apply_editor_input_to_active_formula_space(state, event);
+                }
+            });
+        }
+    });
+
     // Reactive readers. Each closure runs whenever the underlying signal
     // it touches changes; Leptos handles the diff.
     let textarea_value = move || {
@@ -80,6 +125,7 @@ pub fn HomeShell(
     };
     let editor_metrics = move || view_model.get().map(|vm| vm.editor_metrics);
     let result_context = move || view_model.get().map(|vm| vm.result_context);
+    let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
     // Browser-measured caret-box metrics surfaced as data-attributes on
@@ -218,6 +264,7 @@ pub fn HomeShell(
                                     on_editor_input.run(event);
                                 }
                             ></textarea>
+                            {move || render_completion_popup(completion_popup(), on_completion_click)}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
                             {move || render_editor_metrics_chip(editor_metrics())}
@@ -448,6 +495,111 @@ fn render_diagnostic_squiggle_overlay(
             {segments}
             {"\n"}
         </>
+    }
+    .into_any()
+}
+
+/// Splice `insert_text` into `raw_text` at `replacement_span`.
+/// Splits / joins on Rust `char` boundaries so non-ASCII inputs do not
+/// corrupt. When `replacement_span` is `None`, the insertion is
+/// appended at the end (matches the popup-state model's "no anchor"
+/// behaviour for proposals without a replacement context).
+fn splice_textarea_value(
+    raw_text: &str,
+    replacement_span: Option<FormulaTextSpan>,
+    insert_text: &str,
+) -> String {
+    let chars: Vec<char> = raw_text.chars().collect();
+    let (start, end) = match replacement_span {
+        Some(span) => {
+            let start = span.start.min(chars.len());
+            let end = start
+                .saturating_add(span.len)
+                .min(chars.len());
+            (start, end)
+        }
+        None => {
+            let end = chars.len();
+            (end, end)
+        }
+    };
+    let mut out: String = chars[..start].iter().collect();
+    out.push_str(insert_text);
+    let trailing: String = chars[end..].iter().collect();
+    out.push_str(&trailing);
+    out
+}
+
+/// Render the completion popup. Returns an empty fragment when the
+/// view-model has `None` (popup hidden or not yet measurable).
+/// Positioned absolutely within the editor frame at the caret anchor;
+/// the popup wrapper is `pointer-events: none` so background clicks
+/// fall through to the textarea, while each item row reactivates
+/// `pointer-events: auto` for click handling.
+fn render_completion_popup(
+    popup: Option<CompletionPopupView>,
+    on_click: Callback<String>,
+) -> AnyView {
+    let Some(popup) = popup else {
+        return view! { <span></span> }.into_any();
+    };
+    let style = format!(
+        "left: {}px; top: {}px;",
+        popup.anchor_left_px,
+        popup.anchor_top_px.saturating_add(popup.line_height_px),
+    );
+    let item_count = popup.items.len();
+    let items = popup
+        .items
+        .into_iter()
+        .map(|item| render_completion_popup_item(item, on_click))
+        .collect::<Vec<_>>();
+    view! {
+        <div
+            class="onecalc-completion-popup"
+            data-selected-index=popup.selected_index.to_string()
+            data-item-count=item_count.to_string()
+            role="listbox"
+            aria-label="completion proposals"
+            style=style
+        >
+            {items}
+        </div>
+    }
+    .into_any()
+}
+
+fn render_completion_popup_item(
+    item: CompletionPopupItemView,
+    on_click: Callback<String>,
+) -> AnyView {
+    let proposal_id_for_click = item.proposal_id.clone();
+    let proposal_id_for_attr = item.proposal_id.clone();
+    let kind_label = item.kind_label;
+    view! {
+        <div
+            class="onecalc-completion-popup__item"
+            data-proposal-id=proposal_id_for_attr
+            data-selected=if item.is_selected { "true" } else { "false" }
+            data-kind=item.kind_label.to_ascii_lowercase()
+            role="option"
+            aria-selected=if item.is_selected { "true" } else { "false" }
+            on:mousedown=move |ev| {
+                // mousedown (not click) so the textarea doesn't lose
+                // focus before the splice runs; preventDefault keeps
+                // the focus on the textarea throughout.
+                ev.prevent_default();
+                on_click.run(proposal_id_for_click.clone());
+            }
+        >
+            <span class="onecalc-completion-popup__glyph" aria-hidden="true">
+                {item.kind_glyph.to_string()}
+            </span>
+            <span class="onecalc-completion-popup__text">{item.display_text}</span>
+            <span class="onecalc-completion-popup__kind" aria-hidden="true">
+                {kind_label}
+            </span>
+        </div>
     }
     .into_any()
 }

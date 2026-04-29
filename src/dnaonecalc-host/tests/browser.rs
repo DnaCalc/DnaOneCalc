@@ -18,3 +18,6 @@ mod editor_core;
 
 #[path = "browser/caret_geometry.rs"]
 mod caret_geometry;
+
+#[path = "browser/completion.rs"]
+mod completion;

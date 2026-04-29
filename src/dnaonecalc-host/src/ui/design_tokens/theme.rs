@@ -3161,6 +3161,76 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border-radius: 3px;
 }
 
+/* Completion popup: absolute-positioned inside the editor frame at
+   the caret anchor. The wrapper itself does not capture pointer
+   events so background clicks fall through to the textarea; each row
+   re-enables pointer events for its own click handler. */
+.onecalc-completion-popup {
+  position: absolute;
+  z-index: 10;
+  width: 280px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-card-edge);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-strong);
+  font-family: var(--oc-font-ui);
+  pointer-events: none;
+}
+
+.onecalc-completion-popup__item {
+  display: grid;
+  grid-template-columns: 1.1rem 1fr auto;
+  align-items: center;
+  gap: var(--oc-space-2);
+  padding: 0.25rem var(--oc-space-3);
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  color: var(--oc-color-ink);
+}
+
+.onecalc-completion-popup__item:hover {
+  background: rgba(36, 93, 90, 0.08);
+}
+
+.onecalc-completion-popup__item[data-selected="true"] {
+  background: var(--oc-color-accent);
+  color: #fffaf4;
+}
+
+.onecalc-completion-popup__glyph {
+  font-family: var(--oc-font-mono);
+  font-weight: 600;
+  text-align: center;
+  color: var(--oc-color-accent);
+}
+
+.onecalc-completion-popup__item[data-selected="true"] .onecalc-completion-popup__glyph {
+  color: #fffaf4;
+}
+
+.onecalc-completion-popup__text {
+  font-family: var(--oc-font-mono);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-completion-popup__kind {
+  font-size: 0.7rem;
+  color: var(--oc-color-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onecalc-completion-popup__item[data-selected="true"] .onecalc-completion-popup__kind {
+  color: rgba(255, 250, 244, 0.78);
+}
+
 .onecalc-home-shell__textarea {
   position: relative;
   width: 100%;

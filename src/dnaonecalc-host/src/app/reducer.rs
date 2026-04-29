@@ -180,6 +180,34 @@ pub fn apply_editor_overlay_measurement_to_active_formula_space(
     true
 }
 
+/// Set the popup's `selected_index` to the row matching `proposal_id`,
+/// then accept it. Returns the acceptance (or `None` when the popup is
+/// `Hidden` or the id is unknown). Used by the popup's click-to-accept
+/// path so the home shell doesn't need to dispatch separate
+/// "select-by-id then accept" reducer calls per click.
+pub fn accept_completion_by_proposal_id_on_active_formula_space(
+    state: &mut OneCalcHostState,
+    proposal_id: &str,
+) -> Option<crate::services::completion_popup::CompletionAcceptance> {
+    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let formula_space = active_formula_space_mut(state)?;
+    if let crate::services::completion_popup::CompletionPopupState::Open {
+        items,
+        selected_index,
+        ..
+    } = &mut formula_space.completion_popup
+    {
+        if let Some(index) = items.iter().position(|item| item.proposal_id == proposal_id) {
+            *selected_index = index;
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    }
+    popup_accept_selected(&mut formula_space.completion_popup, &raw_text)
+}
+
 /// Move the completion popup's selected index by `delta` (typically
 /// `+1` for ArrowDown / `-1` for ArrowUp). Wraps at both ends. No-op
 /// when the popup is `Hidden`. Returns `true` when state changed.

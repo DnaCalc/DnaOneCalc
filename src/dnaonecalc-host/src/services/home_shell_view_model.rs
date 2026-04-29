@@ -17,7 +17,9 @@
 //! Reference: `docs/WS14_PRE_MVP_PATH.md` §4 Step 2.
 
 use crate::adapters::oxfml::{worksheet_error_literal, EvalValue, LiveDiagnosticSeverity};
+use crate::services::completion_popup::{CompletionPopupKind, CompletionPopupState};
 use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource};
+use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
 use crate::ui::editor::state::{EditorEntryMode, EditorSurfaceState};
 
@@ -58,8 +60,68 @@ pub struct HomeShellViewModel {
     /// inline so the chip is honest about which knobs are wired today
     /// and which still need backend work (per WS-14 plan §11).
     pub result_context: ResultContextChip,
+    /// Completion popup overlay. `None` when the popup is `Hidden` OR
+    /// when the editor-box metrics have not yet been measured (the
+    /// browser adapter populates them on the first input event; until
+    /// then the popup cannot be positioned and is suppressed).
+    pub completion_popup: Option<CompletionPopupView>,
     pub result_view: ResultView,
     pub status: StatusView,
+}
+
+/// View-model shape for the completion popup. Carries the anchor pixel
+/// position computed from the bridge's caret offset + the browser-
+/// measured char-box metrics, plus the rendered item list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionPopupView {
+    /// Pixel anchor of the popup's top-left corner, relative to the
+    /// editor frame's origin. The popup itself sits below the line the
+    /// caret occupies, so the renderer offsets `top_px` by
+    /// `line_height_px` when positioning.
+    pub anchor_left_px: usize,
+    pub anchor_top_px: usize,
+    pub line_height_px: usize,
+    pub items: Vec<CompletionPopupItemView>,
+    /// Index into `items` of the row to highlight. Always in
+    /// `0..items.len()`.
+    pub selected_index: usize,
+}
+
+/// One row of the popup. Carries the rendering payload (display text,
+/// kind glyph, is_selected) and the proposal id so click handlers can
+/// look up the original proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionPopupItemView {
+    pub proposal_id: String,
+    pub display_text: String,
+    pub kind_glyph: char,
+    pub kind_label: &'static str,
+    pub is_selected: bool,
+    pub documentation_ref: Option<String>,
+}
+
+impl CompletionPopupItemView {
+    fn glyph_for_kind(kind: CompletionPopupKind) -> char {
+        match kind {
+            CompletionPopupKind::Function => 'ƒ',
+            CompletionPopupKind::DefinedName => 'N',
+            CompletionPopupKind::TableName => 'T',
+            CompletionPopupKind::TableColumn => '⫶',
+            CompletionPopupKind::StructuredSelector => '#',
+            CompletionPopupKind::SyntaxAssist => '·',
+        }
+    }
+
+    fn label_for_kind(kind: CompletionPopupKind) -> &'static str {
+        match kind {
+            CompletionPopupKind::Function => "Function",
+            CompletionPopupKind::DefinedName => "Defined name",
+            CompletionPopupKind::TableName => "Table",
+            CompletionPopupKind::TableColumn => "Column",
+            CompletionPopupKind::StructuredSelector => "Selector",
+            CompletionPopupKind::SyntaxAssist => "Syntax",
+        }
+    }
 }
 
 /// Editor-foot live-metrics chip projection.
@@ -297,6 +359,7 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
     let diagnostic_squiggles = project_diagnostic_squiggles(formula_space);
     let editor_metrics = project_editor_metrics(formula_space, &syntax_runs);
     let result_context = project_result_context(formula_space);
+    let completion_popup = project_completion_popup(formula_space);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -306,9 +369,58 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
         diagnostic_squiggles,
         editor_metrics,
         result_context,
+        completion_popup,
         result_view,
         status: project_status_view(formula_space),
     }
+}
+
+/// Project the completion popup state into a renderable view-model.
+/// Returns `None` when:
+///   * the popup is in `Hidden` state, or
+///   * `editor_box_metrics` is `None` (the browser adapter has not yet
+///     measured the textarea — without metrics the anchor cannot be
+///     placed, so the popup is suppressed for one frame).
+///
+/// When both gates pass, the anchor is computed via
+/// [`caret_box_for_offset`] from the popup's `anchor_offset` (which the
+/// reducer sourced from the proposal's `replacement_span.start` or the
+/// caret offset). Each item maps to a `CompletionPopupItemView` with
+/// `is_selected` set on the popup's `selected_index`.
+fn project_completion_popup(formula_space: &FormulaSpaceState) -> Option<CompletionPopupView> {
+    let CompletionPopupState::Open {
+        anchor_offset,
+        items,
+        selected_index,
+    } = &formula_space.completion_popup
+    else {
+        return None;
+    };
+    let metrics = formula_space.editor_box_metrics?;
+    let anchor = caret_box_for_offset(
+        &formula_space.raw_entered_cell_text,
+        *anchor_offset,
+        metrics,
+    );
+    let item_views: Vec<CompletionPopupItemView> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| CompletionPopupItemView {
+            proposal_id: item.proposal_id.clone(),
+            display_text: item.display_text.clone(),
+            kind_glyph: CompletionPopupItemView::glyph_for_kind(item.kind),
+            kind_label: CompletionPopupItemView::label_for_kind(item.kind),
+            is_selected: index == *selected_index,
+            documentation_ref: item.documentation_ref.clone(),
+        })
+        .collect();
+    Some(CompletionPopupView {
+        anchor_left_px: anchor.left_px,
+        anchor_top_px: anchor.top_px,
+        line_height_px: metrics.line_height_px.max(1),
+        items: item_views,
+        selected_index: *selected_index,
+    })
 }
 
 /// Build the editor-foot live-metrics chip. Counts come from the editor
@@ -1077,6 +1189,153 @@ mod tests {
         );
         assert_eq!(vm.result_context.policy.value(), "deterministic");
         assert_eq!(vm.result_context.policy.seam_id(), None);
+    }
+
+    // -----------------------------------------------------------------
+    // Completion popup view-model projection (bead dno-xcq.24)
+    // -----------------------------------------------------------------
+
+    fn open_popup_state() -> CompletionPopupState {
+        use crate::adapters::oxfml::FormulaTextSpan;
+        use crate::services::completion_popup::{CompletionPopupItem, CompletionPopupKind};
+        CompletionPopupState::Open {
+            anchor_offset: 1,
+            items: vec![
+                CompletionPopupItem {
+                    proposal_id: "p-1".to_string(),
+                    display_text: "SUM".to_string(),
+                    insert_text: "SUM(".to_string(),
+                    kind: CompletionPopupKind::Function,
+                    replacement_span: Some(FormulaTextSpan { start: 1, len: 2 }),
+                    documentation_ref: Some("doc:sum".to_string()),
+                },
+                CompletionPopupItem {
+                    proposal_id: "p-2".to_string(),
+                    display_text: "SUMIF".to_string(),
+                    insert_text: "SUMIF(".to_string(),
+                    kind: CompletionPopupKind::Function,
+                    replacement_span: Some(FormulaTextSpan { start: 1, len: 2 }),
+                    documentation_ref: None,
+                },
+            ],
+            selected_index: 1,
+        }
+    }
+
+    fn synthetic_metrics() -> crate::adapters::oxfml::FormulaTextSpan {
+        // Returning a span isn't quite right; replace below.
+        crate::adapters::oxfml::FormulaTextSpan { start: 0, len: 0 }
+    }
+
+    #[test]
+    fn completion_popup_view_is_none_when_state_hidden() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SU");
+        // popup defaults to Hidden, even when metrics are populated.
+        let mut formula_space = formula_space;
+        formula_space.editor_box_metrics =
+            Some(crate::ui::editor::geometry::TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert!(vm.completion_popup.is_none());
+        let _ = synthetic_metrics(); // silence unused-helper warning
+    }
+
+    #[test]
+    fn completion_popup_view_is_none_when_metrics_unmeasured() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SU");
+        formula_space.completion_popup = open_popup_state();
+        // Metrics deliberately None — adapter hasn't run yet.
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert!(
+            vm.completion_popup.is_none(),
+            "popup view suppressed until measurement lands",
+        );
+    }
+
+    #[test]
+    fn completion_popup_view_is_some_when_open_and_measured() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SU");
+        formula_space.completion_popup = open_popup_state();
+        formula_space.editor_box_metrics =
+            Some(crate::ui::editor::geometry::TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let popup = vm.completion_popup.expect("popup view present");
+        // Anchor at offset 1 with char_width 9 -> left = 9.
+        assert_eq!(popup.anchor_left_px, 9);
+        assert_eq!(popup.anchor_top_px, 0);
+        assert_eq!(popup.line_height_px, 22);
+        assert_eq!(popup.items.len(), 2);
+        assert_eq!(popup.selected_index, 1);
+    }
+
+    #[test]
+    fn completion_popup_view_marks_selected_item_only() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SU");
+        formula_space.completion_popup = open_popup_state();
+        formula_space.editor_box_metrics =
+            Some(crate::ui::editor::geometry::TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let popup = vm.completion_popup.expect("popup view present");
+        assert_eq!(popup.items[0].is_selected, false);
+        assert_eq!(popup.items[1].is_selected, true);
+    }
+
+    #[test]
+    fn completion_popup_view_kind_glyph_and_label_cover_all_variants() {
+        use crate::services::completion_popup::CompletionPopupKind as Kind;
+        for (kind, expected_glyph, expected_label) in [
+            (Kind::Function, 'ƒ', "Function"),
+            (Kind::DefinedName, 'N', "Defined name"),
+            (Kind::TableName, 'T', "Table"),
+            (Kind::TableColumn, '⫶', "Column"),
+            (Kind::StructuredSelector, '#', "Selector"),
+            (Kind::SyntaxAssist, '·', "Syntax"),
+        ] {
+            assert_eq!(CompletionPopupItemView::glyph_for_kind(kind), expected_glyph);
+            assert_eq!(CompletionPopupItemView::label_for_kind(kind), expected_label);
+        }
+    }
+
+    #[test]
+    fn completion_popup_view_anchor_uses_replacement_span_start_via_state_offset() {
+        // The reducer auto-sync sets anchor_offset to the proposal's
+        // replacement_span.start; here we set it explicitly to verify
+        // the projector consumes that field rather than the caret.
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM");
+        // Pretend the popup anchored at offset 1 (start of "SUM") even
+        // though the caret has advanced to offset 4 (end of text).
+        formula_space.editor_surface_state.caret.offset = 4;
+        formula_space.completion_popup = open_popup_state();
+        formula_space.editor_box_metrics =
+            Some(crate::ui::editor::geometry::TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let popup = vm.completion_popup.expect("popup view present");
+        // Anchor offset = 1; left_px = 1 * 9 = 9. NOT 4 * 9 = 36.
+        assert_eq!(popup.anchor_left_px, 9);
     }
 
     // -----------------------------------------------------------------
