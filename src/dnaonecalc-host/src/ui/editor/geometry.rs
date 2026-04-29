@@ -1,3 +1,41 @@
+//! Editor overlay geometry — pure-Rust caret / span / popup-anchor
+//! computation.
+//!
+//! ## Why a separate module
+//!
+//! The previous WS-13 attempt at popup positioning (since retired) mixed
+//! browser measurement and pixel computation in one place. That tangled
+//! the layers and made edge cases (line wraps, multi-line, scroll) hard
+//! to test without a real browser. This module owns ONLY the pure
+//! computation: given a text, a caret offset, and a `TextareaMeasurementMetrics`
+//! snapshot (char_width, line_height, scroll position), produce a pixel
+//! anchor. Browser measurement lives in a sibling adapter
+//! (`ui::editor::caret_box_measurement`, introduced in bead dno-xcq.22)
+//! that reads DOM dimensions and feeds them in.
+//!
+//! ## Popup-anchor entry point
+//!
+//! The completion popup, signature help, hover tooltip, and any future
+//! caret-anchored surface should consume [`caret_box_for_offset`] for a
+//! focused single-caret anchor, or [`derive_overlay_snapshot_with_metrics`]
+//! when the surface needs multiple anchors at once (caret + selection +
+//! popup-target span).
+//!
+//! ## Caveats
+//!
+//! * The functions count Rust [`char`]s. JavaScript `textarea.selectionStart`
+//!   is in UTF-16 code units; non-BMP characters (e.g. emoji) occupy two
+//!   code units in JS but one [`char`] in Rust. The caller is responsible
+//!   for converting offsets at the boundary. For all-BMP formulas (the
+//!   overwhelming common case) the two are identical.
+//! * `\r\n` line endings: only `\n` triggers a row break. A bare `\r`
+//!   advances column like any other character. Browsers normalise
+//!   textarea contents to `\n` so this is rarely observed in practice.
+//! * The pixel coordinates returned are relative to the textarea's
+//!   content-box origin (i.e. inside any padding). The browser adapter
+//!   composes padding separately when positioning a popup absolutely
+//!   inside the editor frame.
+
 use crate::adapters::oxfml::FormulaTextSpan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +195,31 @@ pub fn resolve_overlay_box(
     }
 }
 
+/// Single-caret pixel anchor for a popup or signature-help target.
+///
+/// Returns the box covering one character cell at `caret_offset`, with
+/// pixel positions relative to the textarea's content-box origin and
+/// adjusted for the textarea's current scroll position. This is the
+/// focused entry point the popup view-model integration uses; for
+/// composite surfaces that need caret + selection + popup-target spans
+/// at the same time, prefer [`derive_overlay_snapshot_with_metrics`].
+///
+/// `caret_offset` is a Rust [`char`] index (see module docs for the JS
+/// UTF-16 caveat). Past-end offsets clamp to the end of the text.
+pub fn caret_box_for_offset(
+    text: &str,
+    caret_offset: usize,
+    metrics: TextareaMeasurementMetrics,
+) -> EditorMeasuredOverlayBox {
+    let measurement = EditorOverlayMeasurement {
+        source: EditorOverlayMeasurementSource::DomMeasured,
+        char_width_px: metrics.char_width_px.max(1),
+        line_height_px: metrics.line_height_px.max(1),
+    };
+    let raw_box = measurement.offset_box(text, caret_offset);
+    measured_box_from_overlay_box(adjust_for_scroll(raw_box, metrics))
+}
+
 pub fn derive_overlay_snapshot(
     text: &str,
     caret_offset: usize,
@@ -257,6 +320,242 @@ fn measured_box_from_overlay_box(box_geometry: EditorOverlayBox) -> EditorMeasur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --------------------------------------------------------------
+    // Edge-case coverage for popup-anchor positioning.
+    //
+    // Each test below pins a specific situation the caret-anchor
+    // computation must handle without panicking and without drifting
+    // off-screen. The cases mirror the failure modes WS-13 hit, plus a
+    // few new ones (non-ASCII, very large offset).
+    // --------------------------------------------------------------
+
+    /// Empty text + caret at offset 0: the only valid position is
+    /// (line 0, col 0); no panic, no past-end fallthrough.
+    #[test]
+    fn offset_to_line_column_handles_empty_text_at_offset_zero() {
+        assert_eq!(
+            offset_to_line_column("", 0),
+            EditorLineColumn { line_index: 0, column_index: 0 }
+        );
+    }
+
+    /// Past-end offset on empty text clamps to (0, 0) — never panics.
+    #[test]
+    fn offset_to_line_column_handles_past_end_on_empty_text() {
+        assert_eq!(
+            offset_to_line_column("", 10),
+            EditorLineColumn { line_index: 0, column_index: 0 }
+        );
+    }
+
+    /// Offset exactly on a `\n` boundary: caret sits at end of the
+    /// previous line, NOT at column 0 of the next line. Important
+    /// for multi-line formula popups so the popup anchors at the
+    /// trailing edge of the current line.
+    #[test]
+    fn offset_to_line_column_anchors_at_end_of_line_when_offset_is_on_newline() {
+        // text: "abc\ndef", `\n` is at offset 3
+        assert_eq!(
+            offset_to_line_column("abc\ndef", 3),
+            EditorLineColumn { line_index: 0, column_index: 3 },
+            "offset on the newline char itself = end of line 0",
+        );
+        // offset 4 is the first char of line 1
+        assert_eq!(
+            offset_to_line_column("abc\ndef", 4),
+            EditorLineColumn { line_index: 1, column_index: 0 },
+        );
+    }
+
+    /// `\r` in the middle of a line is treated as an ordinary column
+    /// (not a line break). Browsers normalise `\r\n` to `\n` in
+    /// textarea contents so this is rarely observed; the test pins the
+    /// documented behaviour for unusual inputs (e.g. paste from
+    /// non-normalising sources).
+    #[test]
+    fn offset_to_line_column_treats_bare_cr_as_a_column_advance() {
+        // "ab\rcd" — the `\r` is at offset 2, treated as a column.
+        assert_eq!(
+            offset_to_line_column("ab\rcd", 2),
+            EditorLineColumn { line_index: 0, column_index: 2 }
+        );
+        assert_eq!(
+            offset_to_line_column("ab\rcd", 4),
+            EditorLineColumn { line_index: 0, column_index: 4 }
+        );
+    }
+
+    /// `\r\n` line endings: the `\r` advances column, the `\n`
+    /// advances line. Document the layered behavior: caller must
+    /// normalise if a `\r\n` source needs to be treated as one line
+    /// break.
+    #[test]
+    fn offset_to_line_column_treats_crlf_as_two_glyphs_with_lf_breaking() {
+        // "ab\r\ncd" — `\r` at offset 2, `\n` at offset 3, `c` at offset 4.
+        assert_eq!(
+            offset_to_line_column("ab\r\ncd", 3),
+            EditorLineColumn { line_index: 0, column_index: 3 },
+            "offset on `\\n` = end of line 0 (column index 3 includes the `\\r`)",
+        );
+        assert_eq!(
+            offset_to_line_column("ab\r\ncd", 4),
+            EditorLineColumn { line_index: 1, column_index: 0 },
+            "offset 4 = first char of line 1",
+        );
+    }
+
+    /// Past-end offset on non-empty text clamps to the post-loop
+    /// (line, column) pair — i.e. the position one past the last
+    /// character. Caller can detect "caret past end" by seeing the
+    /// returned column == line length.
+    #[test]
+    fn offset_to_line_column_clamps_past_end_offset_to_last_position() {
+        assert_eq!(
+            offset_to_line_column("abc", 3),
+            EditorLineColumn { line_index: 0, column_index: 3 }
+        );
+        assert_eq!(
+            offset_to_line_column("abc", 100),
+            EditorLineColumn { line_index: 0, column_index: 3 }
+        );
+        // Multi-line: end of line 1 after `\n` is line 1, col 3
+        assert_eq!(
+            offset_to_line_column("abc\ndef", 7),
+            EditorLineColumn { line_index: 1, column_index: 3 }
+        );
+        assert_eq!(
+            offset_to_line_column("abc\ndef", usize::MAX / 2),
+            EditorLineColumn { line_index: 1, column_index: 3 }
+        );
+    }
+
+    /// Non-ASCII BMP characters (e.g. `é`, `中`) count as one [`char`]
+    /// each. Caller is responsible for any UTF-16-vs-Rust-char
+    /// conversion at the JS boundary; in Rust the offsets line up
+    /// 1:1 with `chars().enumerate()`.
+    #[test]
+    fn offset_to_line_column_counts_non_ascii_bmp_as_one_char() {
+        // "café" is 4 chars (c, a, f, é) — `é` is U+00E9, one BMP
+        // code point, one Rust char.
+        assert_eq!(
+            offset_to_line_column("café", 4),
+            EditorLineColumn { line_index: 0, column_index: 4 }
+        );
+        // Mixed scripts: "中a" — 中 is one BMP char.
+        assert_eq!(
+            offset_to_line_column("中a", 1),
+            EditorLineColumn { line_index: 0, column_index: 1 }
+        );
+        assert_eq!(
+            offset_to_line_column("中a", 2),
+            EditorLineColumn { line_index: 0, column_index: 2 }
+        );
+    }
+
+    // --------------------------------------------------------------
+    // Caret-box pixel positioning (the popup-anchor entry point).
+    // --------------------------------------------------------------
+
+    /// `caret_box_for_offset` produces the same coordinates as
+    /// `derive_overlay_snapshot_with_metrics` puts in `caret_box`,
+    /// minus the additional surfaces. This invariant lets the
+    /// popup view-model adopt the focused helper without behavior
+    /// drift.
+    #[test]
+    fn caret_box_for_offset_matches_full_snapshot_caret() {
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let text = "=SUM(1,2,3)";
+        let focused = caret_box_for_offset(text, 5, metrics);
+        let snapshot = derive_overlay_snapshot_with_metrics(
+            text,
+            5,
+            FormulaTextSpan { start: 5, len: 0 },
+            None,
+            None,
+            metrics,
+        );
+        assert_eq!(Some(focused), snapshot.caret_box);
+    }
+
+    /// Caret on a `\n` boundary produces a pixel position at the
+    /// trailing edge of the previous line — vital for popups that
+    /// anchor at the caret on multi-line formulas.
+    #[test]
+    fn caret_box_for_offset_anchors_at_end_of_line_when_caret_is_on_newline() {
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        // "=SUM(\n  1)" — offset 5 is the `\n` at end of line 0
+        let caret = caret_box_for_offset("=SUM(\n  1)", 5, metrics);
+        assert_eq!(caret.line_index, 0);
+        assert_eq!(caret.column_index, 5);
+        assert_eq!(caret.top_px, 0);
+        assert_eq!(caret.left_px, 5 * 9);
+    }
+
+    /// Scroll-adjusted caret: a caret on line 4 with the textarea
+    /// scrolled to line 2 reports top_px = 2 * line_height (caret is
+    /// two lines below the top of the visible viewport).
+    #[test]
+    fn caret_box_for_offset_subtracts_scroll_offset() {
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 44, // 2 lines scrolled
+            scroll_left_px: 18, // 2 cols scrolled
+        };
+        // 5 lines of "abc": offset on line 4 col 0 = char index 16
+        let text = "abc\nabc\nabc\nabc\nabc";
+        let caret = caret_box_for_offset(text, 16, metrics);
+        // raw position would be (4 * 22, 0) = (88, 0)
+        // adjusted: (88 - 44, 0 - 18) clamped at 0 = (44, 0)
+        assert_eq!(caret.top_px, 44, "should be 2 lines below viewport top");
+        assert_eq!(caret.left_px, 0, "scroll_left underflow clamps to 0");
+    }
+
+    /// Past-end offset still produces a valid pixel position — the
+    /// popup must not throw or render off-screen on an out-of-range
+    /// offset (defensive against caller errors).
+    #[test]
+    fn caret_box_for_offset_clamps_past_end_offsets() {
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let caret = caret_box_for_offset("abc", 100, metrics);
+        assert_eq!(caret.line_index, 0);
+        assert_eq!(caret.column_index, 3);
+        assert_eq!(caret.left_px, 27);
+    }
+
+    /// Zero-valued metrics get clamped to a 1px floor — protects
+    /// against early-mount races where the browser hasn't laid out
+    /// the textarea yet and reports 0 for char_width / line_height.
+    #[test]
+    fn caret_box_for_offset_clamps_zero_metrics_to_one_pixel_floor() {
+        let metrics = TextareaMeasurementMetrics {
+            char_width_px: 0,
+            line_height_px: 0,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        };
+        let caret = caret_box_for_offset("abc", 2, metrics);
+        // char_width/line_height clamped to 1
+        assert_eq!(caret.left_px, 2);
+        assert_eq!(caret.height_px, 1);
+        assert_eq!(caret.width_px, 1);
+    }
 
     #[test]
     fn offset_to_line_column_tracks_multiline_positions() {
