@@ -857,7 +857,10 @@ fn project_syntax_runs(formula_space: &FormulaSpaceState) -> Vec<SyntaxRun> {
     if document.source_text != formula_space.raw_entered_cell_text {
         return Vec::new();
     }
-    syntax_runs_from_snapshot(&document.editor_syntax_snapshot)
+    syntax_runs_from_snapshot(
+        &document.editor_syntax_snapshot,
+        &document.source_text,
+    )
 }
 
 /// Build the diagnostic squiggle list. Pulls `LiveDiagnostic`s out of the

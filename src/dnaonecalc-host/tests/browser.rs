@@ -33,3 +33,6 @@ mod formula_drill;
 
 #[path = "browser/drill_motion_a11y.rs"]
 mod drill_motion_a11y;
+
+#[path = "browser/repro_enter_eq_aaa.rs"]
+mod repro_enter_eq_aaa;
