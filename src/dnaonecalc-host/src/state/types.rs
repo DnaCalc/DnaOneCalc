@@ -367,6 +367,11 @@ pub struct GlobalUiChromeState {
     pub editor_settings: EditorSettings,
     pub editor_settings_popover_open: bool,
     pub configure_drawer_open: bool,
+    /// Titlebar scenario-breadcrumb dropdown lifecycle. `false` is
+    /// closed; toggled by clicking the breadcrumb button. Outside
+    /// clicks and Esc force `false` via the dedicated reducer
+    /// helper. Default closed.
+    pub scenario_breadcrumb_open: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

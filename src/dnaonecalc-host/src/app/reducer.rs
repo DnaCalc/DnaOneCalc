@@ -168,6 +168,25 @@ pub fn toggle_configure_drawer(state: &mut OneCalcHostState) -> bool {
     true
 }
 
+/// Toggle the titlebar scenario-breadcrumb dropdown. Returns `true`
+/// to signal the reducer caller that state changed.
+pub fn toggle_scenario_breadcrumb(state: &mut OneCalcHostState) -> bool {
+    state.global_ui_chrome.scenario_breadcrumb_open =
+        !state.global_ui_chrome.scenario_breadcrumb_open;
+    true
+}
+
+/// Force the scenario-breadcrumb dropdown closed (outside-click,
+/// Esc). No-op when already closed; returns `false` in that case so
+/// the host avoids a redundant re-render.
+pub fn close_scenario_breadcrumb(state: &mut OneCalcHostState) -> bool {
+    if !state.global_ui_chrome.scenario_breadcrumb_open {
+        return false;
+    }
+    state.global_ui_chrome.scenario_breadcrumb_open = false;
+    true
+}
+
 pub fn apply_editor_overlay_measurement_to_active_formula_space(
     state: &mut OneCalcHostState,
     measurement_event: EditorOverlayMeasurementEvent,

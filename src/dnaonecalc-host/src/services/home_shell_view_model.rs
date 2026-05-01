@@ -98,6 +98,103 @@ pub struct HomeShellViewModel {
     pub view_mode: ViewMode,
     pub result_view: ResultView,
     pub status: StatusView,
+    /// Titlebar scenario breadcrumb + dropdown projection. The
+    /// breadcrumb is always rendered when there is an active
+    /// formula space; the dropdown's `is_open` flag drives
+    /// visibility of the menu body.
+    pub scenario_breadcrumb: ScenarioBreadcrumbView,
+}
+
+/// View-model shape for the titlebar scenario breadcrumb + its
+/// dropdown menu. Built from the active formula space (for the
+/// label + dirty marker) and from `WorkspaceShellState` for the
+/// Recent / Pinned lists. Actions are a fixed shape — handlers
+/// are wired in the renderer.
+///
+/// Phase A: the dropdown surfaces the data already living in
+/// state. File I/O for `.dnascenario` is out of scope here and
+/// will land behind `SEAM-ONECALC-SCENARIO-PERSIST`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioBreadcrumbView {
+    /// Human-readable breadcrumb label. `"unsaved"` when the
+    /// scenario has not been named (the default `scenario_label`
+    /// equals the synthetic `formula_space_id.as_str()`); the
+    /// stored label otherwise. Renderer puts this inside the
+    /// breadcrumb button next to the dropdown caret.
+    pub active_label: String,
+    /// True when the live editor text has uncommitted changes
+    /// (live state is `EditingLive`). Renderer surfaces this
+    /// with a small dot before the label per the WS-14 mockup
+    /// (`data-dirty="true"` selector).
+    pub is_dirty: bool,
+    /// Lifecycle for the dropdown menu. Mirrors
+    /// `global_ui_chrome.scenario_breadcrumb_open`.
+    pub is_open: bool,
+    /// Top-N most recently active formula spaces. Includes the
+    /// active formula (first entry) followed by the workspace
+    /// shell's `recent_formula_space_order`, deduplicated. Empty
+    /// when there is no active space and no recents.
+    pub recent: Vec<ScenarioBreadcrumbEntry>,
+    /// Pinned formula spaces, in stable id order from the
+    /// underlying `BTreeSet`. Empty when no pins exist.
+    pub pinned: Vec<ScenarioBreadcrumbEntry>,
+    /// Fixed action list rendered under the dropdown's
+    /// `Actions` heading. Each action has a stable identifier
+    /// the renderer dispatches on.
+    pub actions: Vec<ScenarioBreadcrumbAction>,
+}
+
+/// One row in the Recent or Pinned section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioBreadcrumbEntry {
+    pub formula_space_id: String,
+    pub display_name: String,
+    /// One-line meta string rendered to the right of the name.
+    /// Today: `"active"` for the active row, `"pinned"` for
+    /// pinned rows, otherwise the recent entry's last-active
+    /// mode label. Future bead: timestamp once persistence
+    /// lands.
+    pub meta: String,
+    pub is_active: bool,
+    pub is_pinned: bool,
+}
+
+/// Stable identifiers for the dropdown's Actions section. The
+/// renderer maps each to a click handler; today most are no-ops
+/// gated behind `SEAM-ONECALC-SCENARIO-PERSIST`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScenarioBreadcrumbActionId {
+    NewScenario,
+    SaveAs,
+    Open,
+    Duplicate,
+    ManageScenarios,
+}
+
+impl ScenarioBreadcrumbActionId {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::NewScenario => "new-scenario",
+            Self::SaveAs => "save-as",
+            Self::Open => "open",
+            Self::Duplicate => "duplicate",
+            Self::ManageScenarios => "manage-scenarios",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioBreadcrumbAction {
+    pub action_id: ScenarioBreadcrumbActionId,
+    pub label: &'static str,
+    /// Keyboard chord rendered to the right of the action label
+    /// in the dropdown. Empty string when no chord is bound today.
+    pub chord_label: &'static str,
+    /// Optional SEAM identifier surfaced in the renderer's
+    /// `aria-describedby` so unimplemented actions are honest
+    /// about the missing backend. `None` for actions that work
+    /// fully today (just opening the dropdown / etc.).
+    pub seam_id: Option<&'static str>,
 }
 
 /// View-model shape for the formula walk-tree drill-down. Always
@@ -505,6 +602,14 @@ pub struct StatusView {
     pub bridge_health: BridgeHealth,
     pub truth_source: ProjectionTruthSource,
     pub green_tree_key: Option<String>,
+    /// Scenario label rendered in the status-foot's centre band
+    /// (`scenario · <label>`). Same fallback rule as the
+    /// breadcrumb: synthetic-default labels render as `"unsaved"`
+    /// rather than leaking the synthetic id. Always populated when
+    /// there is an active formula space; the renderer always shows
+    /// the chip so the user always knows which scenario they are
+    /// editing.
+    pub scenario_label: String,
 }
 
 /// Coarse bridge health for the status-foot dot. `Live` is sage; `Stale`
@@ -520,13 +625,14 @@ pub enum BridgeHealth {
 pub fn build_home_shell_view_model(state: &OneCalcHostState) -> Option<HomeShellViewModel> {
     let active_id = state.workspace_shell.active_formula_space_id.as_ref()?;
     let formula_space = state.formula_spaces.get(active_id)?;
-    Some(project_formula_space(formula_space, state.view_mode))
+    Some(project_formula_space(formula_space, state))
 }
 
 fn project_formula_space(
     formula_space: &FormulaSpaceState,
-    view_mode: ViewMode,
+    state: &OneCalcHostState,
 ) -> HomeShellViewModel {
+    let view_mode = state.view_mode;
     let result_view = project_result_view(formula_space);
     let entry_mode_pill = EntryModePill::from_entry_mode(EditorEntryMode::classify(
         &formula_space.raw_entered_cell_text,
@@ -540,6 +646,7 @@ fn project_formula_space(
     let signature_help = project_signature_help(formula_space, completion_popup.is_some());
     let function_help_card = project_function_help_card(formula_space);
     let formula_drill = project_formula_drill(formula_space);
+    let scenario_breadcrumb = project_scenario_breadcrumb(formula_space, state);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -556,6 +663,7 @@ fn project_formula_space(
         view_mode,
         result_view,
         status: project_status_view(formula_space),
+        scenario_breadcrumb,
     }
 }
 
@@ -1072,6 +1180,153 @@ fn format_literal_number(value: f64) -> String {
     }
 }
 
+/// Project the active scenario's titlebar breadcrumb + dropdown.
+///
+/// The label falls back to `"unsaved"` when the scenario carries
+/// the synthetic default label (the `formula_space_id.as_str()`
+/// auto-set by `FormulaSpaceState::new`); a user-named scenario
+/// shows its name verbatim. The dirty marker tracks live edits
+/// against the last commit point. Recent always lists the active
+/// scenario first; the workspace's `recent_formula_space_order`
+/// follows, deduplicated against the active id. Pinned reads
+/// from the workspace's stable id-ordered set.
+///
+/// Actions are a fixed list. Most carry a `SEAM-ONECALC-SCENARIO-PERSIST`
+/// id today — the dropdown surfaces them as honest stubs until
+/// file I/O lands. `NewScenario` is wired to a real reducer
+/// helper so the slice is not entirely no-op.
+fn project_scenario_breadcrumb(
+    formula_space: &FormulaSpaceState,
+    state: &OneCalcHostState,
+) -> ScenarioBreadcrumbView {
+    let synthetic_default_label =
+        formula_space.context.scenario_label == formula_space.formula_space_id.as_str();
+    let active_label = if synthetic_default_label {
+        "unsaved".to_string()
+    } else {
+        formula_space.context.scenario_label.clone()
+    };
+    let is_dirty = matches!(
+        formula_space.live_state(),
+        crate::ui::editor::state::EditorLiveState::EditingLive
+            | crate::ui::editor::state::EditorLiveState::ProofedScratch
+    );
+    let active_entry = ScenarioBreadcrumbEntry {
+        formula_space_id: formula_space.formula_space_id.as_str().to_string(),
+        display_name: active_label.clone(),
+        meta: "active".to_string(),
+        is_active: true,
+        is_pinned: state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .contains(&formula_space.formula_space_id),
+    };
+    let active_id = formula_space.formula_space_id.clone();
+    let mut recent = vec![active_entry];
+    for recent_id in &state.workspace_shell.recent_formula_space_order {
+        if recent_id == &active_id {
+            continue;
+        }
+        let display_name = state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(recent_id)
+            .map(|record| record.formula_space.context.scenario_label.clone())
+            .unwrap_or_else(|| recent_id.as_str().to_string());
+        let synthetic_default = display_name == recent_id.as_str();
+        recent.push(ScenarioBreadcrumbEntry {
+            formula_space_id: recent_id.as_str().to_string(),
+            display_name: if synthetic_default {
+                "unsaved".to_string()
+            } else {
+                display_name
+            },
+            meta: "recent".to_string(),
+            is_active: false,
+            is_pinned: state
+                .workspace_shell
+                .pinned_formula_space_ids
+                .contains(recent_id),
+        });
+        if recent.len() >= 5 {
+            break;
+        }
+    }
+    let pinned: Vec<ScenarioBreadcrumbEntry> = state
+        .workspace_shell
+        .pinned_formula_space_ids
+        .iter()
+        .map(|pinned_id| {
+            let display_name = state
+                .formula_spaces
+                .get(pinned_id)
+                .map(|space| space.context.scenario_label.clone())
+                .or_else(|| {
+                    state
+                        .workspace_shell
+                        .recent_formula_spaces
+                        .get(pinned_id)
+                        .map(|record| record.formula_space.context.scenario_label.clone())
+                })
+                .unwrap_or_else(|| pinned_id.as_str().to_string());
+            let synthetic_default = display_name == pinned_id.as_str();
+            ScenarioBreadcrumbEntry {
+                formula_space_id: pinned_id.as_str().to_string(),
+                display_name: if synthetic_default {
+                    "unsaved".to_string()
+                } else {
+                    display_name
+                },
+                meta: "pinned".to_string(),
+                is_active: pinned_id == &active_id,
+                is_pinned: true,
+            }
+        })
+        .collect();
+
+    let actions = vec![
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::NewScenario,
+            label: "New scenario",
+            chord_label: "Ctrl+N",
+            seam_id: None,
+        },
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::SaveAs,
+            label: "Save as…",
+            chord_label: "Ctrl+Shift+S",
+            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+        },
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::Open,
+            label: "Open…",
+            chord_label: "Ctrl+O",
+            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+        },
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::Duplicate,
+            label: "Duplicate",
+            chord_label: "",
+            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+        },
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::ManageScenarios,
+            label: "Manage scenarios…",
+            chord_label: "",
+            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+        },
+    ];
+
+    ScenarioBreadcrumbView {
+        active_label,
+        is_dirty,
+        is_open: state.global_ui_chrome.scenario_breadcrumb_open,
+        recent,
+        pinned,
+        actions,
+    }
+}
+
 fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {
     let truth_source = formula_space.context.truth_source.clone();
     let green_tree_key = formula_space
@@ -1085,10 +1340,19 @@ fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {
         _ => BridgeHealth::Stale,
     };
 
+    let synthetic_default_label =
+        formula_space.context.scenario_label == formula_space.formula_space_id.as_str();
+    let scenario_label = if synthetic_default_label {
+        "unsaved".to_string()
+    } else {
+        formula_space.context.scenario_label.clone()
+    };
+
     StatusView {
         bridge_health,
         truth_source,
         green_tree_key,
+        scenario_label,
     }
 }
 
@@ -1101,7 +1365,9 @@ mod tests {
     use super::*;
     use crate::adapters::oxfml::{FormulaValuePresentation, ProvenanceSummary};
     use crate::domain::ids::FormulaSpaceId;
-    use crate::state::{FormulaArrayPreviewState, FormulaSpaceState};
+    use crate::state::{
+        AppMode, ClosedFormulaSpaceRecord, FormulaArrayPreviewState, FormulaSpaceState,
+    };
     use crate::test_support::{
         array_editor_document, blocked_editor_document, diagnostic_editor_document,
         sample_editor_document,
@@ -2181,5 +2447,186 @@ mod tests {
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert_eq!(vm.status.bridge_health, BridgeHealth::Stale);
         assert!(vm.status.green_tree_key.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Scenario breadcrumb projection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn breadcrumb_label_falls_back_to_unsaved_for_synthetic_scenario_label() {
+        // FormulaSpaceState::new auto-sets scenario_label = formula_space_id;
+        // the breadcrumb projects that to "unsaved" rather than leaking the
+        // synthetic id into the titlebar.
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        assert_eq!(vm.scenario_breadcrumb.active_label, "unsaved");
+    }
+
+    #[test]
+    fn breadcrumb_label_uses_user_assigned_scenario_label() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        formula_space.context.scenario_label = "invoice-eu-tax".to_string();
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        assert_eq!(vm.scenario_breadcrumb.active_label, "invoice-eu-tax");
+    }
+
+    #[test]
+    fn breadcrumb_dirty_when_live_text_differs_from_committed() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=1");
+        formula_space.committed_cell_text = Some("=2".to_string());
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        assert!(vm.scenario_breadcrumb.is_dirty);
+    }
+
+    #[test]
+    fn breadcrumb_clean_when_live_text_matches_committed() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=1");
+        formula_space.committed_cell_text = Some("=1".to_string());
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        assert!(!vm.scenario_breadcrumb.is_dirty);
+    }
+
+    #[test]
+    fn breadcrumb_dropdown_open_mirrors_global_chrome_state() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let mut state = host_state_with(formula_space);
+        assert!(!build_home_shell_view_model(&state).unwrap().scenario_breadcrumb.is_open);
+        state.global_ui_chrome.scenario_breadcrumb_open = true;
+        assert!(build_home_shell_view_model(&state).unwrap().scenario_breadcrumb.is_open);
+    }
+
+    #[test]
+    fn breadcrumb_recent_starts_with_active_scenario_marked_active() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-active"), "");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        let recent = &vm.scenario_breadcrumb.recent;
+        assert!(!recent.is_empty(), "recent must include the active scenario");
+        assert!(recent[0].is_active);
+        assert_eq!(recent[0].formula_space_id, "space-active");
+        assert_eq!(recent[0].meta, "active");
+    }
+
+    #[test]
+    fn breadcrumb_recent_caps_at_five_entries() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-active"), "");
+        let mut state = host_state_with(formula_space);
+        // Seed 6 closed records; only the first 4 (plus the active one)
+        // should make it into the breadcrumb's Recent list.
+        for i in 0..6 {
+            let id = FormulaSpaceId::new(format!("recent-{i}"));
+            state
+                .workspace_shell
+                .recent_formula_space_order
+                .push(id.clone());
+            state.workspace_shell.recent_formula_spaces.insert(
+                id.clone(),
+                ClosedFormulaSpaceRecord {
+                    formula_space: FormulaSpaceState::new(id, ""),
+                    last_active_mode: AppMode::Explore,
+                },
+            );
+        }
+        let vm = build_home_shell_view_model(&state).expect("active");
+        assert_eq!(vm.scenario_breadcrumb.recent.len(), 5);
+        // First entry is the active one; remaining four are recent-0..recent-3.
+        assert!(vm.scenario_breadcrumb.recent[0].is_active);
+        for entry in &vm.scenario_breadcrumb.recent[1..] {
+            assert!(!entry.is_active);
+            assert_eq!(entry.meta, "recent");
+        }
+    }
+
+    #[test]
+    fn breadcrumb_recent_dedupes_active_scenario_from_recent_list() {
+        // If the workspace has the active id ALSO listed in
+        // recent_formula_space_order (e.g. it was previously closed
+        // and re-opened), the active entry must appear once, not
+        // twice.
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-active"), "");
+        let mut state = host_state_with(formula_space);
+        state
+            .workspace_shell
+            .recent_formula_space_order
+            .push(FormulaSpaceId::new("space-active"));
+        let vm = build_home_shell_view_model(&state).expect("active");
+        let active_count = vm
+            .scenario_breadcrumb
+            .recent
+            .iter()
+            .filter(|entry| entry.formula_space_id == "space-active")
+            .count();
+        assert_eq!(active_count, 1, "active scenario must appear only once");
+    }
+
+    #[test]
+    fn breadcrumb_pinned_lists_pinned_ids_and_marks_active_when_active_is_pinned() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-active"), "");
+        let mut state = host_state_with(formula_space);
+        state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .insert(FormulaSpaceId::new("space-active"));
+        state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .insert(FormulaSpaceId::new("space-other-pin"));
+        let vm = build_home_shell_view_model(&state).expect("active");
+        let pinned = &vm.scenario_breadcrumb.pinned;
+        assert_eq!(pinned.len(), 2);
+        let active_pin = pinned
+            .iter()
+            .find(|entry| entry.formula_space_id == "space-active")
+            .expect("active pin row");
+        assert!(active_pin.is_active);
+        assert!(active_pin.is_pinned);
+        let other_pin = pinned
+            .iter()
+            .find(|entry| entry.formula_space_id == "space-other-pin")
+            .expect("other pin row");
+        assert!(!other_pin.is_active);
+        assert!(other_pin.is_pinned);
+    }
+
+    #[test]
+    fn breadcrumb_actions_carry_stable_ids_and_seam_markers() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active");
+        let action_ids: Vec<_> = vm
+            .scenario_breadcrumb
+            .actions
+            .iter()
+            .map(|action| action.action_id)
+            .collect();
+        assert_eq!(
+            action_ids,
+            vec![
+                ScenarioBreadcrumbActionId::NewScenario,
+                ScenarioBreadcrumbActionId::SaveAs,
+                ScenarioBreadcrumbActionId::Open,
+                ScenarioBreadcrumbActionId::Duplicate,
+                ScenarioBreadcrumbActionId::ManageScenarios,
+            ],
+        );
+        // NewScenario is wired today (no seam).
+        let new_scenario = vm
+            .scenario_breadcrumb
+            .actions
+            .iter()
+            .find(|action| action.action_id == ScenarioBreadcrumbActionId::NewScenario)
+            .expect("new scenario action");
+        assert_eq!(new_scenario.seam_id, None);
+        // The persistence-bound actions are honest about their seam.
+        for action in &vm.scenario_breadcrumb.actions {
+            if action.action_id != ScenarioBreadcrumbActionId::NewScenario {
+                assert_eq!(action.seam_id, Some("SEAM-ONECALC-SCENARIO-PERSIST"));
+            }
+        }
     }
 }

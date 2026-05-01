@@ -54,3 +54,6 @@ mod walk_tree_modes;
 
 #[path = "browser/walk_tree_intermediate_values.rs"]
 mod walk_tree_intermediate_values;
+
+#[path = "browser/scenario_breadcrumb.rs"]
+mod scenario_breadcrumb;

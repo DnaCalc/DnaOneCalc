@@ -30,8 +30,8 @@ use crate::app::reducer::{
     accept_completion_by_proposal_id_on_active_formula_space,
     accept_selected_completion_with_suppression_on_active_formula_space,
     apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
-    dismiss_completion_popup_on_active_formula_space,
-    move_completion_popup_selection_on_active_formula_space,
+    close_scenario_breadcrumb, dismiss_completion_popup_on_active_formula_space,
+    move_completion_popup_selection_on_active_formula_space, toggle_scenario_breadcrumb,
     toggle_formula_drill_on_active_formula_space, toggle_view_mode_on_workspace,
 };
 use crate::services::completion_popup::CompletionAcceptance;
@@ -39,7 +39,9 @@ use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
     ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormulaDrillNode,
     FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView, FunctionHelpCardView,
-    ResultClassPill, ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
+    ResultClassPill, ResultContextChip, ResultKind, ResultView, ScenarioBreadcrumbAction,
+    ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry, ScenarioBreadcrumbView,
+    SignatureHelpView, StatusView,
 };
 use crate::state::ViewMode;
 use crate::services::live_edit::apply_live_editor_input;
@@ -303,6 +305,7 @@ pub fn HomeShell(
     let formula_drill = move || view_model.get().map(|vm| vm.formula_drill);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
+    let scenario_breadcrumb = move || view_model.get().map(|vm| vm.scenario_breadcrumb);
     let view_mode = move || {
         view_model
             .get()
@@ -326,6 +329,33 @@ pub fn HomeShell(
     let on_view_mode_toggle = Callback::new(move |()| {
         state.update(|state| {
             let _ = toggle_view_mode_on_workspace(state);
+        });
+    });
+
+    // Scenario breadcrumb dropdown lifecycle. The toggle is wired
+    // to the breadcrumb button click. The close callback fires
+    // from outside-click delegation in the shell and from `Esc`
+    // in the global keydown handler.
+    let on_scenario_breadcrumb_toggle = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = toggle_scenario_breadcrumb(state);
+        });
+    });
+    let on_scenario_breadcrumb_close = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = close_scenario_breadcrumb(state);
+        });
+    });
+    // Stub action handler. Phase A: surfaces a console hint and
+    // closes the dropdown so the user gets feedback. Persistence
+    // wiring lives in the follow-up slice behind
+    // `SEAM-ONECALC-SCENARIO-PERSIST`.
+    let on_scenario_action = Callback::new(move |action_id: ScenarioBreadcrumbActionId| {
+        web_sys::console::log_1(
+            &format!("[onecalc] scenario action invoked: {}", action_id.slug()).into(),
+        );
+        state.update(|state| {
+            let _ = close_scenario_breadcrumb(state);
         });
     });
 
@@ -445,9 +475,38 @@ pub fn HomeShell(
         <div
             class="onecalc-home-shell"
             data-view-mode=move || view_mode().slug()
+            on:keydown=move |ev: WebKeyboardEvent| {
+                if ev.key() == "Escape"
+                    && state.with_untracked(|s| s.global_ui_chrome.scenario_breadcrumb_open)
+                {
+                    on_scenario_breadcrumb_close.run(());
+                }
+            }
+            on:click=move |ev: WebMouseEvent| {
+                if !state.with_untracked(|s| s.global_ui_chrome.scenario_breadcrumb_open) {
+                    return;
+                }
+                let inside_breadcrumb = ev
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|el| el.closest(".onecalc-home-shell__breadcrumb-wrap").ok().flatten())
+                    .is_some();
+                if !inside_breadcrumb {
+                    on_scenario_breadcrumb_close.run(());
+                }
+            }
         >
             <header class="onecalc-home-shell__titlebar">
                 <span class="onecalc-home-shell__brand">"DnaOneCalc"</span>
+                {move || render_scenario_breadcrumb(
+                    scenario_breadcrumb(),
+                    on_scenario_breadcrumb_toggle,
+                    on_scenario_breadcrumb_close,
+                    on_scenario_action,
+                )}
+                <span class="onecalc-home-shell__titlebar-hint" aria-hidden="true">
+                    "Ctrl+P · command palette"
+                </span>
             </header>
 
             <main class="onecalc-home-shell__body">
@@ -609,6 +668,184 @@ pub fn HomeShell(
 /// Uses `on:mousedown` (not `on:click`) so a click does not pull
 /// focus away from the textarea: the textarea retains its caret
 /// throughout the toggle.
+/// Render the titlebar scenario-breadcrumb button + dropdown.
+///
+/// The button is always rendered when there is an active formula
+/// space (the view-model returns `None` when none is active and
+/// this helper short-circuits to an empty span). The dropdown
+/// menu is keyboard-focusable; Esc inside it closes via the
+/// `on_close` callback. Outside-click is handled by the document
+/// listener wired in the parent component.
+fn render_scenario_breadcrumb(
+    breadcrumb: Option<ScenarioBreadcrumbView>,
+    on_toggle: Callback<()>,
+    on_close: Callback<()>,
+    on_action: Callback<ScenarioBreadcrumbActionId>,
+) -> AnyView {
+    let Some(breadcrumb) = breadcrumb else {
+        return view! { <span class="onecalc-home-shell__breadcrumb-wrap" /> }.into_any();
+    };
+    let dirty_attr = if breadcrumb.is_dirty { "true" } else { "false" };
+    let open_attr = if breadcrumb.is_open { "true" } else { "false" };
+    let aria_expanded = if breadcrumb.is_open { "true" } else { "false" };
+    let aria_hidden = if breadcrumb.is_open { "false" } else { "true" };
+    let label = breadcrumb.active_label.clone();
+    let label_for_button = label.clone();
+    let recent = breadcrumb.recent.clone();
+    let pinned = breadcrumb.pinned.clone();
+    let actions = breadcrumb.actions.clone();
+    view! {
+        <span
+            class="onecalc-home-shell__breadcrumb-wrap"
+            data-open=open_attr
+        >
+            <button
+                type="button"
+                class="onecalc-home-shell__breadcrumb-button"
+                data-dirty=dirty_attr
+                aria-haspopup="menu"
+                aria-expanded=aria_expanded
+                aria-label=format!("scenario: {}", label_for_button)
+                on:click=move |_| {
+                    on_toggle.run(());
+                }
+                on:keydown=move |ev| {
+                    if ev.key() == "Escape" {
+                        ev.prevent_default();
+                        on_close.run(());
+                    }
+                }
+            >
+                <span class="onecalc-home-shell__breadcrumb-dot" aria-hidden="true"></span>
+                <span class="onecalc-home-shell__breadcrumb-label">{label}</span>
+                <span class="onecalc-home-shell__breadcrumb-caret" aria-hidden="true">"▾"</span>
+            </button>
+            <div
+                class="onecalc-home-shell__scenario-menu"
+                role="menu"
+                aria-hidden=aria_hidden
+                data-open=open_attr
+                on:keydown=move |ev| {
+                    if ev.key() == "Escape" {
+                        ev.prevent_default();
+                        on_close.run(());
+                    }
+                }
+            >
+                <div class="onecalc-home-shell__scenario-menu-section" data-section="recent">
+                    <div class="onecalc-home-shell__scenario-menu-heading">"Recent"</div>
+                    {render_scenario_menu_entries(recent, "recent")}
+                </div>
+                <div class="onecalc-home-shell__scenario-menu-section" data-section="pinned">
+                    <div class="onecalc-home-shell__scenario-menu-heading">"Pinned"</div>
+                    {render_scenario_menu_entries(pinned, "pinned")}
+                </div>
+                <div class="onecalc-home-shell__scenario-menu-section" data-section="actions">
+                    <div class="onecalc-home-shell__scenario-menu-heading">"Actions"</div>
+                    {render_scenario_menu_actions(actions, on_action)}
+                </div>
+            </div>
+        </span>
+    }
+    .into_any()
+}
+
+fn render_scenario_menu_entries(
+    entries: Vec<ScenarioBreadcrumbEntry>,
+    section: &'static str,
+) -> AnyView {
+    if entries.is_empty() {
+        return view! {
+            <div
+                class="onecalc-home-shell__scenario-menu-empty"
+                data-section=section
+            >
+                {match section {
+                    "pinned" => "No pinned scenarios",
+                    "recent" => "No recent scenarios",
+                    _ => "(empty)",
+                }}
+            </div>
+        }
+        .into_any();
+    }
+    let buttons: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            let is_active_attr = if entry.is_active { "true" } else { "false" };
+            let is_pinned_attr = if entry.is_pinned { "true" } else { "false" };
+            let formula_space_id = entry.formula_space_id.clone();
+            let display_name = entry.display_name.clone();
+            let meta = entry.meta.clone();
+            view! {
+                <button
+                    type="button"
+                    class="onecalc-home-shell__scenario-menu-item"
+                    role="menuitem"
+                    data-formula-space-id=formula_space_id
+                    data-is-active=is_active_attr
+                    data-is-pinned=is_pinned_attr
+                    data-section=section
+                >
+                    <span class="onecalc-home-shell__scenario-menu-item-name">
+                        {display_name}
+                    </span>
+                    <span class="onecalc-home-shell__scenario-menu-item-meta">
+                        {meta}
+                    </span>
+                </button>
+            }
+            .into_any()
+        })
+        .collect();
+    view! { <>{buttons}</> }.into_any()
+}
+
+fn render_scenario_menu_actions(
+    actions: Vec<ScenarioBreadcrumbAction>,
+    on_action: Callback<ScenarioBreadcrumbActionId>,
+) -> AnyView {
+    let buttons: Vec<_> = actions
+        .into_iter()
+        .map(|action| {
+            let action_id = action.action_id;
+            let chord = action.chord_label;
+            let label = action.label;
+            let seam = action.seam_id;
+            let title = seam
+                .map(|s| format!("Pending: {s}"))
+                .unwrap_or_default();
+            view! {
+                <button
+                    type="button"
+                    class="onecalc-home-shell__scenario-menu-item"
+                    role="menuitem"
+                    data-action-id=action_id.slug()
+                    data-section="actions"
+                    data-seam-id=seam.unwrap_or("")
+                    title=title
+                    on:click=move |_| {
+                        on_action.run(action_id);
+                    }
+                >
+                    <span class="onecalc-home-shell__scenario-menu-item-name">
+                        {label}
+                    </span>
+                    <span class="onecalc-home-shell__scenario-menu-item-meta">
+                        {if chord.is_empty() {
+                            seam.map(|s| s.to_string()).unwrap_or_default()
+                        } else {
+                            chord.to_string()
+                        }}
+                    </span>
+                </button>
+            }
+            .into_any()
+        })
+        .collect();
+    view! { <>{buttons}</> }.into_any()
+}
+
 fn render_view_mode_button(mode: ViewMode, on_toggle: Callback<()>) -> AnyView {
     let pressed_attr = match mode {
         ViewMode::User => "false",
@@ -657,11 +894,23 @@ fn render_status_foot(status: Option<StatusView>) -> AnyView {
         .as_deref()
         .map(short_green_tree_key)
         .unwrap_or_else(|| "—".to_string());
+    let scenario_label = status.scenario_label.clone();
+    let scenario_label_attr = scenario_label.clone();
     view! {
         <span class="onecalc-home-shell__statusfoot-dot" data-health=dot_health></span>
         <span>"live-bridge"</span>
         <span class="onecalc-home-shell__statusfoot-sep">"·"</span>
         <span>{format!("green-tree {green_key}")}</span>
+        <span class="onecalc-home-shell__statusfoot-sep">"·"</span>
+        <span class="onecalc-home-shell__statusfoot-scenario">
+            "scenario · "
+            <span
+                class="onecalc-home-shell__statusfoot-scenario-name"
+                data-scenario-label=scenario_label_attr
+            >
+                {scenario_label}
+            </span>
+        </span>
     }
     .into_any()
 }

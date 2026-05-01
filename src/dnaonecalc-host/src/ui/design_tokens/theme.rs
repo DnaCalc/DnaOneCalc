@@ -2892,6 +2892,7 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-home-shell__titlebar {
   display: flex;
   align-items: center;
+  gap: var(--oc-space-3);
   height: 36px;
   padding: 0 var(--oc-space-5);
   background: var(--oc-color-night);
@@ -2902,6 +2903,148 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-home-shell__brand {
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__titlebar-hint {
+  margin-left: auto;
+  color: rgba(230, 239, 239, 0.6);
+  font-family: var(--oc-font-mono);
+  font-size: 12px;
+}
+
+/* ----- breadcrumb wrap + button ----------------------------------------- */
+.onecalc-home-shell__breadcrumb-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.onecalc-home-shell__breadcrumb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  color: #e6efef;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.onecalc-home-shell__breadcrumb-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.onecalc-home-shell__breadcrumb-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent-soft);
+  outline-offset: 1px;
+}
+
+.onecalc-home-shell__breadcrumb-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.onecalc-home-shell__breadcrumb-button[data-dirty="true"] .onecalc-home-shell__breadcrumb-dot {
+  background: var(--oc-color-warning);
+}
+
+.onecalc-home-shell__breadcrumb-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ----- scenario menu (dropdown body) ------------------------------------ */
+.onecalc-home-shell__scenario-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 320px;
+  background: var(--oc-color-surface);
+  color: var(--oc-color-ink);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-strong);
+  padding: var(--oc-space-3);
+  display: none;
+  z-index: 40;
+}
+
+.onecalc-home-shell__scenario-menu[data-open="true"] {
+  display: block;
+}
+
+.onecalc-home-shell__scenario-menu-section {
+  padding: var(--oc-space-1) var(--oc-space-2);
+}
+
+.onecalc-home-shell__scenario-menu-section + .onecalc-home-shell__scenario-menu-section {
+  border-top: 1px solid var(--oc-color-border);
+  margin-top: var(--oc-space-2);
+  padding-top: var(--oc-space-2);
+}
+
+.onecalc-home-shell__scenario-menu-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--oc-color-muted);
+  margin-bottom: var(--oc-space-1);
+}
+
+.onecalc-home-shell__scenario-menu-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--oc-space-3);
+  padding: 6px 8px;
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.onecalc-home-shell__scenario-menu-item:hover {
+  background: var(--oc-color-accent-soft);
+}
+
+.onecalc-home-shell__scenario-menu-item:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: -2px;
+}
+
+.onecalc-home-shell__scenario-menu-item[data-is-active="true"] {
+  background: rgba(79, 123, 87, 0.12);
+}
+
+.onecalc-home-shell__scenario-menu-item[data-is-pinned="true"]::after {
+  content: "📌";
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.onecalc-home-shell__scenario-menu-item-name {
+  font-weight: 500;
+}
+
+.onecalc-home-shell__scenario-menu-item-meta {
+  color: var(--oc-color-muted);
+  font-size: 12px;
+}
+
+.onecalc-home-shell__scenario-menu-empty {
+  color: var(--oc-color-muted);
+  font-size: 12px;
+  font-style: italic;
+  padding: 6px 8px;
 }
 
 .onecalc-home-shell__body {
@@ -3731,6 +3874,16 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-home-shell__statusfoot-sep {
   color: var(--oc-color-border);
+}
+
+.onecalc-home-shell__statusfoot-scenario {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.onecalc-home-shell__statusfoot-scenario-name {
+  color: var(--oc-color-ink);
+  font-weight: 500;
 }
 
 /* Status-foot view-mode toggle button. Always rendered so users
