@@ -248,6 +248,29 @@ pub fn dismiss_completion_popup_on_active_formula_space(state: &mut OneCalcHostS
     popup_dismiss(&mut formula_space.completion_popup)
 }
 
+/// Toggle the workspace's view-mode preference. Returns the new
+/// value (User or Developer). Pure flip; if a caller needs an
+/// explicit set, use [`set_view_mode_on_workspace`].
+pub fn toggle_view_mode_on_workspace(state: &mut OneCalcHostState) -> crate::state::ViewMode {
+    state.view_mode = state.view_mode.toggle();
+    state.view_mode
+}
+
+/// Set the workspace's view-mode preference explicitly. Returns
+/// `true` when the value changed. Used by the workspace settings
+/// page (later bead) and by tests; the keyboard chord uses the
+/// toggle entry above.
+pub fn set_view_mode_on_workspace(
+    state: &mut OneCalcHostState,
+    mode: crate::state::ViewMode,
+) -> bool {
+    if state.view_mode == mode {
+        return false;
+    }
+    state.view_mode = mode;
+    true
+}
+
 /// Toggle the formula-drill-down panel on the active formula space.
 /// Returns the new `formula_drill_open` value, or `false` when there
 /// is no active formula space (caller can treat that as a no-op).
@@ -1140,6 +1163,41 @@ mod tests {
             state.active_formula_space_view.active_mode,
             crate::state::AppMode::Inspect
         );
+    }
+
+    #[test]
+    fn view_mode_default_is_user() {
+        let state = OneCalcHostState::default();
+        assert_eq!(state.view_mode, crate::state::ViewMode::User);
+    }
+
+    #[test]
+    fn toggle_view_mode_flips_and_returns_new_value() {
+        let mut state = OneCalcHostState::default();
+        let after_first = toggle_view_mode_on_workspace(&mut state);
+        assert_eq!(after_first, crate::state::ViewMode::Developer);
+        assert_eq!(state.view_mode, crate::state::ViewMode::Developer);
+        let after_second = toggle_view_mode_on_workspace(&mut state);
+        assert_eq!(after_second, crate::state::ViewMode::User);
+        assert_eq!(state.view_mode, crate::state::ViewMode::User);
+    }
+
+    #[test]
+    fn set_view_mode_returns_true_when_changed_false_when_unchanged() {
+        let mut state = OneCalcHostState::default();
+        assert!(set_view_mode_on_workspace(
+            &mut state,
+            crate::state::ViewMode::Developer
+        ));
+        assert_eq!(state.view_mode, crate::state::ViewMode::Developer);
+        assert!(!set_view_mode_on_workspace(
+            &mut state,
+            crate::state::ViewMode::Developer
+        ));
+        assert!(set_view_mode_on_workspace(
+            &mut state,
+            crate::state::ViewMode::User
+        ));
     }
 
     #[test]

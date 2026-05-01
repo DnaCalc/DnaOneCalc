@@ -18,7 +18,7 @@
 
 use crate::adapters::oxfml::{worksheet_error_literal, EvalValue, LiveDiagnosticSeverity};
 use crate::services::completion_popup::{CompletionPopupKind, CompletionPopupState};
-use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource};
+use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource, ViewMode};
 use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
 use crate::ui::editor::state::{EditorEntryMode, EditorSurfaceState};
@@ -91,6 +91,11 @@ pub struct HomeShellViewModel {
     /// whether the panel is open or closed); the `expanded` flag
     /// drives whether the panel body is visible.
     pub formula_drill: FormulaDrillView,
+    /// Workspace-level reading-audience preference. Components
+    /// branch their rendering based on this — User mode hides
+    /// phase chips, state slugs, and SEAM markers; Developer mode
+    /// surfaces them.
+    pub view_mode: ViewMode,
     pub result_view: ResultView,
     pub status: StatusView,
 }
@@ -510,10 +515,13 @@ pub enum BridgeHealth {
 pub fn build_home_shell_view_model(state: &OneCalcHostState) -> Option<HomeShellViewModel> {
     let active_id = state.workspace_shell.active_formula_space_id.as_ref()?;
     let formula_space = state.formula_spaces.get(active_id)?;
-    Some(project_formula_space(formula_space))
+    Some(project_formula_space(formula_space, state.view_mode))
 }
 
-fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewModel {
+fn project_formula_space(
+    formula_space: &FormulaSpaceState,
+    view_mode: ViewMode,
+) -> HomeShellViewModel {
     let result_view = project_result_view(formula_space);
     let entry_mode_pill = EntryModePill::from_entry_mode(EditorEntryMode::classify(
         &formula_space.raw_entered_cell_text,
@@ -540,6 +548,7 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
         signature_help,
         function_help_card,
         formula_drill,
+        view_mode,
         result_view,
         status: project_status_view(formula_space),
     }
@@ -1977,6 +1986,27 @@ mod tests {
         let card = vm.function_help_card.expect("card projected");
         assert_eq!(card.lookup_key, "SUM");
         assert!(card.signature.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // View mode
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn view_mode_defaults_to_user_in_view_model() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert_eq!(vm.view_mode, ViewMode::User);
+    }
+
+    #[test]
+    fn view_mode_developer_propagates_into_view_model() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let mut state = host_state_with(formula_space);
+        state.view_mode = ViewMode::Developer;
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert_eq!(vm.view_mode, ViewMode::Developer);
     }
 
     // -----------------------------------------------------------------

@@ -3631,6 +3631,23 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-home-shell__statusfoot-sep {
   color: var(--oc-color-border);
 }
+
+.onecalc-home-shell__statusfoot-mode-tag {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 1rem;
+  padding: 0 var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  font-family: var(--oc-font-ui);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border: 1px solid var(--oc-color-card-edge);
+}
 "#;
 
 #[component]

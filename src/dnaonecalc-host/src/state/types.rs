@@ -30,6 +30,13 @@ pub struct OneCalcHostState {
     pub capability_and_environment: CapabilityAndEnvironmentState,
     pub extension_surface: ExtensionSurfaceState,
     pub global_ui_chrome: GlobalUiChromeState,
+    /// Workspace-level reading-audience preference. Default
+    /// [`ViewMode::User`] — Excel-user-friendly chrome with phase
+    /// chips, state slugs, and SEAM markers hidden. Toggled to
+    /// [`ViewMode::Developer`] via Ctrl+Alt+D for the full
+    /// engineering surface. Preference is per-session (not yet
+    /// persisted across reloads — that is a separate seam).
+    pub view_mode: ViewMode,
 }
 
 impl Default for OneCalcHostState {
@@ -42,6 +49,34 @@ impl Default for OneCalcHostState {
             capability_and_environment: CapabilityAndEnvironmentState::default(),
             extension_surface: ExtensionSurfaceState::default(),
             global_ui_chrome: GlobalUiChromeState::default(),
+            view_mode: ViewMode::default(),
+        }
+    }
+}
+
+/// Reading-audience switch for the home shell. Two values today:
+/// `User` for the Excel-user-friendly chrome (phase chips, state
+/// slugs, SEAM markers all hidden), and `Developer` for the full
+/// engineering surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    #[default]
+    User,
+    Developer,
+}
+
+impl ViewMode {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Developer => "developer",
+        }
+    }
+
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::User => Self::Developer,
+            Self::Developer => Self::User,
         }
     }
 }

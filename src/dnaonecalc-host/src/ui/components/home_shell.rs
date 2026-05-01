@@ -32,7 +32,7 @@ use crate::app::reducer::{
     apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
     dismiss_completion_popup_on_active_formula_space,
     move_completion_popup_selection_on_active_formula_space,
-    toggle_formula_drill_on_active_formula_space,
+    toggle_formula_drill_on_active_formula_space, toggle_view_mode_on_workspace,
 };
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
@@ -41,6 +41,7 @@ use crate::services::home_shell_view_model::{
     FormulaDrillPhaseChip, FormulaDrillView, FunctionHelpCardView, ResultClassPill,
     ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
 };
+use crate::state::ViewMode;
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
@@ -157,11 +158,25 @@ pub fn HomeShell(
     // preventDefault's them. Every other key is allowed through to
     // the textarea unchanged.
     let on_textarea_keydown = move |ev: WebKeyboardEvent| {
+        // Ctrl+Alt+D toggles the workspace view-mode (User vs
+        // Developer). Handled FIRST so the chord wins regardless
+        // of popup or drill state. The Alt-modified form is used
+        // (rather than Ctrl+Shift+D) because Chrome / Edge bind
+        // Ctrl+Shift+D to "Bookmark all tabs" and Ctrl+D alone is
+        // already taken by the formula drill-down toggle below.
+        if ev.ctrl_key() && ev.alt_key() && ev.key().eq_ignore_ascii_case("d") {
+            ev.prevent_default();
+            state.update(|state| {
+                let _ = toggle_view_mode_on_workspace(state);
+            });
+            return;
+        }
+
         // Ctrl+D toggles the formula drill-down. Handled BEFORE the
         // popup-open early-return because the chord is global —
         // works whether the popup is open or closed. preventDefault
         // shadows the browser's native bookmark-this-page behaviour.
-        if ev.ctrl_key() && ev.key().eq_ignore_ascii_case("d") {
+        if ev.ctrl_key() && !ev.alt_key() && ev.key().eq_ignore_ascii_case("d") {
             ev.prevent_default();
             state.update(|state| {
                 let _ = toggle_formula_drill_on_active_formula_space(state);
@@ -271,6 +286,12 @@ pub fn HomeShell(
     let formula_drill = move || view_model.get().map(|vm| vm.formula_drill);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
+    let view_mode = move || {
+        view_model
+            .get()
+            .map(|vm| vm.view_mode)
+            .unwrap_or(ViewMode::User)
+    };
 
     // Trigger row callback shared between the editor-foot toggle
     // and the keyboard chord — both routes through the same
@@ -395,7 +416,10 @@ pub fn HomeShell(
 
     view! {
         <ThemeStyleTag />
-        <div class="onecalc-home-shell">
+        <div
+            class="onecalc-home-shell"
+            data-view-mode=move || view_mode().slug()
+        >
             <header class="onecalc-home-shell__titlebar">
                 <span class="onecalc-home-shell__brand">"DnaOneCalc"</span>
             </header>
@@ -541,8 +565,29 @@ pub fn HomeShell(
 
             <footer class="onecalc-home-shell__statusfoot">
                 {move || render_status_foot(status_view())}
+                {move || render_view_mode_tag(view_mode())}
             </footer>
         </div>
+    }
+}
+
+/// Render the view-mode tag in the status-foot. Quiet right-aligned
+/// "dev" badge in Developer mode; nothing in User mode (the
+/// default — most users should not be reminded of a mode they
+/// have not opted into).
+fn render_view_mode_tag(mode: ViewMode) -> AnyView {
+    match mode {
+        ViewMode::User => view! { <span></span> }.into_any(),
+        ViewMode::Developer => view! {
+            <span
+                class="onecalc-home-shell__statusfoot-mode-tag"
+                data-view-mode="developer"
+                aria-label="developer view mode"
+            >
+                "dev"
+            </span>
+        }
+        .into_any(),
     }
 }
 

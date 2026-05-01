@@ -5,5 +5,5 @@ pub use types::{
     ClosedFormulaSpaceRecord, CompletionHelpState, ExtensionSurfaceState, FormulaArrayPreviewState,
     FormulaSpaceCollectionState, FormulaSpaceContextState, FormulaSpaceState, GlobalUiChromeState,
     OneCalcHostState, OpenFormulaSpaceRecord, ProjectionTruthSource, RetainedArtifactOpenState,
-    RetainedArtifactRecord, WorkspaceNavigationSelection, WorkspaceShellState,
+    RetainedArtifactRecord, ViewMode, WorkspaceNavigationSelection, WorkspaceShellState,
 };
