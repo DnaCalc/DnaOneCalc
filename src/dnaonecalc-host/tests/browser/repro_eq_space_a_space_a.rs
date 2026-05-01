@@ -33,7 +33,6 @@ use super::scaffold::{dispatch_input, mount_home_shell};
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: inter-identifier whitespace dropped from token snapshot"]
 async fn typing_eq_space_a_space_a_renders_all_chars_in_overlay() {
     let shell = mount_home_shell();
     let textarea = shell.textarea().await;

@@ -147,19 +147,16 @@ async fn case_eq_then_open_paren_only() {
 // =============================================================
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: inter-identifier whitespace dropped from token snapshot (docs/handoffs/oxfml_inter_identifier_whitespace_gap.md)"]
 async fn case_eq_space_a_space_a() {
     assert_overlay_matches_textarea_for("= a a").await;
 }
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: inter-identifier whitespace dropped from token snapshot (docs/handoffs/oxfml_inter_identifier_whitespace_gap.md)"]
 async fn case_eq_space_a_space_b_space_c() {
     assert_overlay_matches_textarea_for("= a b c").await;
 }
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: inter-identifier whitespace dropped from token snapshot (docs/handoffs/oxfml_inter_identifier_whitespace_gap.md)"]
 async fn case_a1_space_b1_no_eq() {
     // Cell-ref + space + identifier with no leading `=`. Same
     // class — the inter-token whitespace is dropped.
@@ -167,7 +164,6 @@ async fn case_a1_space_b1_no_eq() {
 }
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: inter-identifier whitespace dropped from token snapshot (docs/handoffs/oxfml_inter_identifier_whitespace_gap.md)"]
 async fn case_eq_multi_space_between_identifiers() {
     assert_overlay_matches_textarea_for("=ABC   DEF").await;
 }
