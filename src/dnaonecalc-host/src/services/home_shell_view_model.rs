@@ -84,8 +84,82 @@ pub struct HomeShellViewModel {
     /// view-model only carries the *content*; the actual tooltip is
     /// shown after a 400 ms hover over the matching `.syn-fn` span.
     pub function_help_card: Option<FunctionHelpCardView>,
+    /// First progressive-disclosure drill-down: the formula
+    /// walk-tree panel rendered between the editor-foot and the
+    /// result-caption when the user toggles it open with Ctrl+D.
+    /// Always present (so the toggle row is rendered consistently
+    /// whether the panel is open or closed); the `expanded` flag
+    /// drives whether the panel body is visible.
+    pub formula_drill: FormulaDrillView,
     pub result_view: ResultView,
     pub status: StatusView,
+}
+
+/// View-model shape for the formula walk-tree drill-down. Always
+/// emitted — the toggle row in the editor-foot needs to render
+/// regardless of expansion state, so the `expanded` flag drives
+/// visibility of the panel body and the chevron rotation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaDrillView {
+    pub expanded: bool,
+    /// Walk tree from `editor_document.formula_walk`, projected
+    /// into render-friendly nodes. Empty when the document is
+    /// missing or stale.
+    pub tree: Vec<FormulaDrillNode>,
+    /// Bottom-strip phase chips: `parse: <status> · bind: <vars>
+    /// vars · eval: <steps> steps`. Pulled from the document's
+    /// parse_summary / bind_summary / eval_summary fields. Empty
+    /// when the document is missing or stale.
+    pub phase_summaries: Vec<FormulaDrillPhaseChip>,
+    /// True iff the document is present and matches
+    /// `raw_entered_cell_text`. The component shows a "(loading)"
+    /// indicator when `expanded` is true but `document_is_fresh`
+    /// is false — gives the user feedback during the brief stale
+    /// window between keystroke and bridge round-trip.
+    pub document_is_fresh: bool,
+}
+
+/// One row in the formula walk-tree panel. Mirrors
+/// [`crate::adapters::oxfml::FormulaWalkNode`] but flattened by
+/// the projector so the component renders without recursion
+/// helpers — `depth` carries the indent level and the projector
+/// emits parent rows before child rows in the order the user
+/// reads them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaDrillNode {
+    pub node_id: String,
+    pub label: String,
+    pub value_preview: Option<String>,
+    pub state: crate::adapters::oxfml::FormulaWalkNodeState,
+    pub depth: usize,
+    pub has_children: bool,
+}
+
+/// Phase-strip chip. Renders `label · detail` with a state
+/// attribute (`ok` / `pending` / `blocked`) so the corpus can
+/// pin the colour and content separately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaDrillPhaseChip {
+    pub label: &'static str,
+    pub detail: String,
+    pub state: FormulaDrillPhaseState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormulaDrillPhaseState {
+    Ok,
+    Pending,
+    Blocked,
+}
+
+impl FormulaDrillPhaseState {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Pending => "pending",
+            Self::Blocked => "blocked",
+        }
+    }
 }
 
 /// View-model shape for the function-help hover tooltip.
@@ -452,6 +526,7 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
     let completion_popup = project_completion_popup(formula_space);
     let signature_help = project_signature_help(formula_space, completion_popup.is_some());
     let function_help_card = project_function_help_card(formula_space);
+    let formula_drill = project_formula_drill(formula_space);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -464,8 +539,107 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
         completion_popup,
         signature_help,
         function_help_card,
+        formula_drill,
         result_view,
         status: project_status_view(formula_space),
+    }
+}
+
+/// Project the formula walk tree + phase summaries into the
+/// drill-down view model. Always returns a `FormulaDrillView` —
+/// the `expanded` flag follows the formula space's
+/// `formula_drill_open`, and the `tree` / `phase_summaries`
+/// vectors are empty when the document is missing or stale.
+///
+/// `document_is_fresh` lets the component distinguish "panel
+/// open but bridge round-trip pending" (show a loading state)
+/// from "panel open and tree ready".
+fn project_formula_drill(formula_space: &FormulaSpaceState) -> FormulaDrillView {
+    let document = formula_space.editor_document.as_ref();
+    let document_is_fresh = document
+        .map(|doc| doc.source_text == formula_space.raw_entered_cell_text)
+        .unwrap_or(false);
+
+    let mut tree = Vec::new();
+    if document_is_fresh {
+        if let Some(document) = document {
+            for node in &document.formula_walk {
+                flatten_walk_node(node, 0, &mut tree);
+            }
+        }
+    }
+
+    let mut phase_summaries = Vec::new();
+    if document_is_fresh {
+        if let Some(document) = document {
+            if let Some(parse) = &document.parse_summary {
+                let state = if parse.status == "Valid" {
+                    FormulaDrillPhaseState::Ok
+                } else {
+                    FormulaDrillPhaseState::Pending
+                };
+                phase_summaries.push(FormulaDrillPhaseChip {
+                    label: "parse",
+                    detail: format!("{} ({} tokens)", parse.status, parse.token_count),
+                    state,
+                });
+            }
+            if let Some(bind) = &document.bind_summary {
+                phase_summaries.push(FormulaDrillPhaseChip {
+                    label: "bind",
+                    detail: format!(
+                        "{} vars · {} refs",
+                        bind.variable_count, bind.reference_count
+                    ),
+                    state: FormulaDrillPhaseState::Ok,
+                });
+            }
+            if let Some(eval) = &document.eval_summary {
+                let blocked = document
+                    .provenance_summary
+                    .as_ref()
+                    .and_then(|p| p.blocked_reason.as_ref())
+                    .is_some();
+                phase_summaries.push(FormulaDrillPhaseChip {
+                    label: "eval",
+                    detail: format!("{} step{} · {}", eval.step_count,
+                        if eval.step_count == 1 { "" } else { "s" }, eval.duration_text),
+                    state: if blocked {
+                        FormulaDrillPhaseState::Blocked
+                    } else {
+                        FormulaDrillPhaseState::Ok
+                    },
+                });
+            }
+        }
+    }
+
+    FormulaDrillView {
+        expanded: formula_space.formula_drill_open,
+        tree,
+        phase_summaries,
+        document_is_fresh,
+    }
+}
+
+/// Flatten a `FormulaWalkNode` recursively in pre-order (parent
+/// before children) into the target vec. `depth` is the indent
+/// level; root nodes have depth 0.
+fn flatten_walk_node(
+    node: &crate::adapters::oxfml::FormulaWalkNode,
+    depth: usize,
+    out: &mut Vec<FormulaDrillNode>,
+) {
+    out.push(FormulaDrillNode {
+        node_id: node.node_id.clone(),
+        label: node.label.clone(),
+        value_preview: node.value_preview.clone(),
+        state: node.state,
+        depth,
+        has_children: !node.children.is_empty(),
+    });
+    for child in &node.children {
+        flatten_walk_node(child, depth + 1, out);
     }
 }
 
@@ -1803,6 +1977,129 @@ mod tests {
         let card = vm.function_help_card.expect("card projected");
         assert_eq!(card.lookup_key, "SUM");
         assert!(card.signature.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Formula drill-down
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn formula_drill_default_collapsed_with_empty_tree() {
+        let formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(!vm.formula_drill.expanded);
+        assert!(vm.formula_drill.tree.is_empty());
+        assert!(vm.formula_drill.phase_summaries.is_empty());
+        assert!(!vm.formula_drill.document_is_fresh);
+    }
+
+    #[test]
+    fn formula_drill_expanded_flag_follows_state_field() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.formula_drill_open = true;
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.formula_drill.expanded);
+    }
+
+    #[test]
+    fn formula_drill_flattens_walk_tree_in_preorder_with_depth() {
+        use crate::adapters::oxfml::{FormulaWalkNode, FormulaWalkNodeState};
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=LET(x,1,x)");
+        let mut document = sample_editor_document("=LET(x,1,x)");
+        document.formula_walk = vec![FormulaWalkNode {
+            node_id: "let".to_string(),
+            label: "LET".to_string(),
+            value_preview: Some("1".to_string()),
+            state: FormulaWalkNodeState::Evaluated,
+            children: vec![
+                FormulaWalkNode {
+                    node_id: "x-bind".to_string(),
+                    label: "x".to_string(),
+                    value_preview: Some("1".to_string()),
+                    state: FormulaWalkNodeState::Bound,
+                    children: vec![],
+                },
+                FormulaWalkNode {
+                    node_id: "x-use".to_string(),
+                    label: "x".to_string(),
+                    value_preview: Some("1".to_string()),
+                    state: FormulaWalkNodeState::Evaluated,
+                    children: vec![],
+                },
+            ],
+        }];
+        formula_space.editor_document = Some(document);
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let nodes = &vm.formula_drill.tree;
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].node_id, "let");
+        assert_eq!(nodes[0].depth, 0);
+        assert!(nodes[0].has_children);
+        assert_eq!(nodes[1].node_id, "x-bind");
+        assert_eq!(nodes[1].depth, 1);
+        assert!(!nodes[1].has_children);
+        assert_eq!(nodes[2].node_id, "x-use");
+        assert_eq!(nodes[2].depth, 1);
+    }
+
+    #[test]
+    fn formula_drill_phase_summaries_emit_parse_bind_eval() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let labels: Vec<&str> = vm
+            .formula_drill
+            .phase_summaries
+            .iter()
+            .map(|p| p.label)
+            .collect();
+        assert_eq!(labels, vec!["parse", "bind", "eval"]);
+        assert!(vm
+            .formula_drill
+            .phase_summaries
+            .iter()
+            .all(|p| p.state == FormulaDrillPhaseState::Ok));
+    }
+
+    #[test]
+    fn formula_drill_eval_phase_blocked_when_provenance_carries_blocked_reason() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=XLOOKUP(...)");
+        formula_space.editor_document =
+            Some(blocked_editor_document("=XLOOKUP(...)"));
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let eval = vm
+            .formula_drill
+            .phase_summaries
+            .iter()
+            .find(|p| p.label == "eval")
+            .expect("eval chip emitted");
+        assert_eq!(eval.state, FormulaDrillPhaseState::Blocked);
+    }
+
+    #[test]
+    fn formula_drill_tree_empty_when_document_is_stale() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2,3)");
+        // Document still reflects the pre-`,3` state.
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        formula_space.formula_drill_open = true;
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.formula_drill.expanded);
+        assert!(vm.formula_drill.tree.is_empty());
+        assert!(vm.formula_drill.phase_summaries.is_empty());
+        assert!(!vm.formula_drill.document_is_fresh);
     }
 
     // -----------------------------------------------------------------

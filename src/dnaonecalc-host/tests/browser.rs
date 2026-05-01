@@ -27,3 +27,6 @@ mod signature_help;
 
 #[path = "browser/function_help_hover.rs"]
 mod function_help_hover;
+
+#[path = "browser/formula_drill.rs"]
+mod formula_drill;

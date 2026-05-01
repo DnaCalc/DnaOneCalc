@@ -248,6 +248,31 @@ pub fn dismiss_completion_popup_on_active_formula_space(state: &mut OneCalcHostS
     popup_dismiss(&mut formula_space.completion_popup)
 }
 
+/// Toggle the formula-drill-down panel on the active formula space.
+/// Returns the new `formula_drill_open` value, or `false` when there
+/// is no active formula space (caller can treat that as a no-op).
+pub fn toggle_formula_drill_on_active_formula_space(state: &mut OneCalcHostState) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    formula_space.formula_drill_open = !formula_space.formula_drill_open;
+    formula_space.formula_drill_open
+}
+
+/// Force-close the formula-drill-down panel. Used by tests and by
+/// any future "exit drill-down on Esc" wiring. Returns `true` when
+/// state changed.
+pub fn close_formula_drill_on_active_formula_space(state: &mut OneCalcHostState) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if !formula_space.formula_drill_open {
+        return false;
+    }
+    formula_space.formula_drill_open = false;
+    true
+}
+
 /// Accept the popup's currently-selected completion. Returns the
 /// `CompletionAcceptance` describing the splice the editor layer
 /// should apply, plus transitions the popup to `Hidden`. Returns
@@ -1114,6 +1139,87 @@ mod tests {
         assert_eq!(
             state.active_formula_space_view.active_mode,
             crate::state::AppMode::Inspect
+        );
+    }
+
+    #[test]
+    fn toggle_formula_drill_flips_state_and_returns_new_value() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), ""));
+
+        // Default is closed.
+        let formula_space = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("formula space");
+        assert!(!formula_space.formula_drill_open);
+
+        // First toggle opens.
+        let now_open = toggle_formula_drill_on_active_formula_space(&mut state);
+        assert!(now_open);
+        assert!(
+            state
+                .formula_spaces
+                .get(&formula_space_id)
+                .unwrap()
+                .formula_drill_open
+        );
+
+        // Second toggle closes.
+        let now_open = toggle_formula_drill_on_active_formula_space(&mut state);
+        assert!(!now_open);
+        assert!(
+            !state
+                .formula_spaces
+                .get(&formula_space_id)
+                .unwrap()
+                .formula_drill_open
+        );
+    }
+
+    #[test]
+    fn toggle_formula_drill_no_op_when_no_active_formula_space() {
+        let mut state = OneCalcHostState::default();
+        // No active formula space — toggle returns false (treated as
+        // a no-op by the caller).
+        let result = toggle_formula_drill_on_active_formula_space(&mut state);
+        assert!(!result);
+    }
+
+    #[test]
+    fn close_formula_drill_returns_false_when_already_closed() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, ""));
+
+        let changed = close_formula_drill_on_active_formula_space(&mut state);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn close_formula_drill_closes_open_panel() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "");
+        formula_space.formula_drill_open = true;
+        state.formula_spaces.insert(formula_space);
+
+        let changed = close_formula_drill_on_active_formula_space(&mut state);
+        assert!(changed);
+        assert!(
+            !state
+                .formula_spaces
+                .get(&formula_space_id)
+                .unwrap()
+                .formula_drill_open
         );
     }
 }

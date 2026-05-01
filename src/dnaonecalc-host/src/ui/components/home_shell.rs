@@ -32,12 +32,14 @@ use crate::app::reducer::{
     apply_editor_box_metrics_to_active_formula_space, apply_editor_input_to_active_formula_space,
     dismiss_completion_popup_on_active_formula_space,
     move_completion_popup_selection_on_active_formula_space,
+    toggle_formula_drill_on_active_formula_space,
 };
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
-    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FunctionHelpCardView,
-    ResultClassPill, ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
+    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormulaDrillNode,
+    FormulaDrillPhaseChip, FormulaDrillView, FunctionHelpCardView, ResultClassPill,
+    ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
@@ -155,6 +157,18 @@ pub fn HomeShell(
     // preventDefault's them. Every other key is allowed through to
     // the textarea unchanged.
     let on_textarea_keydown = move |ev: WebKeyboardEvent| {
+        // Ctrl+D toggles the formula drill-down. Handled BEFORE the
+        // popup-open early-return because the chord is global —
+        // works whether the popup is open or closed. preventDefault
+        // shadows the browser's native bookmark-this-page behaviour.
+        if ev.ctrl_key() && ev.key().eq_ignore_ascii_case("d") {
+            ev.prevent_default();
+            state.update(|state| {
+                let _ = toggle_formula_drill_on_active_formula_space(state);
+            });
+            return;
+        }
+
         // Read popup-open state directly from the source signal, NOT
         // via the `view_model` memo. The memo recomputes lazily and
         // synthetic-event keystrokes fire inside `dispatchEvent`
@@ -254,8 +268,19 @@ pub fn HomeShell(
         move || view_model.get().and_then(|vm| vm.function_help_card);
     let hover_target_for_render = hover_target;
     let function_help_hover = move || hover_target_for_render.get();
+    let formula_drill = move || view_model.get().map(|vm| vm.formula_drill);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
+
+    // Trigger row callback shared between the editor-foot toggle
+    // and the keyboard chord — both routes through the same
+    // reducer entry so the test corpus can pin behaviour
+    // identically regardless of input.
+    let on_formula_drill_toggle = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = toggle_formula_drill_on_active_formula_space(state);
+        });
+    });
 
     // Editor-frame mouseover delegation: when the pointer is over a
     // `.syn-fn` span whose `data-token-text` matches the bridge's
@@ -485,7 +510,15 @@ pub fn HomeShell(
                         </div>
                         <div class="onecalc-home-shell__foot-row">
                             {move || render_editor_metrics_chip(editor_metrics())}
+                            {move || render_formula_drill_toggle(
+                                formula_drill(),
+                                on_formula_drill_toggle,
+                            )}
                         </div>
+                    </section>
+
+                    <section class="onecalc-home-shell__formula-drill-section">
+                        {move || render_formula_drill_panel(formula_drill())}
                     </section>
 
                     <section class="onecalc-home-shell__result-section">
@@ -770,6 +803,182 @@ fn splice_textarea_value(
 /// the popup wrapper is `pointer-events: none` so background clicks
 /// fall through to the textarea, while each item row reactivates
 /// `pointer-events: auto` for click handling.
+/// Render the editor-foot trigger row for the formula drill-down.
+/// Always visible alongside the live-metrics chip; aria-expanded
+/// follows the panel's expansion state.
+fn render_formula_drill_toggle(
+    drill: Option<FormulaDrillView>,
+    on_toggle: Callback<()>,
+) -> AnyView {
+    let Some(drill) = drill else {
+        return view! { <span></span> }.into_any();
+    };
+    let aria_expanded = if drill.expanded { "true" } else { "false" };
+    let label = if drill.expanded {
+        "▾ hide formula drill-down"
+    } else {
+        "▸ show formula drill-down"
+    };
+    let row_count = drill.tree.len();
+    view! {
+        <button
+            type="button"
+            class="onecalc-home-shell__formula-drill-toggle"
+            data-expanded=aria_expanded
+            data-row-count=row_count.to_string()
+            aria-expanded=aria_expanded
+            aria-controls="onecalc-formula-drill-panel"
+            on:click=move |_| on_toggle.run(())
+        >
+            {label}
+        </button>
+    }
+    .into_any()
+}
+
+/// Render the formula drill-down panel itself. Always emits the
+/// outer panel div (so the corpus can read `data-expanded`); the
+/// body content is gated by the `expanded` flag.
+fn render_formula_drill_panel(drill: Option<FormulaDrillView>) -> AnyView {
+    let Some(drill) = drill else {
+        return view! { <span></span> }.into_any();
+    };
+    let aria_hidden = if drill.expanded { "false" } else { "true" };
+    let expanded_attr = if drill.expanded { "true" } else { "false" };
+    let fresh_attr = if drill.document_is_fresh { "true" } else { "false" };
+    let row_count = drill.tree.len();
+    let body = if !drill.expanded {
+        view! { <span></span> }.into_any()
+    } else if !drill.document_is_fresh {
+        view! {
+            <div class="onecalc-home-shell__formula-drill-loading" role="status">
+                "(loading…)"
+            </div>
+        }
+        .into_any()
+    } else {
+        let nodes_view: Vec<AnyView> = drill
+            .tree
+            .iter()
+            .map(|node| render_formula_drill_row(node.clone()))
+            .collect();
+        let phase_view: Vec<AnyView> = drill
+            .phase_summaries
+            .iter()
+            .map(|chip| render_formula_drill_phase_chip(chip.clone()))
+            .collect();
+        view! {
+            <div
+                class="onecalc-home-shell__formula-drill-tree"
+                role="tree"
+                aria-label="formula walk tree"
+            >
+                {nodes_view}
+            </div>
+            <div class="onecalc-home-shell__formula-drill-phase-strip">
+                {phase_view}
+            </div>
+        }
+        .into_any()
+    };
+    view! {
+        <div
+            id="onecalc-formula-drill-panel"
+            class="onecalc-home-shell__formula-drill-panel"
+            data-expanded=expanded_attr
+            data-document-fresh=fresh_attr
+            data-row-count=row_count.to_string()
+            aria-hidden=aria_hidden
+            tabindex="-1"
+        >
+            {body}
+        </div>
+    }
+    .into_any()
+}
+
+fn render_formula_drill_row(node: FormulaDrillNode) -> AnyView {
+    let depth = node.depth;
+    let has_children_attr = if node.has_children { "true" } else { "false" };
+    let state_slug = formula_drill_state_slug(node.state);
+    let value_preview = node.value_preview.clone().unwrap_or_default();
+    let indent_style = format!("padding-left: {}rem;", (depth as f32) * 1.0);
+    let aria_level = (depth + 1).to_string();
+    view! {
+        <div
+            class="onecalc-home-shell__formula-drill-row"
+            role="treeitem"
+            data-depth=depth.to_string()
+            data-has-children=has_children_attr
+            data-state=state_slug
+            data-node-id=node.node_id
+            data-aria-level=aria_level
+            style=indent_style
+        >
+            <span
+                class="onecalc-home-shell__formula-drill-state"
+                aria-label=state_slug
+                data-state=state_slug
+            >
+                {formula_drill_state_label(node.state)}
+            </span>
+            <span class="onecalc-home-shell__formula-drill-label">{node.label}</span>
+            <span class="onecalc-home-shell__formula-drill-value" title=value_preview.clone()>
+                {truncate_for_drill(value_preview.clone())}
+            </span>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_formula_drill_phase_chip(chip: FormulaDrillPhaseChip) -> AnyView {
+    let state_slug = chip.state.slug();
+    let label = chip.label;
+    view! {
+        <span
+            class="onecalc-home-shell__formula-drill-phase"
+            data-phase=label
+            data-state=state_slug
+        >
+            <strong>{label}</strong>
+            ": "
+            {chip.detail}
+        </span>
+    }
+    .into_any()
+}
+
+fn formula_drill_state_slug(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
+    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+    match state {
+        State::Evaluated => "evaluated",
+        State::Bound => "bound",
+        State::Opaque => "opaque",
+        State::Blocked => "blocked",
+    }
+}
+
+fn formula_drill_state_label(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
+    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+    match state {
+        State::Evaluated => "evaluated",
+        State::Bound => "bound",
+        State::Opaque => "opaque",
+        State::Blocked => "blocked",
+    }
+}
+
+fn truncate_for_drill(value: String) -> String {
+    let limit = 32;
+    if value.chars().count() <= limit {
+        value
+    } else {
+        let mut out: String = value.chars().take(limit).collect();
+        out.push('…');
+        out
+    }
+}
+
 /// Hover-state for the function-help tooltip. Component-local
 /// (not in the reducer state) because hover is purely a UI
 /// concern. Set by the editor-frame `on:mouseover` handler when

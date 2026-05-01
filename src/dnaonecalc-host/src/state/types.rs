@@ -136,6 +136,11 @@ pub struct FormulaSpaceState {
     pub committed_cell_text: Option<String>,
     pub proofed_cell_text: Option<String>,
     pub expanded_editor: bool,
+    /// First progressive-disclosure drill-down. `true` when the
+    /// formula walk-tree panel is expanded between the editor-foot
+    /// and the result-caption. Toggled by Ctrl+D and by the
+    /// editor-foot trigger row. Default false.
+    pub formula_drill_open: bool,
 }
 
 impl FormulaSpaceState {
@@ -163,6 +168,7 @@ impl FormulaSpaceState {
             committed_cell_text: None,
             proofed_cell_text: None,
             expanded_editor: false,
+            formula_drill_open: false,
         }
     }
 

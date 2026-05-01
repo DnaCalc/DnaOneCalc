@@ -219,10 +219,26 @@ pub fn text_of(shell: &MountedShell, selector: &str) -> Option<String> {
 /// trigger any JS-installed `on:keydown` handlers, which is exactly
 /// what the popup keyboard policy tests need to assert.
 pub fn dispatch_keydown(textarea: &web_sys::HtmlTextAreaElement, key: &str) {
+    dispatch_keydown_with_modifiers(textarea, key, false, false, false);
+}
+
+/// Same as [`dispatch_keydown`] but with explicit modifier flags
+/// (Ctrl / Shift / Alt). Used for the chord-driven invariants
+/// like `Ctrl+D` (formula drill) and `Ctrl+Shift+M` (compare jump).
+pub fn dispatch_keydown_with_modifiers(
+    textarea: &web_sys::HtmlTextAreaElement,
+    key: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) {
     let init = web_sys::KeyboardEventInit::new();
     init.set_key(key);
     init.set_bubbles(true);
     init.set_cancelable(true);
+    init.set_ctrl_key(ctrl);
+    init.set_shift_key(shift);
+    init.set_alt_key(alt);
     let event = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
         .expect("keydown event");
     textarea

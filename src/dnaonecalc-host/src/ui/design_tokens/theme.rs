@@ -3337,6 +3337,179 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border-color: var(--oc-color-warning);
 }
 
+/* ===== Formula walk-tree drill-down ============================
+   First progressive-disclosure surface. The toggle row sits in
+   the editor-foot next to the live-metrics chip; the panel
+   itself is a SECTION between the editor and the result so the
+   result hero pushes down (rather than overlaying or being
+   covered) when expanded. */
+
+.onecalc-home-shell__formula-drill-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 var(--oc-space-2);
+  background: var(--oc-color-panel);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-pill);
+  cursor: pointer;
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__formula-drill-toggle:hover {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__formula-drill-toggle[data-expanded="true"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__formula-drill-section {
+  display: grid;
+}
+
+.onecalc-home-shell__formula-drill-panel {
+  background: rgba(36, 93, 90, 0.04);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  /* Default: zero animation. The @media block below adds a
+     200 ms transition only when the user has not requested
+     reduced motion. */
+}
+
+.onecalc-home-shell__formula-drill-panel[data-expanded="true"] {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--oc-space-3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .onecalc-home-shell__formula-drill-panel {
+    transition: max-height 200ms ease, padding 200ms ease;
+  }
+}
+
+.onecalc-home-shell__formula-drill-loading {
+  font-family: var(--oc-font-ui);
+  color: var(--oc-color-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.onecalc-home-shell__formula-drill-tree {
+  display: grid;
+  gap: 2px;
+}
+
+.onecalc-home-shell__formula-drill-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--oc-space-2);
+  padding: 2px var(--oc-space-2);
+  font-family: var(--oc-font-mono);
+  font-size: 0.8rem;
+  color: var(--oc-color-ink);
+  border-radius: 4px;
+}
+
+.onecalc-home-shell__formula-drill-row:hover {
+  background: rgba(36, 93, 90, 0.06);
+}
+
+.onecalc-home-shell__formula-drill-state {
+  display: inline-flex;
+  align-items: center;
+  height: 1rem;
+  padding: 0 var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  font-family: var(--oc-font-ui);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onecalc-home-shell__formula-drill-state[data-state="evaluated"] {
+  background: rgba(79, 123, 87, 0.18);
+  color: var(--oc-color-success);
+}
+
+.onecalc-home-shell__formula-drill-state[data-state="bound"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__formula-drill-state[data-state="opaque"] {
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__formula-drill-state[data-state="blocked"] {
+  background: rgba(183, 101, 69, 0.15);
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__formula-drill-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__formula-drill-value {
+  color: var(--oc-color-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18rem;
+  text-align: right;
+}
+
+.onecalc-home-shell__formula-drill-phase-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--oc-space-2);
+  margin-top: var(--oc-space-3);
+  padding-top: var(--oc-space-2);
+  border-top: 1px dashed var(--oc-color-border);
+}
+
+.onecalc-home-shell__formula-drill-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--oc-space-1);
+  padding: 2px var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  font-family: var(--oc-font-mono);
+  font-size: 0.75rem;
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__formula-drill-phase[data-state="ok"] strong {
+  color: var(--oc-color-success);
+}
+
+.onecalc-home-shell__formula-drill-phase[data-state="blocked"] {
+  background: rgba(183, 101, 69, 0.10);
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__formula-drill-phase[data-state="blocked"] strong {
+  color: var(--oc-color-warm);
+}
+
 .onecalc-home-shell__textarea {
   position: relative;
   width: 100%;
