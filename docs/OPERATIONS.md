@@ -187,7 +187,43 @@ upstream output (allowed) or **fabricating content** that upstream
 should have produced but didn't (forbidden by default).
 
 Reference: the OxFml leading-whitespace tokenizer truncation bug
-(`docs/handoffs/oxfml_leading_whitespace_truncation.md`) is the
-canonical example. The host attempted a `Text`-role gap-fill in
+(handoff initially captured at
+`docs/handoffs/oxfml_leading_whitespace_truncation.md`, since
+deleted after upstream fix `162f224` shipped) is the canonical
+example. The host attempted a `Text`-role gap-fill in
 `syntax_runs_from_snapshot` that synthesised the dropped `aaa`
-characters. It was reverted; the fix routes upstream.
+characters. It was reverted; the fix routed upstream.
+
+### 9.1 Catching upstream-contract violations early
+
+The two known violations of the snapshot-tile-source-text
+contract (`\n=aaa` leading-whitespace, `= a a` inter-identifier
+whitespace) both surfaced because nobody had typed those exact
+strings in a test. The general pattern: a contract that the
+host implicitly relies on, exercised by only one or two
+hand-picked test inputs, missed defects that other inputs would
+have surfaced.
+
+Defence: parameterised invariant matrices. For any contract
+the host depends on, write a matrix of representative inputs
+and assert the contract holds for each, with one
+`#[wasm_bindgen_test]` (or one native test) per input so a
+failure localises to a specific case. Adding a new input is
+one line; the matrix grows with discovered edge cases and
+becomes the regression net.
+
+Concrete example: `tests/browser/buffer_integrity.rs` runs the
+"snapshot tokens + trivia must tile source text" contract
+against a list of formula-shape inputs (well-formed calls,
+bare identifiers, leading-whitespace, inter-identifier
+whitespace, multi-space, cell-refs, text literals, forced
+text, partial parses, ...). Inputs that fail upstream are
+`#[ignore]`d with a reason string naming the upstream surface
+and the relevant `docs/handoffs/...` file; once the upstream
+fix ships, removing the `#[ignore]` is the regression gate.
+
+When you find a new bug rooted in an upstream-contract
+violation, add the failing input to the relevant matrix as
+part of the same change that captures the handoff. The matrix
+is where the test framework grows toward each newly-discovered
+class of violation.

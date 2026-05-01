@@ -37,6 +37,12 @@ mod drill_motion_a11y;
 #[path = "browser/repro_enter_eq_aaa.rs"]
 mod repro_enter_eq_aaa;
 
+#[path = "browser/repro_eq_space_a_space_a.rs"]
+mod repro_eq_space_a_space_a;
+
+#[path = "browser/buffer_integrity.rs"]
+mod buffer_integrity;
+
 #[path = "browser/view_mode.rs"]
 mod view_mode;
 
