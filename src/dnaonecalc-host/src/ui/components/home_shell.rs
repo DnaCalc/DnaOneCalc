@@ -38,8 +38,8 @@ use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
     ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormulaDrillNode,
-    FormulaDrillPhaseChip, FormulaDrillView, FunctionHelpCardView, ResultClassPill,
-    ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
+    FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView, FunctionHelpCardView,
+    ResultClassPill, ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
 };
 use crate::state::ViewMode;
 use crate::services::live_edit::apply_live_editor_input;
@@ -542,7 +542,7 @@ pub fn HomeShell(
                     </section>
 
                     <section class="onecalc-home-shell__formula-drill-section">
-                        {move || render_formula_drill_panel(formula_drill())}
+                        {move || render_formula_drill_panel(formula_drill(), view_mode())}
                     </section>
 
                     <section class="onecalc-home-shell__result-section">
@@ -883,14 +883,19 @@ fn render_formula_drill_toggle(
 
 /// Render the formula drill-down panel itself. Always emits the
 /// outer panel div (so the corpus can read `data-expanded`); the
-/// body content is gated by the `expanded` flag.
-fn render_formula_drill_panel(drill: Option<FormulaDrillView>) -> AnyView {
+/// body content is gated by the `expanded` flag and the rows /
+/// phase-strip rendering branches on `view_mode`.
+fn render_formula_drill_panel(
+    drill: Option<FormulaDrillView>,
+    view_mode: ViewMode,
+) -> AnyView {
     let Some(drill) = drill else {
         return view! { <span></span> }.into_any();
     };
     let aria_hidden = if drill.expanded { "false" } else { "true" };
     let expanded_attr = if drill.expanded { "true" } else { "false" };
     let fresh_attr = if drill.document_is_fresh { "true" } else { "false" };
+    let mode_attr = view_mode.slug();
     let row_count = drill.tree.len();
     let body = if !drill.expanded {
         view! { <span></span> }.into_any()
@@ -905,24 +910,22 @@ fn render_formula_drill_panel(drill: Option<FormulaDrillView>) -> AnyView {
         let nodes_view: Vec<AnyView> = drill
             .tree
             .iter()
-            .map(|node| render_formula_drill_row(node.clone()))
+            .map(|node| render_formula_drill_row(node.clone(), view_mode))
             .collect();
-        let phase_view: Vec<AnyView> = drill
-            .phase_summaries
-            .iter()
-            .map(|chip| render_formula_drill_phase_chip(chip.clone()))
-            .collect();
+        let phase_strip = match view_mode {
+            ViewMode::Developer => render_formula_drill_phase_strip_developer(&drill.phase_summaries),
+            ViewMode::User => render_formula_drill_phase_strip_user(&drill.phase_summaries),
+        };
         view! {
             <div
                 class="onecalc-home-shell__formula-drill-tree"
                 role="tree"
                 aria-label="formula walk tree"
+                data-mode=mode_attr
             >
                 {nodes_view}
             </div>
-            <div class="onecalc-home-shell__formula-drill-phase-strip">
-                {phase_view}
-            </div>
+            {phase_strip}
         }
         .into_any()
     };
@@ -933,6 +936,7 @@ fn render_formula_drill_panel(drill: Option<FormulaDrillView>) -> AnyView {
             data-expanded=expanded_attr
             data-document-fresh=fresh_attr
             data-row-count=row_count.to_string()
+            data-mode=mode_attr
             aria-hidden=aria_hidden
             tabindex="-1"
         >
@@ -942,13 +946,41 @@ fn render_formula_drill_panel(drill: Option<FormulaDrillView>) -> AnyView {
     .into_any()
 }
 
-fn render_formula_drill_row(node: FormulaDrillNode) -> AnyView {
+fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode) -> AnyView {
     let depth = node.depth;
     let has_children_attr = if node.has_children { "true" } else { "false" };
     let state_slug = formula_drill_state_slug(node.state);
-    let value_preview = node.value_preview.clone().unwrap_or_default();
+    let value_preview_full = node.value_preview.clone();
+    let value_preview = value_preview_full.clone().unwrap_or_default();
     let indent_style = format!("padding-left: {}rem;", (depth as f32) * 1.0);
     let aria_level = (depth + 1).to_string();
+    let mode_attr = view_mode.slug();
+    let row_inner = match view_mode {
+        ViewMode::Developer => view! {
+            <>
+                <span
+                    class="onecalc-home-shell__formula-drill-state"
+                    aria-label=state_slug
+                    data-state=state_slug
+                >
+                    {formula_drill_state_label(node.state)}
+                </span>
+                <span class="onecalc-home-shell__formula-drill-label">{node.label}</span>
+                <span
+                    class="onecalc-home-shell__formula-drill-value"
+                    title=value_preview.clone()
+                >
+                    {truncate_for_drill(value_preview.clone())}
+                </span>
+            </>
+        }
+        .into_any(),
+        ViewMode::User => render_formula_drill_row_user_mode(
+            node.label,
+            node.state,
+            value_preview_full,
+        ),
+    };
     view! {
         <div
             class="onecalc-home-shell__formula-drill-row"
@@ -958,19 +990,138 @@ fn render_formula_drill_row(node: FormulaDrillNode) -> AnyView {
             data-state=state_slug
             data-node-id=node.node_id
             data-aria-level=aria_level
+            data-mode=mode_attr
             style=indent_style
         >
-            <span
-                class="onecalc-home-shell__formula-drill-state"
-                aria-label=state_slug
-                data-state=state_slug
-            >
-                {formula_drill_state_label(node.state)}
-            </span>
-            <span class="onecalc-home-shell__formula-drill-label">{node.label}</span>
-            <span class="onecalc-home-shell__formula-drill-value" title=value_preview.clone()>
-                {truncate_for_drill(value_preview.clone())}
-            </span>
+            {row_inner}
+        </div>
+    }
+    .into_any()
+}
+
+/// User-mode row layout: `label = value` (or `label · blocked
+/// <reason>` for blocked rows). The state chip is dropped; the
+/// only non-text element is a tiny inline tag for blocked rows
+/// because that is the one row state an Excel user genuinely
+/// needs to notice.
+fn render_formula_drill_row_user_mode(
+    label: String,
+    state: crate::adapters::oxfml::FormulaWalkNodeState,
+    value_preview: Option<String>,
+) -> AnyView {
+    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+    let label_view = view! {
+        <span class="onecalc-home-shell__formula-drill-label">{label}</span>
+    };
+    match state {
+        State::Blocked => {
+            let value_text = value_preview.clone().unwrap_or_default();
+            let truncated = truncate_for_drill(value_text.clone());
+            view! {
+                <>
+                    {label_view}
+                    <span class="onecalc-home-shell__formula-drill-blocked-tag">"blocked"</span>
+                    <span
+                        class="onecalc-home-shell__formula-drill-value"
+                        title=value_text
+                    >
+                        {truncated}
+                    </span>
+                </>
+            }
+            .into_any()
+        }
+        _ => {
+            let (value_text, value_title) = match value_preview {
+                Some(v) => (truncate_for_drill(v.clone()), v),
+                None => ("…".to_string(), String::new()),
+            };
+            view! {
+                <>
+                    {label_view}
+                    <span class="onecalc-home-shell__formula-drill-equals" aria-hidden="true">"="</span>
+                    <span
+                        class="onecalc-home-shell__formula-drill-value"
+                        title=value_title
+                    >
+                        {value_text}
+                    </span>
+                </>
+            }
+            .into_any()
+        }
+    }
+}
+
+/// Developer-mode phase strip: parse / bind / eval chips, one per phase.
+fn render_formula_drill_phase_strip_developer(
+    chips: &[FormulaDrillPhaseChip],
+) -> AnyView {
+    let phase_view: Vec<AnyView> = chips
+        .iter()
+        .map(|chip| render_formula_drill_phase_chip(chip.clone()))
+        .collect();
+    view! {
+        <div
+            class="onecalc-home-shell__formula-drill-phase-strip"
+            data-mode="developer"
+        >
+            {phase_view}
+        </div>
+    }
+    .into_any()
+}
+
+/// User-mode phase strip: a single status line. Reads as
+/// "evaluated in <duration>" when clean, or "blocked: <reason>"
+/// when any phase is blocked. The eval-phase chip's detail
+/// carries the duration_text in the form "<n> step(s) · <ms>"
+/// so we extract the duration suffix; if the format changes we
+/// fall back to the raw detail.
+fn render_formula_drill_phase_strip_user(
+    chips: &[FormulaDrillPhaseChip],
+) -> AnyView {
+    if chips.is_empty() {
+        return view! { <span></span> }.into_any();
+    }
+    let any_blocked = chips
+        .iter()
+        .any(|c| c.state == FormulaDrillPhaseState::Blocked);
+    let status_class = if any_blocked {
+        "onecalc-home-shell__formula-drill-status onecalc-home-shell__formula-drill-status--blocked"
+    } else {
+        "onecalc-home-shell__formula-drill-status onecalc-home-shell__formula-drill-status--ok"
+    };
+    let summary = if any_blocked {
+        chips
+            .iter()
+            .find(|c| c.state == FormulaDrillPhaseState::Blocked)
+            .map(|c| format!("blocked at {}: {}", c.label, c.detail))
+            .unwrap_or_else(|| "blocked".to_string())
+    } else {
+        chips
+            .iter()
+            .find(|c| c.label == "eval")
+            .map(|c| {
+                // eval detail is "<n> step(s) · <duration_text>"
+                // — pull the segment after the last " · ". If
+                // unavailable, fall back to the whole detail.
+                let last_segment = c
+                    .detail
+                    .rsplit(" · ")
+                    .next()
+                    .unwrap_or_else(|| c.detail.as_str());
+                format!("evaluated in {last_segment}")
+            })
+            .unwrap_or_else(|| "evaluated".to_string())
+    };
+    let status_state = if any_blocked { "blocked" } else { "ok" };
+    view! {
+        <div
+            class="onecalc-home-shell__formula-drill-phase-strip"
+            data-mode="user"
+        >
+            <span class=status_class data-status=status_state>{summary}</span>
         </div>
     }
     .into_any()

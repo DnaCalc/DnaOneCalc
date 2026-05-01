@@ -187,17 +187,23 @@ async fn drill_rows_carry_depth_and_state_attributes() {
 
 #[wasm_bindgen_test(async)]
 async fn drill_panel_renders_phase_chips_for_parse_bind_eval() {
+    // The three per-phase chips are Developer-mode rendering;
+    // User mode (default since bead 32) collapses them to a
+    // single status pill. Toggle to Developer mode before
+    // asserting the chip count.
     let shell = mount_home_shell();
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, false);
+    super::scaffold::flush_microtasks(15).await;
+    dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
 
     let chips = shell.select_all(".onecalc-home-shell__formula-drill-phase");
     assert_eq!(
         chips.length(),
         3,
-        "phase strip should render parse + bind + eval chips",
+        "phase strip should render parse + bind + eval chips in Developer mode",
     );
 
     let labels: Vec<String> = (0..chips.length())

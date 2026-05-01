@@ -3531,6 +3531,80 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-warm);
 }
 
+/* ===== Formula drill — User-mode rendering ====================
+   In User mode the row is laid out equation-style:
+     label = value
+   The state chip is dropped, the equals sign and value column
+   are emphasised. Blocked rows replace the equals + value with a
+   small terracotta "blocked" tag — the only state an Excel user
+   genuinely needs to see.
+   The data-mode attribute on each row + the tree wrapper drives
+   the layout switch. */
+
+.onecalc-home-shell__formula-drill-row[data-mode="user"] {
+  /* Two columns: label flexes, value right-aligns. The equals
+     sign sits between as a fixed-width hairline column. */
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.onecalc-home-shell__formula-drill-row[data-mode="user"]
+  .onecalc-home-shell__formula-drill-state {
+  /* Hide the developer-mode state chip in User mode without
+     dropping it from the DOM (the corpus reads `data-state` on
+     the row itself). */
+  display: none;
+}
+
+.onecalc-home-shell__formula-drill-equals {
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-mono);
+  padding: 0 var(--oc-space-1);
+}
+
+.onecalc-home-shell__formula-drill-blocked-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 1rem;
+  padding: 0 var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  background: rgba(183, 101, 69, 0.15);
+  color: var(--oc-color-warm);
+  font-family: var(--oc-font-ui);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onecalc-home-shell__formula-drill-row[data-mode="user"][data-state="blocked"] {
+  /* Slight tint on blocked rows so they stand out from the
+     equation list. */
+  background: rgba(183, 101, 69, 0.05);
+}
+
+/* User-mode phase strip: a single status line replacing the
+   per-phase chip strip. */
+.onecalc-home-shell__formula-drill-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--oc-space-1);
+  padding: 2px var(--oc-space-2);
+  border-radius: var(--oc-radius-pill);
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.onecalc-home-shell__formula-drill-status--ok {
+  background: rgba(79, 123, 87, 0.10);
+  color: var(--oc-color-success);
+}
+
+.onecalc-home-shell__formula-drill-status--blocked {
+  background: rgba(183, 101, 69, 0.12);
+  color: var(--oc-color-warm);
+}
+
 .onecalc-home-shell__textarea {
   position: relative;
   width: 100%;

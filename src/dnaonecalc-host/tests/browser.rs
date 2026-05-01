@@ -42,3 +42,6 @@ mod view_mode;
 
 #[path = "browser/foot_chip_modes.rs"]
 mod foot_chip_modes;
+
+#[path = "browser/walk_tree_modes.rs"]
+mod walk_tree_modes;

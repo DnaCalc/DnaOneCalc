@@ -158,6 +158,12 @@ async fn drill_panel_has_tree_role_and_aria_label_when_open() {
 
 #[wasm_bindgen_test(async)]
 async fn drill_rows_have_treeitem_role_and_state_chip_aria_label() {
+    // The state chip is Developer-mode rendering; User mode
+    // (default after bead 32) does not emit it. Toggle to
+    // Developer mode for the chip-presence assertion. The
+    // row's `role="treeitem"` and `data-state` attribute are
+    // present in BOTH modes — those are asserted before the
+    // toggle.
     let shell = mount_home_shell();
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
@@ -168,13 +174,25 @@ async fn drill_rows_have_treeitem_role_and_state_chip_aria_label() {
         .select(".onecalc-home-shell__formula-drill-row")
         .expect("row mounted");
     assert_eq!(row.get_attribute("role").as_deref(), Some("treeitem"));
+    let state_attr = row.get_attribute("data-state").unwrap_or_default();
+    assert!(
+        matches!(
+            state_attr.as_str(),
+            "evaluated" | "bound" | "opaque" | "blocked"
+        ),
+        "row data-state must be one of the four state slugs in any mode; \
+         got {state_attr:?}",
+    );
+
+    // Switch to Developer mode and assert the visible state chip
+    // carries the same aria-label.
+    dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
+    super::scaffold::flush_microtasks(15).await;
 
     let chip = shell
         .select(".onecalc-home-shell__formula-drill-state")
-        .expect("state chip mounted");
-    let aria_label = chip
-        .get_attribute("aria-label")
-        .unwrap_or_default();
+        .expect("state chip mounted in Developer mode");
+    let aria_label = chip.get_attribute("aria-label").unwrap_or_default();
     assert!(
         matches!(
             aria_label.as_str(),
