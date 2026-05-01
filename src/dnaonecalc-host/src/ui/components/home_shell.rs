@@ -1325,15 +1325,19 @@ fn render_signature_help(help: Option<SignatureHelpView>) -> AnyView {
     let Some(help) = help else {
         return view! { <span></span> }.into_any();
     };
-    // Position UPWARD from the caret-box top by the help line's
-    // approximate height plus a small gap. We use a CSS transform
-    // (translateY(-100%) - small gap) so the actual rendered height
-    // is what's used, not a guessed pixel count — this keeps the
-    // anchor exact across font-metrics changes.
+    // Anchor at the caret-line TOP (in editor-frame coordinates,
+    // i.e. metric-space y plus the textarea padding). The CSS
+    // transform `translateY(-100% - 6px)` then lifts the help
+    // tooltip's bottom edge 6 px above that line, putting it
+    // immediately over the line without the actual rendered
+    // height needing to be guessed in pixels. Without the
+    // padding offset the top would be 0 → the help renders
+    // ABOVE the editor frame, far from the caret (the bug the
+    // user reported as "placed very high").
     let style = format!(
         "left: {}px; top: {}px;",
-        help.anchor_left_px,
-        help.anchor_top_px,
+        help.anchor_left_px.saturating_add(EDITOR_FRAME_PAD_PX),
+        help.anchor_top_px.saturating_add(EDITOR_FRAME_PAD_PX),
     );
     let parameter_count = help.parameters.len();
     let active_index_attr = help
@@ -1380,6 +1384,19 @@ fn render_signature_help(help: Option<SignatureHelpView>) -> AnyView {
     .into_any()
 }
 
+/// Editor-frame inner padding, in pixels. Matches the
+/// `padding: var(--oc-space-4)` rule on the textarea + overlay
+/// in `theme.rs` at the default 16 px html font-size. The
+/// caret-box geometry layer reports coordinates in metric-space
+/// (line N starts at `N * line_height_px` from y=0); the actual
+/// text renders at that y plus this padding offset because the
+/// textarea / overlay have padding inside the editor-frame box.
+/// All caret-anchored popovers (completion popup, signature
+/// help, future hover-help) MUST add this offset to their top
+/// value or they will land inside the line of text rather than
+/// above / below it.
+const EDITOR_FRAME_PAD_PX: usize = 16;
+
 fn render_completion_popup(
     popup: Option<CompletionPopupView>,
     on_click: Callback<String>,
@@ -1387,10 +1404,17 @@ fn render_completion_popup(
     let Some(popup) = popup else {
         return view! { <span></span> }.into_any();
     };
+    // Anchor 4 px below the bottom of the caret line so the
+    // popup never overlaps the typed text. The caret line
+    // bottom = padding-top + caret_top_px + line_height_px.
     let style = format!(
         "left: {}px; top: {}px;",
-        popup.anchor_left_px,
-        popup.anchor_top_px.saturating_add(popup.line_height_px),
+        popup.anchor_left_px.saturating_add(EDITOR_FRAME_PAD_PX),
+        popup
+            .anchor_top_px
+            .saturating_add(popup.line_height_px)
+            .saturating_add(EDITOR_FRAME_PAD_PX)
+            .saturating_add(4),
     );
     let item_count = popup.items.len();
     let items = popup

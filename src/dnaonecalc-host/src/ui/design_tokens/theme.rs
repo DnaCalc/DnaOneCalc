@@ -3189,32 +3189,37 @@ pub const ONECALC_THEME_CSS: &str = r#"
 .onecalc-completion-popup {
   position: absolute;
   z-index: 10;
-  width: 280px;
-  max-height: 220px;
+  width: 220px;
+  max-height: 180px;
   overflow-y: auto;
   background: var(--oc-color-surface);
   border: 1px solid var(--oc-color-card-edge);
-  border-radius: var(--oc-radius-panel);
-  box-shadow: var(--oc-shadow-strong);
+  border-radius: 6px;
+  /* Lighter shadow than --oc-shadow-strong: this is a dropdown,
+     not a dialog. */
+  box-shadow: 0 6px 14px rgba(31, 42, 44, 0.10);
   font-family: var(--oc-font-ui);
   pointer-events: none;
+  padding: 2px 0;
 }
 
 .onecalc-completion-popup__item {
   display: grid;
-  grid-template-columns: 1.1rem 1fr auto;
+  grid-template-columns: 0.9rem 1fr auto;
   align-items: center;
-  gap: var(--oc-space-2);
-  padding: 0.25rem var(--oc-space-3);
+  gap: 6px;
+  /* Tighter row padding so the popup reads as a quiet dropdown
+     rather than a card. */
+  padding: 1px var(--oc-space-2);
   cursor: pointer;
   pointer-events: auto;
-  font-size: 0.85rem;
-  line-height: 1.3;
+  font-size: 0.78rem;
+  line-height: 1.35;
   color: var(--oc-color-ink);
 }
 
 .onecalc-completion-popup__item:hover {
-  background: rgba(36, 93, 90, 0.08);
+  background: rgba(36, 93, 90, 0.06);
 }
 
 .onecalc-completion-popup__item[data-selected="true"] {
@@ -3224,7 +3229,8 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-completion-popup__glyph {
   font-family: var(--oc-font-mono);
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 0.72rem;
   text-align: center;
   color: var(--oc-color-accent);
 }
@@ -3242,7 +3248,7 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-completion-popup__kind {
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   color: var(--oc-color-muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
