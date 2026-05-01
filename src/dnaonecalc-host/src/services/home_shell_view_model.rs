@@ -65,8 +65,54 @@ pub struct HomeShellViewModel {
     /// browser adapter populates them on the first input event; until
     /// then the popup cannot be positioned and is suppressed).
     pub completion_popup: Option<CompletionPopupView>,
+    /// Signature-help line rendered ABOVE the caret while the caret
+    /// sits inside an open function call. `None` when:
+    ///   * the editor document does not carry a `signature_help` from
+    ///     the bridge,
+    ///   * the document is stale (its `source_text` does not match
+    ///     `raw_entered_cell_text`), or
+    ///   * the completion popup is already `Open` at the same caret
+    ///     (popup wins to avoid double-stacking; signature help
+    ///     re-appears the moment the popup dismisses).
+    pub signature_help: Option<SignatureHelpView>,
     pub result_view: ResultView,
     pub status: StatusView,
+}
+
+/// View-model shape for the signature-help line. Mirrors the
+/// completion-popup geometry primitives so the renderer uses one
+/// shared positioning convention; the difference is purely that
+/// the help line sits ABOVE the caret instead of below.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHelpView {
+    /// Display text of the function being called (e.g. `SUM`). Comes
+    /// straight from the upstream `SignatureHelpContext`.
+    pub callee_text: String,
+    /// Pixel anchor of the caret-box top-left, relative to the editor
+    /// frame's origin. The renderer offsets `top_px` UPWARD by the
+    /// signature-help line's own height so the help sits above the
+    /// line the caret occupies, not on top of it.
+    pub anchor_left_px: usize,
+    pub anchor_top_px: usize,
+    /// Caret line height in pixels — used for the BELOW-caret fallback
+    /// when the help line would clip the top of the editor frame.
+    pub line_height_px: usize,
+    /// Parameter list rendered with the active argument bolded. Built
+    /// from `function_help.argument_help`; an empty vec is rendered
+    /// as just the callee name with bare parens.
+    pub parameters: Vec<SignatureHelpParameter>,
+    /// Active-parameter index, clamped to `parameters.len()`. `None`
+    /// when the bridge's index is out of range (caret is past the
+    /// last parameter, e.g. one extra trailing comma) — the renderer
+    /// shows the parameter list with no bolded entry in that case.
+    pub active_parameter: Option<usize>,
+}
+
+/// One parameter in the signature-help line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHelpParameter {
+    pub name: String,
+    pub is_active: bool,
 }
 
 /// View-model shape for the completion popup. Carries the anchor pixel
@@ -360,6 +406,7 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
     let editor_metrics = project_editor_metrics(formula_space, &syntax_runs);
     let result_context = project_result_context(formula_space);
     let completion_popup = project_completion_popup(formula_space);
+    let signature_help = project_signature_help(formula_space, completion_popup.is_some());
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -370,9 +417,84 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
         editor_metrics,
         result_context,
         completion_popup,
+        signature_help,
         result_view,
         status: project_status_view(formula_space),
     }
+}
+
+/// Project the bridge's signature-help context into the home shell's
+/// renderable view-model.
+///
+/// Returns `None` when:
+///   * the editor document is missing or stale (`source_text !=
+///     raw_entered_cell_text`),
+///   * the bridge did not produce a `signature_help` for the current
+///     caret position (the user is not inside an open function call),
+///   * the caret-box metrics have not yet been measured (without
+///     metrics the anchor cannot be placed; same gate as the
+///     completion popup), or
+///   * the completion popup is already `Open` at the same caret —
+///     popup wins to avoid stacking two overlays at the same spot.
+///
+/// The parameter list is sourced from the matching function-help
+/// packet's `argument_help` rather than parsing the formatted
+/// `signature_form.display_signature` string. If the function-help
+/// packet is missing, fall back to a single empty parameter list so
+/// the callee name still renders.
+fn project_signature_help(
+    formula_space: &FormulaSpaceState,
+    completion_popup_open: bool,
+) -> Option<SignatureHelpView> {
+    if completion_popup_open {
+        return None;
+    }
+
+    let document = formula_space.editor_document.as_ref()?;
+    if document.source_text != formula_space.raw_entered_cell_text {
+        return None;
+    }
+
+    let signature_help_context = document.signature_help.as_ref()?;
+    let metrics = formula_space.editor_box_metrics?;
+
+    let parameters: Vec<SignatureHelpParameter> = document
+        .function_help
+        .as_ref()
+        .map(|packet| {
+            packet
+                .argument_help
+                .iter()
+                .enumerate()
+                .map(|(index, name)| SignatureHelpParameter {
+                    name: name.clone(),
+                    is_active: index == signature_help_context.active_argument_index,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let active_parameter = if signature_help_context.active_argument_index < parameters.len() {
+        Some(signature_help_context.active_argument_index)
+    } else {
+        None
+    };
+
+    let caret_offset = formula_space.editor_surface_state.caret.offset;
+    let anchor = caret_box_for_offset(
+        &formula_space.raw_entered_cell_text,
+        caret_offset,
+        metrics,
+    );
+
+    Some(SignatureHelpView {
+        callee_text: signature_help_context.callee_text.clone(),
+        anchor_left_px: anchor.left_px,
+        anchor_top_px: anchor.top_px,
+        line_height_px: metrics.line_height_px.max(1),
+        parameters,
+        active_parameter,
+    })
 }
 
 /// Project the completion popup state into a renderable view-model.
@@ -1336,6 +1458,204 @@ mod tests {
         let popup = vm.completion_popup.expect("popup view present");
         // Anchor offset = 1; left_px = 1 * 9 = 9. NOT 4 * 9 = 36.
         assert_eq!(popup.anchor_left_px, 9);
+    }
+
+    // -----------------------------------------------------------------
+    // Signature help
+    // -----------------------------------------------------------------
+
+    fn metrics_9x22() -> crate::ui::editor::geometry::TextareaMeasurementMetrics {
+        crate::ui::editor::geometry::TextareaMeasurementMetrics {
+            char_width_px: 9,
+            line_height_px: 22,
+            scroll_top_px: 0,
+            scroll_left_px: 0,
+        }
+    }
+
+    fn document_with_signature_help_for_sum(
+        source_text: &str,
+        active_argument_index: usize,
+    ) -> crate::adapters::oxfml::EditorDocument {
+        use oxfml_core::syntax::green::SyntaxKind;
+        let mut document = sample_editor_document(source_text);
+        document.signature_help =
+            Some(crate::adapters::oxfml::SignatureHelpContext {
+                callee_text: "SUM".to_string(),
+                call_span: crate::adapters::oxfml::FormulaTextSpan {
+                    start: 1,
+                    len: source_text.chars().count().saturating_sub(1),
+                },
+                active_argument_index,
+                invocation_kind: SyntaxKind::CallExpr,
+            });
+        document.function_help =
+            Some(crate::adapters::oxfml::FunctionHelpPacket {
+                lookup_key: "SUM".to_string(),
+                library_context_snapshot_ref: None,
+                display_name: "SUM".to_string(),
+                signature_forms: vec![crate::adapters::oxfml::FunctionHelpSignatureForm {
+                    display_signature: "SUM(number1, number2, ...)".to_string(),
+                    min_arity: 1,
+                    max_arity: None,
+                }],
+                argument_help: vec![
+                    "number1".to_string(),
+                    "number2".to_string(),
+                    "additional_numbers".to_string(),
+                ],
+                short_description: Some("Adds numbers together.".to_string()),
+                availability_summary: Some("supported".to_string()),
+                deferred_or_profile_limited: false,
+            });
+        document
+    }
+
+    #[test]
+    fn signature_help_view_built_from_editor_document() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+        formula_space.editor_surface_state.caret.offset = 5;
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let help = vm.signature_help.expect("signature help projected");
+        assert_eq!(help.callee_text, "SUM");
+        assert_eq!(help.parameters.len(), 3);
+        assert_eq!(help.parameters[0].name, "number1");
+        assert!(help.parameters[0].is_active);
+        assert!(!help.parameters[1].is_active);
+        assert_eq!(help.active_parameter, Some(0));
+        // Anchor at caret offset 5 with char_width 9 → left 45.
+        assert_eq!(help.anchor_left_px, 45);
+        assert_eq!(help.line_height_px, 22);
+    }
+
+    #[test]
+    fn signature_help_view_active_argument_advances_after_comma() {
+        // After typing `=SUM(1,` the bridge bumps active_argument_index
+        // to 1 — the second parameter is now the active one.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,");
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(1,", 1));
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+        formula_space.editor_surface_state.caret.offset = 7;
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let help = vm.signature_help.expect("signature help projected");
+        assert_eq!(help.active_parameter, Some(1));
+        assert!(!help.parameters[0].is_active);
+        assert!(help.parameters[1].is_active);
+        assert!(!help.parameters[2].is_active);
+    }
+
+    #[test]
+    fn signature_help_view_active_argument_clamps_when_out_of_range() {
+        // Bridge reports active_argument_index = 5 but argument_help
+        // has 3 entries. Clamp to None (no parameter bolded) rather
+        // than panic or wrap.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2,3,4,5,");
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(1,2,3,4,5,", 5));
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+        formula_space.editor_surface_state.caret.offset = 15;
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let help = vm.signature_help.expect("signature help projected");
+        assert_eq!(help.active_parameter, None);
+        assert!(help.parameters.iter().all(|p| !p.is_active));
+    }
+
+    #[test]
+    fn signature_help_view_empty_when_document_is_stale() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2");
+        // Document still reflects the pre-`,2` state — stale by one keystroke.
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.signature_help.is_none());
+    }
+
+    #[test]
+    fn signature_help_view_empty_when_no_signature_help_in_document() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        // Plain sample document carries function_help but no
+        // signature_help (sample_editor_document populates the help
+        // packet but signature_help only when explicitly attached).
+        let mut document = sample_editor_document("=SUM(1,2)");
+        document.signature_help = None;
+        formula_space.editor_document = Some(document);
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.signature_help.is_none());
+    }
+
+    #[test]
+    fn signature_help_view_empty_when_metrics_unmeasured() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        // editor_box_metrics deliberately None — geometry can't anchor yet.
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.signature_help.is_none());
+    }
+
+    #[test]
+    fn signature_help_view_suppressed_when_completion_popup_open() {
+        // Popup wins; signature help hides until the popup dismisses.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(s");
+        formula_space.editor_document =
+            Some(document_with_signature_help_for_sum("=SUM(s", 0));
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+        formula_space.completion_popup = open_popup_state();
+        formula_space.editor_surface_state.caret.offset = 6;
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.completion_popup.is_some());
+        assert!(
+            vm.signature_help.is_none(),
+            "signature help must be suppressed while the completion popup is open",
+        );
+    }
+
+    #[test]
+    fn signature_help_view_renders_callee_only_when_function_help_packet_missing() {
+        // Defensive: bridge gives signature_help but no function_help
+        // (theoretically possible during a brief stale-document tick).
+        // The view-model still renders the callee — empty parameter list.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        let mut document = document_with_signature_help_for_sum("=SUM(", 0);
+        document.function_help = None;
+        formula_space.editor_document = Some(document);
+        formula_space.editor_box_metrics = Some(metrics_9x22());
+        formula_space.editor_surface_state.caret.offset = 5;
+
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let help = vm.signature_help.expect("signature help projected");
+        assert_eq!(help.callee_text, "SUM");
+        assert!(help.parameters.is_empty());
+        assert_eq!(help.active_parameter, None);
     }
 
     // -----------------------------------------------------------------

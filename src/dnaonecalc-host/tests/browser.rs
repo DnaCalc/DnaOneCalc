@@ -21,3 +21,6 @@ mod caret_geometry;
 
 #[path = "browser/completion.rs"]
 mod completion;
+
+#[path = "browser/signature_help.rs"]
+mod signature_help;

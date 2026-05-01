@@ -34,7 +34,7 @@ use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
     ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, ResultClassPill,
-    ResultContextChip, ResultKind, ResultView, StatusView,
+    ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
@@ -230,6 +230,7 @@ pub fn HomeShell(
     let editor_metrics = move || view_model.get().map(|vm| vm.editor_metrics);
     let result_context = move || view_model.get().map(|vm| vm.result_context);
     let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
+    let signature_help = move || view_model.get().and_then(|vm| vm.signature_help);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
     // Browser-measured caret-box metrics surfaced as data-attributes on
@@ -371,6 +372,7 @@ pub fn HomeShell(
                                 }
                             ></textarea>
                             {move || render_completion_popup(completion_popup(), on_completion_click)}
+                            {move || render_signature_help(signature_help())}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
                             {move || render_editor_metrics_chip(editor_metrics())}
@@ -642,6 +644,83 @@ fn splice_textarea_value(
 /// the popup wrapper is `pointer-events: none` so background clicks
 /// fall through to the textarea, while each item row reactivates
 /// `pointer-events: auto` for click handling.
+/// Render the signature-help line ABOVE the caret.
+///
+/// The view-model emits `None` whenever the help should be hidden
+/// (no call in progress, document stale, metrics unmeasured, popup
+/// open at the same caret). This function only positions the help
+/// and renders the parameter list with the active parameter
+/// bolded; all suppression is the projector's responsibility.
+///
+/// Anchor strategy: the projector hands us the caret-box top-left in
+/// pixels; we offset upward by `signature_help_height + gap`. The
+/// help line is `max-height: 28px` so it's narrow enough not to
+/// fight the syntax overlay or the squiggle layer for stacking
+/// space. Below-the-caret fallback (when the line would clip the
+/// frame top) is handled with CSS `transform: translateY(...)` —
+/// see the theme's `.onecalc-signature-help--flipped` rule.
+///
+/// Wrapper is `pointer-events: none` so background clicks fall
+/// through to the textarea (the help is non-interactive).
+fn render_signature_help(help: Option<SignatureHelpView>) -> AnyView {
+    let Some(help) = help else {
+        return view! { <span></span> }.into_any();
+    };
+    // Position UPWARD from the caret-box top by the help line's
+    // approximate height plus a small gap. We use a CSS transform
+    // (translateY(-100%) - small gap) so the actual rendered height
+    // is what's used, not a guessed pixel count — this keeps the
+    // anchor exact across font-metrics changes.
+    let style = format!(
+        "left: {}px; top: {}px;",
+        help.anchor_left_px,
+        help.anchor_top_px,
+    );
+    let parameter_count = help.parameters.len();
+    let active_index_attr = help
+        .active_parameter
+        .map(|i| i.to_string())
+        .unwrap_or_else(|| "-1".to_string());
+    let parameters = help
+        .parameters
+        .into_iter()
+        .enumerate()
+        .map(|(index, param)| {
+            let is_last = index + 1 == parameter_count;
+            let separator = if is_last { "" } else { ", " };
+            let class = if param.is_active {
+                "onecalc-signature-help__parameter onecalc-signature-help__parameter--active"
+            } else {
+                "onecalc-signature-help__parameter"
+            };
+            let active_attr = if param.is_active { "true" } else { "false" };
+            view! {
+                <span class=class data-active=active_attr>{param.name}</span>
+                <span class="onecalc-signature-help__separator" aria-hidden="true">
+                    {separator}
+                </span>
+            }
+            .into_any()
+        })
+        .collect::<Vec<_>>();
+    view! {
+        <div
+            class="onecalc-signature-help"
+            role="status"
+            aria-live="polite"
+            data-active-parameter=active_index_attr
+            data-parameter-count=parameter_count.to_string()
+            style=style
+        >
+            <span class="onecalc-signature-help__callee">{help.callee_text}</span>
+            <span class="onecalc-signature-help__paren" aria-hidden="true">"("</span>
+            {parameters}
+            <span class="onecalc-signature-help__paren" aria-hidden="true">")"</span>
+        </div>
+    }
+    .into_any()
+}
+
 fn render_completion_popup(
     popup: Option<CompletionPopupView>,
     on_click: Callback<String>,

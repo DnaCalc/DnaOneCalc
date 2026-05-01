@@ -3231,6 +3231,61 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: rgba(255, 250, 244, 0.78);
 }
 
+/* ===== Signature-help line ====================================
+   A non-interactive one-line tooltip rendered ABOVE the caret while
+   the caret sits inside an open function call (`=SUM(`). Re-uses the
+   completion-popup anchoring scheme but transforms upward so the
+   tooltip sits on the line above the caret rather than below. The
+   completion popup wins when both want the same caret — see the
+   view-model projector's suppression rule. */
+.onecalc-signature-help {
+  position: absolute;
+  z-index: 9; /* one below the completion popup (z=10) */
+  /* Anchor the BOTTOM-left of the tooltip at the caret-box top, so
+     the help renders entirely above the caret. The 6px gap keeps
+     the tooltip from kissing the caret. */
+  transform: translateY(calc(-100% - 6px));
+  max-width: 380px;
+  padding: 0.25rem var(--oc-space-3);
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-card-edge);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-panel);
+  font-family: var(--oc-font-mono);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--oc-color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.onecalc-signature-help__callee {
+  font-weight: 600;
+  color: var(--oc-color-accent);
+}
+
+.onecalc-signature-help__paren {
+  color: var(--oc-color-muted);
+}
+
+.onecalc-signature-help__parameter {
+  color: var(--oc-color-ink);
+}
+
+.onecalc-signature-help__parameter--active {
+  font-weight: 700;
+  color: var(--oc-color-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--oc-color-accent);
+  text-underline-offset: 3px;
+}
+
+.onecalc-signature-help__separator {
+  color: var(--oc-color-muted);
+}
+
 .onecalc-home-shell__textarea {
   position: relative;
   width: 100%;
