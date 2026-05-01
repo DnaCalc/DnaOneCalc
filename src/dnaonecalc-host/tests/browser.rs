@@ -51,3 +51,6 @@ mod foot_chip_modes;
 
 #[path = "browser/walk_tree_modes.rs"]
 mod walk_tree_modes;
+
+#[path = "browser/walk_tree_intermediate_values.rs"]
+mod walk_tree_intermediate_values;

@@ -278,12 +278,18 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
         .enumerate()
         .map(|(index, call)| FormulaWalkNode {
             node_id: format!("node:prepared:{index}"),
-            label: format!("Prepared call: {}", call.function_name),
-            value_preview: Some(format!(
-                "args: {} · profile: {:?}",
-                call.prepared_arguments.len(),
-                call.arg_preparation_profile
-            )),
+            label: call.function_name.clone(),
+            value_preview: call
+                .returned_value
+                .as_ref()
+                .map(|value| format_eval_value_for_display(value, None))
+                .or_else(|| {
+                    Some(format!(
+                        "args: {} · profile: {:?}",
+                        call.prepared_arguments.len(),
+                        call.arg_preparation_profile
+                    ))
+                }),
             state: FormulaWalkNodeState::Evaluated,
             children: call
                 .prepared_arguments
@@ -293,8 +299,10 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                     node_id: format!("node:prepared:{index}:arg:{arg_ordinal}"),
                     label: format!("arg[{}]", argument.ordinal),
                     value_preview: argument
-                        .reference_target
-                        .clone()
+                        .resolved_value
+                        .as_ref()
+                        .map(|value| format_eval_value_for_display(value, None))
+                        .or_else(|| argument.reference_target.clone())
                         .or_else(|| Some(format!("eval={:?}", argument.evaluation_mode))),
                     state: if argument.reference_target.is_some() {
                         FormulaWalkNodeState::Bound
