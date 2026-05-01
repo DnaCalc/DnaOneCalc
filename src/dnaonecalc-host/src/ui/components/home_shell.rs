@@ -158,13 +158,22 @@ pub fn HomeShell(
     // preventDefault's them. Every other key is allowed through to
     // the textarea unchanged.
     let on_textarea_keydown = move |ev: WebKeyboardEvent| {
-        // Ctrl+Alt+D toggles the workspace view-mode (User vs
-        // Developer). Handled FIRST so the chord wins regardless
-        // of popup or drill state. The Alt-modified form is used
-        // (rather than Ctrl+Shift+D) because Chrome / Edge bind
-        // Ctrl+Shift+D to "Bookmark all tabs" and Ctrl+D alone is
-        // already taken by the formula drill-down toggle below.
-        if ev.ctrl_key() && ev.alt_key() && ev.key().eq_ignore_ascii_case("d") {
+        // Workspace view-mode toggle: Ctrl+Alt+D OR Ctrl+Shift+D.
+        // Both are accepted because environments differ:
+        //   * Ctrl+Alt+D collides with Windows Magnifier's
+        //     "dock mode" shortcut on machines where Magnifier
+        //     is active or its shortcuts are registered, and the
+        //     OS swallows it before the browser sees it.
+        //   * Ctrl+Shift+D is bound by Chrome / Edge to "Bookmark
+        //     all tabs" but the page's keydown listener fires
+        //     first, so preventDefault here prevents the dialog.
+        // Either chord works; the status-foot button (rendered
+        // always) is the discoverable fallback for users who
+        // don't reach for chords.
+        if ev.ctrl_key()
+            && (ev.alt_key() || ev.shift_key())
+            && ev.key().eq_ignore_ascii_case("d")
+        {
             ev.prevent_default();
             state.update(|state| {
                 let _ = toggle_view_mode_on_workspace(state);
@@ -172,11 +181,19 @@ pub fn HomeShell(
             return;
         }
 
-        // Ctrl+D toggles the formula drill-down. Handled BEFORE the
-        // popup-open early-return because the chord is global —
-        // works whether the popup is open or closed. preventDefault
-        // shadows the browser's native bookmark-this-page behaviour.
-        if ev.ctrl_key() && !ev.alt_key() && ev.key().eq_ignore_ascii_case("d") {
+        // Ctrl+D (no Shift, no Alt) toggles the formula
+        // drill-down. Handled BEFORE the popup-open early-return
+        // because the chord is global — works whether the popup
+        // is open or closed. preventDefault shadows the browser's
+        // native bookmark-this-page behaviour. The shift_key /
+        // alt_key gates ensure Ctrl+Shift+D and Ctrl+Alt+D fall
+        // through to the view-mode toggle above rather than
+        // accidentally toggling the drill.
+        if ev.ctrl_key()
+            && !ev.shift_key()
+            && !ev.alt_key()
+            && ev.key().eq_ignore_ascii_case("d")
+        {
             ev.prevent_default();
             state.update(|state| {
                 let _ = toggle_formula_drill_on_active_formula_space(state);
@@ -300,6 +317,15 @@ pub fn HomeShell(
     let on_formula_drill_toggle = Callback::new(move |()| {
         state.update(|state| {
             let _ = toggle_formula_drill_on_active_formula_space(state);
+        });
+    });
+
+    // View-mode toggle callback — used by both the status-foot
+    // button (mouse) and the Ctrl+Alt+D / Ctrl+Shift+D chords
+    // (keyboard).
+    let on_view_mode_toggle = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = toggle_view_mode_on_workspace(state);
         });
     });
 
@@ -565,30 +591,47 @@ pub fn HomeShell(
 
             <footer class="onecalc-home-shell__statusfoot">
                 {move || render_status_foot(status_view())}
-                {move || render_view_mode_tag(view_mode())}
+                {move || render_view_mode_button(view_mode(), on_view_mode_toggle)}
             </footer>
         </div>
     }
 }
 
-/// Render the view-mode tag in the status-foot. Quiet right-aligned
-/// "dev" badge in Developer mode; nothing in User mode (the
-/// default — most users should not be reminded of a mode they
-/// have not opted into).
-fn render_view_mode_tag(mode: ViewMode) -> AnyView {
-    match mode {
-        ViewMode::User => view! { <span></span> }.into_any(),
-        ViewMode::Developer => view! {
-            <span
-                class="onecalc-home-shell__statusfoot-mode-tag"
-                data-view-mode="developer"
-                aria-label="developer view mode"
-            >
-                "dev"
-            </span>
-        }
-        .into_any(),
+/// Render the view-mode toggle button in the status-foot.
+/// Always rendered so users can opt into Developer view without
+/// needing to discover the keyboard chord. The button:
+///
+/// * In User mode shows a muted "dev" pill with `aria-pressed=
+///   false` — clicking flips the workspace into Developer mode.
+/// * In Developer mode shows the same pill in the accent palette
+///   with `aria-pressed=true` — clicking flips back to User.
+///
+/// Uses `on:mousedown` (not `on:click`) so a click does not pull
+/// focus away from the textarea: the textarea retains its caret
+/// throughout the toggle.
+fn render_view_mode_button(mode: ViewMode, on_toggle: Callback<()>) -> AnyView {
+    let pressed_attr = match mode {
+        ViewMode::User => "false",
+        ViewMode::Developer => "true",
+    };
+    let mode_slug = mode.slug();
+    view! {
+        <button
+            type="button"
+            class="onecalc-home-shell__statusfoot-mode-button"
+            data-view-mode=mode_slug
+            aria-label="toggle developer view mode"
+            aria-pressed=pressed_attr
+            title="Toggle developer view (Ctrl+Alt+D or Ctrl+Shift+D)"
+            on:mousedown=move |ev| {
+                ev.prevent_default();
+                on_toggle.run(());
+            }
+        >
+            "dev"
+        </button>
     }
+    .into_any()
 }
 
 /// Render the status-foot strip: a colored dot reflecting bridge health

@@ -71,38 +71,149 @@ async fn ctrl_alt_d_toggles_data_view_mode_attribute() {
 }
 
 #[wasm_bindgen_test(async)]
-async fn status_foot_dev_tag_visible_only_in_developer_mode() {
+async fn status_foot_dev_button_is_always_present_with_mode_attribute() {
+    // Pin the button is ALWAYS rendered (so users can discover
+    // Developer mode without the chord) and that data-view-mode
+    // reflects the active mode. aria-pressed mirrors the same
+    // signal for assistive tech.
     let shell = mount_home_shell();
     let textarea = shell.textarea().await;
 
-    assert!(
-        shell
-            .select(".onecalc-home-shell__statusfoot-mode-tag")
-            .is_none(),
-        "User mode (default) must not render the dev tag",
+    let button = shell
+        .select(".onecalc-home-shell__statusfoot-mode-button")
+        .expect("dev button rendered in User mode");
+    assert_eq!(
+        button.get_attribute("data-view-mode").as_deref(),
+        Some("user"),
     );
+    assert_eq!(button.get_attribute("aria-pressed").as_deref(), Some("false"));
+    assert_eq!(button.text_content().unwrap_or_default().trim(), "dev");
 
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
 
-    let tag = shell
-        .select(".onecalc-home-shell__statusfoot-mode-tag")
-        .expect("dev tag mounted in Developer mode");
+    let button = shell
+        .select(".onecalc-home-shell__statusfoot-mode-button")
+        .expect("dev button still rendered after toggle");
     assert_eq!(
-        tag.get_attribute("data-view-mode").as_deref(),
+        button.get_attribute("data-view-mode").as_deref(),
         Some("developer"),
     );
-    assert_eq!(tag.text_content().unwrap_or_default().trim(), "dev");
+    assert_eq!(button.get_attribute("aria-pressed").as_deref(), Some("true"));
 
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
-    assert!(
-        shell
-            .select(".onecalc-home-shell__statusfoot-mode-tag")
-            .is_none(),
-        "toggling back to User mode must remove the dev tag",
+    let button = shell
+        .select(".onecalc-home-shell__statusfoot-mode-button")
+        .expect("dev button after second toggle");
+    assert_eq!(
+        button.get_attribute("data-view-mode").as_deref(),
+        Some("user"),
+    );
+}
+
+#[wasm_bindgen_test(async)]
+async fn ctrl_shift_d_also_toggles_view_mode() {
+    // Ctrl+Shift+D is the second accepted chord for the
+    // view-mode toggle. Pin that it works in addition to
+    // Ctrl+Alt+D (some platforms swallow Ctrl+Alt+D for
+    // accessibility shortcuts; the user confirmed in their
+    // setup that Ctrl+Shift+D reaches the page).
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+
+    dispatch_keydown_with_modifiers(&textarea, "d", true, true, false);
+    super::scaffold::flush_microtasks(15).await;
+    let root = shell.select(".onecalc-home-shell").expect("root");
+    assert_eq!(
+        root.get_attribute("data-view-mode").as_deref(),
+        Some("developer"),
+        "Ctrl+Shift+D must toggle view-mode (regression of Ctrl+Shift+D \
+         accidentally firing the formula-drill chord)",
     );
 
+    dispatch_keydown_with_modifiers(&textarea, "d", true, true, false);
+    super::scaffold::flush_microtasks(15).await;
+    let root = shell.select(".onecalc-home-shell").expect("root");
+    assert_eq!(
+        root.get_attribute("data-view-mode").as_deref(),
+        Some("user"),
+    );
+
+    shell.tear_down();
+}
+
+#[wasm_bindgen_test(async)]
+async fn ctrl_shift_d_does_not_open_formula_drill_panel() {
+    // Specific regression pin for the bug the user reported:
+    // Ctrl+Shift+D was acting like Ctrl+D because the Ctrl+D
+    // condition didn't exclude the shift modifier. The drill
+    // panel must NOT open on Ctrl+Shift+D.
+    let shell = mount_home_shell();
+    let textarea = shell.textarea().await;
+    dispatch_input(&textarea, "=SUM(1,2)");
+
+    dispatch_keydown_with_modifiers(&textarea, "d", true, true, false);
+    super::scaffold::flush_microtasks(15).await;
+
+    let panel = shell
+        .select(".onecalc-home-shell__formula-drill-panel")
+        .expect("panel rendered");
+    assert_eq!(
+        panel.get_attribute("data-expanded").as_deref(),
+        Some("false"),
+        "Ctrl+Shift+D must NOT open the formula drill (it toggles view-mode)",
+    );
+
+    shell.tear_down();
+}
+
+#[wasm_bindgen_test(async)]
+async fn clicking_status_foot_dev_button_toggles_view_mode() {
+    use wasm_bindgen::JsCast;
+    let shell = mount_home_shell();
+    let _textarea = shell.textarea().await;
+
+    let button = shell
+        .select(".onecalc-home-shell__statusfoot-mode-button")
+        .expect("dev button rendered");
+
+    // Use mousedown (matches the component's on:mousedown handler).
+    let init = web_sys::MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let mousedown = web_sys::MouseEvent::new_with_mouse_event_init_dict("mousedown", &init)
+        .expect("mousedown event");
+    button
+        .dispatch_event(&mousedown)
+        .expect("dispatch mousedown");
+    super::scaffold::flush_microtasks(15).await;
+
+    let root = shell.select(".onecalc-home-shell").expect("root");
+    assert_eq!(
+        root.get_attribute("data-view-mode").as_deref(),
+        Some("developer"),
+        "clicking the dev button must toggle into Developer mode",
+    );
+
+    // Clicking again toggles back.
+    let button = shell
+        .select(".onecalc-home-shell__statusfoot-mode-button")
+        .expect("dev button still rendered");
+    let mousedown = web_sys::MouseEvent::new_with_mouse_event_init_dict("mousedown", &init)
+        .expect("mousedown event");
+    button
+        .dispatch_event(&mousedown)
+        .expect("dispatch mousedown");
+    super::scaffold::flush_microtasks(15).await;
+
+    let root = shell.select(".onecalc-home-shell").expect("root");
+    assert_eq!(
+        root.get_attribute("data-view-mode").as_deref(),
+        Some("user"),
+    );
+
+    let _ = button.dyn_ref::<web_sys::HtmlElement>(); // silence unused-warning
     shell.tear_down();
 }
 

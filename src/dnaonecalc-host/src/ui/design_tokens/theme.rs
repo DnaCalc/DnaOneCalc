@@ -3727,7 +3727,13 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-border);
 }
 
-.onecalc-home-shell__statusfoot-mode-tag {
+/* Status-foot view-mode toggle button. Always rendered so users
+   can opt into Developer view without learning a chord. Two
+   visual states driven by `data-view-mode`:
+     - user: muted, low-contrast — present but unobtrusive,
+     - developer: accent-soft palette, high-contrast — actively
+       signalling the workspace is in Developer mode. */
+.onecalc-home-shell__statusfoot-mode-button {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -3739,9 +3745,28 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid var(--oc-color-border);
+  background: transparent;
+  color: var(--oc-color-muted);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.onecalc-home-shell__statusfoot-mode-button:hover {
   background: var(--oc-color-accent-soft);
   color: var(--oc-color-accent);
-  border: 1px solid var(--oc-color-card-edge);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__statusfoot-mode-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 1px;
+}
+
+.onecalc-home-shell__statusfoot-mode-button[data-view-mode="developer"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
 }
 "#;
 
