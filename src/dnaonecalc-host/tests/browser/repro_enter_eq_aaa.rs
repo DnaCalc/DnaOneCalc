@@ -1,35 +1,29 @@
-//! Reproduction for the user-reported bug:
+//! Regression pin for the previously-reported bug:
 //!
 //!   "Press <enter>, then '=' then 'aaa'. The a's don't show on
 //!    the screen."
 //!
-//! Root cause is upstream in OxFml: when the formula source text
-//! starts with a leading whitespace character (e.g. `\n`), the
-//! editor tokenizer emits a snapshot that ends after the FIRST
-//! non-trivia token and silently drops the remaining text. For
-//! `\n=aaa` the snapshot is `\n` trivia + `=` operator only;
-//! `aaa` is missing entirely. The same input WITHOUT the leading
-//! newline (`=aaa`) tokenizes correctly into `=` + `aaa`.
+//! Root cause was an upstream OxFml tokenizer truncation: when
+//! the formula source text started with a leading whitespace
+//! character (e.g. `\n`), the editor tokenizer emitted a snapshot
+//! that ended after the FIRST non-trivia token and silently
+//! dropped the remaining text. The same input WITHOUT the leading
+//! newline tokenized correctly.
 //!
-//! Status: PENDING upstream fix in OxFml's editor tokenizer. The
-//! fix belongs in `oxfml_core::consumer::editor`'s tokenizer /
-//! syntax-snapshot builder, NOT in DnaOneCalc. See
-//! `docs/handoffs/oxfml_leading_whitespace_truncation.md` for the
-//! prompt routed to OxFml.
+//! Status: FIXED upstream by OxFml commit 162f224 ("Fix editor
+//! token snapshot truncation"). DnaOneCalc consumes oxfml_core
+//! via a path dependency, so this repo picks up the fix
+//! automatically on the next cargo build. The two invariants
+//! below now run as regression pins — they verify that the
+//! upstream parser's snapshot covers the whole source text for
+//! the leading-newline class of input.
 //!
-//! Both invariants below run real text through the live bridge
-//! and assert the syntax-overlay text equals the textarea value.
-//! They are #[ignore]d today; once the upstream fix lands they
-//! flip back to enabled and act as the regression-prevention
-//! pin.
-//!
-//! IMPORTANT for future agents: do NOT re-enable these tests by
-//! adding host-side gap-fill logic that papers over the upstream
-//! truncation. That route was tried and reverted — it added a
-//! permanent reliance on workaround code, hid the fact that
-//! tokens were lost, and would have masked any future upstream
-//! tokenizer regression. The right place for the fix is upstream.
-//! See `docs/OPERATIONS.md` §9 (Root-cause Discipline).
+//! IMPORTANT for future agents: if these tests start failing
+//! after an OxFml update, the fix belongs UPSTREAM. Do NOT add
+//! host-side gap-fill logic that papers over a tokenizer
+//! truncation. That route was tried and reverted before the
+//! upstream fix landed; see `docs/OPERATIONS.md` §9 (Root-cause
+//! Discipline) for why.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -40,7 +34,6 @@ use super::scaffold::{dispatch_input, mount_home_shell};
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
-#[ignore = "pending upstream OxFml fix: leading whitespace truncates token snapshot"]
 async fn typing_enter_then_eq_then_aaa_renders_all_chars_in_overlay() {
     let shell = mount_home_shell();
     let textarea = shell.textarea().await;
