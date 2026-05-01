@@ -39,3 +39,6 @@ mod repro_enter_eq_aaa;
 
 #[path = "browser/view_mode.rs"]
 mod view_mode;
+
+#[path = "browser/foot_chip_modes.rs"]
+mod foot_chip_modes;

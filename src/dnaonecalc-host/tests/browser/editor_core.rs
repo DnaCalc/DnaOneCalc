@@ -277,30 +277,46 @@ async fn editor_metrics_chip_reports_token_function_diagnostic_counts() {
 
 #[wasm_bindgen_test(async)]
 async fn result_context_chip_renders_locale_and_format_seam_markers() {
-    // After Bead 19, the result-foot chip exposes data-seam-id +
-    // aria-describedby for each SEAM-pending field. This invariant pins
-    // the marker contract so the seam-status board (later bead) can
-    // enumerate them without scraping CSS classes.
+    // After Bead 19 + Bead 31, the result-foot chip exposes
+    // data-seam-id + aria-describedby attributes on each
+    // SEAM-pending field IN BOTH VIEW MODES. The visible
+    // `<NOT IMPL:SEAM-id>` badge text is Developer-mode only;
+    // User mode (default) hides the badge so an Excel user
+    // does not see the noise. This invariant pins both contracts.
     let shell = mount_home_shell();
-    let _textarea = shell.textarea().await;
+    let textarea = shell.textarea().await;
 
+    // The data-seam-id attributes must be present regardless of
+    // mode — that is the seam-status board's read path.
     let context_chip = shell
         .select(".onecalc-home-shell__chip--context")
         .expect("result-context chip rendered");
-    let seam_fields = context_chip.query_selector_all("[data-seam-id]").expect("query ok");
+    let seam_fields = context_chip
+        .query_selector_all("[data-seam-id]")
+        .expect("query ok");
     assert!(
         seam_fields.length() >= 2,
         "expected at least locale + format SEAM-pending fields; got {}",
         seam_fields.length(),
     );
+
+    // In Developer mode the visible chip text surfaces the SEAM
+    // ids inline. Switch via Ctrl+Alt+D and assert.
+    super::scaffold::dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
+    super::scaffold::flush_microtasks(15).await;
+    let context_chip = shell
+        .select(".onecalc-home-shell__chip--context")
+        .expect("context chip still rendered after mode toggle");
     let chip_text = context_chip.text_content().unwrap_or_default();
     assert!(
         chip_text.contains("SEAM-OXFUNC-LOCALE-EXPAND"),
-        "context chip must surface SEAM-OXFUNC-LOCALE-EXPAND; got {chip_text:?}",
+        "Developer-mode context chip must surface SEAM-OXFUNC-LOCALE-EXPAND; \
+         got {chip_text:?}",
     );
     assert!(
         chip_text.contains("SEAM-OXFUNC-FORMAT-GENERAL"),
-        "context chip must surface SEAM-OXFUNC-FORMAT-GENERAL; got {chip_text:?}",
+        "Developer-mode context chip must surface SEAM-OXFUNC-FORMAT-GENERAL; \
+         got {chip_text:?}",
     );
     assert!(
         chip_text.contains("deterministic"),

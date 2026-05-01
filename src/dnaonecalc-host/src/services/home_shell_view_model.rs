@@ -294,11 +294,16 @@ impl CompletionPopupItemView {
 }
 
 /// Editor-foot live-metrics chip projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorMetricsChip {
     pub token_count: usize,
     pub function_count: usize,
     pub diagnostic_count: usize,
+    /// First diagnostic's user-facing message, when one exists.
+    /// Surfaced on the User-mode editor-foot chip so the user sees
+    /// "1 issue: unmatched '('" instead of the developer-mode raw
+    /// counts. None when `diagnostic_count == 0`.
+    pub first_diagnostic_message: Option<String>,
 }
 
 /// Result-foot active-context chip projection. Each field carries either a
@@ -820,6 +825,7 @@ fn project_editor_metrics(
                 token_count: 0,
                 function_count: 0,
                 diagnostic_count: 0,
+                first_diagnostic_message: None,
             }
         }
     };
@@ -827,10 +833,16 @@ fn project_editor_metrics(
         .iter()
         .filter(|run| run.role == SyntaxTokenRole::Function)
         .count();
+    let first_diagnostic_message = document
+        .live_diagnostics
+        .diagnostics
+        .first()
+        .map(|diagnostic| diagnostic.message.clone());
     EditorMetricsChip {
         token_count: document.editor_syntax_snapshot.tokens.len(),
         function_count,
         diagnostic_count: document.live_diagnostics.diagnostics.len(),
+        first_diagnostic_message,
     }
 }
 

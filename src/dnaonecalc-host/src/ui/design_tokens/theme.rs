@@ -3161,6 +3161,27 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border-radius: 3px;
 }
 
+/* User-mode editor-foot chip variants. The "ready" state is
+   muted-sage to subtly confirm the formula parses, and the
+   "warning" state surfaces the first diagnostic message in the
+   warm error palette. */
+.onecalc-home-shell__chip--ready {
+  background: rgba(79, 123, 87, 0.12);
+  color: var(--oc-color-success);
+  border-color: rgba(79, 123, 87, 0.25);
+  font-style: italic;
+}
+
+.onecalc-home-shell__chip--warning {
+  background: rgba(183, 101, 69, 0.10);
+  color: var(--oc-color-warm);
+  border-color: rgba(183, 101, 69, 0.30);
+  font-weight: 500;
+  /* Allow the message to wrap onto multiple lines if long. */
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* Completion popup: absolute-positioned inside the editor frame at
    the caret anchor. The wrapper itself does not capture pointer
    events so background clicks fall through to the textarea; each row

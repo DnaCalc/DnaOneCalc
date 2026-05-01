@@ -533,7 +533,7 @@ pub fn HomeShell(
                             )}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
-                            {move || render_editor_metrics_chip(editor_metrics())}
+                            {move || render_editor_metrics_chip(editor_metrics(), view_mode())}
                             {move || render_formula_drill_toggle(
                                 formula_drill(),
                                 on_formula_drill_toggle,
@@ -557,7 +557,7 @@ pub fn HomeShell(
                             {move || render_result_view(result_view())}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
-                            {move || render_result_context_chip(result_context())}
+                            {move || render_result_context_chip(result_context(), view_mode())}
                         </div>
                     </section>
                 </Show>
@@ -1254,53 +1254,147 @@ fn render_completion_popup_item(
     .into_any()
 }
 
-/// Render the editor-foot live-metrics chip:
-/// `tokens N · functions M · diagnostics K`. Counts come straight from
-/// the view-model; rendering does no arithmetic.
-fn render_editor_metrics_chip(metrics: Option<EditorMetricsChip>) -> AnyView {
+/// Render the editor-foot live-metrics chip. Output shape branches
+/// on the view-mode:
+///
+/// * Developer mode: full counts — `tokens N · functions M ·
+///   diagnostics K`. Same as before this bead.
+/// * User mode (default): a single status chip carrying the
+///   actionable signal an Excel user wants. `<N> issue<s>: <first
+///   message>` in the warning palette when diagnostics exist;
+///   muted "ready" when the formula is well-formed; nothing when
+///   the textarea is empty (no document, all counts zero).
+///
+/// The data-tokens / data-functions / data-diagnostics attributes
+/// stay on the rendered span in BOTH modes so the seam-status
+/// board (later bead) and the corpus can read them without
+/// switching modes.
+fn render_editor_metrics_chip(
+    metrics: Option<EditorMetricsChip>,
+    view_mode: ViewMode,
+) -> AnyView {
     let Some(metrics) = metrics else {
         return view! { <span></span> }.into_any();
     };
-    let summary = format!(
-        "tokens {} · functions {} · diagnostics {}",
-        metrics.token_count, metrics.function_count, metrics.diagnostic_count
-    );
-    view! {
-        <span
-            class="onecalc-home-shell__chip onecalc-home-shell__chip--metrics"
-            data-tokens=metrics.token_count.to_string()
-            data-functions=metrics.function_count.to_string()
-            data-diagnostics=metrics.diagnostic_count.to_string()
-        >
-            {summary}
-        </span>
+    let data_tokens = metrics.token_count.to_string();
+    let data_functions = metrics.function_count.to_string();
+    let data_diagnostics = metrics.diagnostic_count.to_string();
+    match view_mode {
+        ViewMode::Developer => {
+            let summary = format!(
+                "tokens {} · functions {} · diagnostics {}",
+                metrics.token_count, metrics.function_count, metrics.diagnostic_count
+            );
+            view! {
+                <span
+                    class="onecalc-home-shell__chip onecalc-home-shell__chip--metrics"
+                    data-mode="developer"
+                    data-tokens=data_tokens
+                    data-functions=data_functions
+                    data-diagnostics=data_diagnostics
+                >
+                    {summary}
+                </span>
+            }
+            .into_any()
+        }
+        ViewMode::User => {
+            // Empty mount (no document yet, no input): omit the
+            // chip entirely — nothing useful to say.
+            if metrics.token_count == 0 && metrics.diagnostic_count == 0 {
+                return view! { <span></span> }.into_any();
+            }
+            if metrics.diagnostic_count == 0 {
+                return view! {
+                    <span
+                        class="onecalc-home-shell__chip \
+                               onecalc-home-shell__chip--metrics \
+                               onecalc-home-shell__chip--ready"
+                        data-mode="user"
+                        data-status="ready"
+                        data-tokens=data_tokens
+                        data-functions=data_functions
+                        data-diagnostics=data_diagnostics
+                    >
+                        "ready"
+                    </span>
+                }
+                .into_any();
+            }
+            let plural = if metrics.diagnostic_count == 1 {
+                "issue"
+            } else {
+                "issues"
+            };
+            let message = metrics
+                .first_diagnostic_message
+                .clone()
+                .unwrap_or_default();
+            let summary = if message.is_empty() {
+                format!("{} {plural}", metrics.diagnostic_count)
+            } else {
+                format!("{} {plural}: {}", metrics.diagnostic_count, message)
+            };
+            view! {
+                <span
+                    class="onecalc-home-shell__chip \
+                           onecalc-home-shell__chip--metrics \
+                           onecalc-home-shell__chip--warning"
+                    data-mode="user"
+                    data-status="diagnostic"
+                    data-tokens=data_tokens
+                    data-functions=data_functions
+                    data-diagnostics=data_diagnostics
+                >
+                    {summary}
+                </span>
+            }
+            .into_any()
+        }
     }
-    .into_any()
 }
 
-/// Render the result-foot active-context chip: `locale · format · policy`.
-/// Each field is rendered as its own span; SEAM-pending fields carry a
-/// trailing `<NOT IMPL:SEAM-id>` sentinel with `data-seam-id` and an
-/// `aria-describedby`-style attribute so the seam-status board (later
-/// bead) can surface them.
-fn render_result_context_chip(chip: Option<ResultContextChip>) -> AnyView {
+/// Render the result-foot active-context chip: `locale · format ·
+/// policy`. Output shape branches on the view-mode:
+///
+/// * Developer mode: SEAM-pending fields carry a trailing
+///   `<NOT IMPL:SEAM-id>` sentinel and the `data-seam-id` /
+///   `aria-describedby` attributes (same as before this bead).
+/// * User mode (default): plain `value · value · value` — no SEAM
+///   sentinels, no warning palette. The data-seam-id attribute
+///   stays on the field span so the seam-status board can read
+///   it without switching modes; only the user-visible badge text
+///   is hidden.
+fn render_result_context_chip(
+    chip: Option<ResultContextChip>,
+    view_mode: ViewMode,
+) -> AnyView {
     let Some(chip) = chip else {
         return view! { <span></span> }.into_any();
     };
+    let mode_attr = view_mode.slug();
     view! {
-        <span class="onecalc-home-shell__chip onecalc-home-shell__chip--context">
-            {render_context_field(&chip.locale, "locale")}
+        <span
+            class="onecalc-home-shell__chip onecalc-home-shell__chip--context"
+            data-mode=mode_attr
+        >
+            {render_context_field(&chip.locale, "locale", view_mode)}
             <span class="onecalc-home-shell__chip-sep">" · "</span>
-            {render_context_field(&chip.format, "format")}
+            {render_context_field(&chip.format, "format", view_mode)}
             <span class="onecalc-home-shell__chip-sep">" · "</span>
-            {render_context_field(&chip.policy, "policy")}
+            {render_context_field(&chip.policy, "policy", view_mode)}
         </span>
     }
     .into_any()
 }
 
-fn render_context_field(field: &ContextChipField, role: &'static str) -> AnyView {
+fn render_context_field(
+    field: &ContextChipField,
+    role: &'static str,
+    view_mode: ViewMode,
+) -> AnyView {
     let value = field.value().to_string();
+    let render_seam_label = matches!(view_mode, ViewMode::Developer);
     match field.seam_id() {
         None => view! {
             <span class="onecalc-home-shell__chip-field" data-role=role>
@@ -1310,17 +1404,33 @@ fn render_context_field(field: &ContextChipField, role: &'static str) -> AnyView
         .into_any(),
         Some(seam_id) => {
             let seam_owned = seam_id.to_string();
-            let seam_label = format!("<NOT IMPL:{seam_id}>");
             let aria_owned = seam_id.to_string();
+            // Always carry data-seam-id so the seam-status board
+            // can find these regardless of mode. Only the badge
+            // TEXT is mode-conditional.
+            let badge = if render_seam_label {
+                let seam_label = format!("<NOT IMPL:{seam_id}>");
+                view! {
+                    <span class="onecalc-home-shell__chip-seam">{seam_label}</span>
+                }
+                .into_any()
+            } else {
+                view! { <span></span> }.into_any()
+            };
+            let class = if render_seam_label {
+                "onecalc-home-shell__chip-field onecalc-home-shell__chip-field--seam"
+            } else {
+                "onecalc-home-shell__chip-field"
+            };
             view! {
                 <span
-                    class="onecalc-home-shell__chip-field onecalc-home-shell__chip-field--seam"
+                    class=class
                     data-role=role
                     data-seam-id=seam_owned
                     aria-describedby=aria_owned
                 >
                     {value}
-                    <span class="onecalc-home-shell__chip-seam">{seam_label}</span>
+                    {badge}
                 </span>
             }
             .into_any()
