@@ -30,3 +30,6 @@ mod function_help_hover;
 
 #[path = "browser/formula_drill.rs"]
 mod formula_drill;
+
+#[path = "browser/drill_motion_a11y.rs"]
+mod drill_motion_a11y;
