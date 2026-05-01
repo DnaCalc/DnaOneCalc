@@ -3286,6 +3286,57 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-muted);
 }
 
+/* ===== Function-help hover tooltip ============================
+   Multi-line tooltip rendered below a `.syn-fn` span when the
+   pointer is over the function token AND the bridge has
+   function-help for it. Wider than the signature-help line
+   (multi-line content); lower z-index than the completion
+   popup so the popup wins when both could appear. */
+.onecalc-function-help {
+  position: absolute;
+  z-index: 8;
+  max-width: 380px;
+  padding: var(--oc-space-3);
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-card-edge);
+  border-radius: var(--oc-radius-panel);
+  box-shadow: var(--oc-shadow-panel);
+  font-family: var(--oc-font-ui);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--oc-color-ink);
+  pointer-events: none;
+}
+
+.onecalc-function-help__heading {
+  font-weight: 700;
+  color: var(--oc-color-accent);
+  font-size: 0.9rem;
+  margin-bottom: 0.15rem;
+}
+
+.onecalc-function-help__signature {
+  font-family: var(--oc-font-mono);
+  color: var(--oc-color-ink);
+  margin-bottom: 0.35rem;
+}
+
+.onecalc-function-help__description {
+  color: var(--oc-color-muted);
+  margin-bottom: 0.25rem;
+}
+
+.onecalc-function-help__availability {
+  font-size: 0.72rem;
+  color: var(--oc-color-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onecalc-function-help[data-deferred="true"] {
+  border-color: var(--oc-color-warning);
+}
+
 .onecalc-home-shell__textarea {
   position: relative;
   width: 100%;

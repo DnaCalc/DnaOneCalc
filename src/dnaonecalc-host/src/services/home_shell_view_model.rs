@@ -75,8 +75,52 @@ pub struct HomeShellViewModel {
     ///     (popup wins to avoid double-stacking; signature help
     ///     re-appears the moment the popup dismisses).
     pub signature_help: Option<SignatureHelpView>,
+    /// Function-help card rendered as a hover tooltip on the matching
+    /// function-token in the syntax overlay. `None` when:
+    ///   * the editor document does not carry a `function_help` from
+    ///     the bridge (no function context for the current caret), or
+    ///   * the document is stale.
+    /// Visibility is gated by component-local hover state — the
+    /// view-model only carries the *content*; the actual tooltip is
+    /// shown after a 400 ms hover over the matching `.syn-fn` span.
+    pub function_help_card: Option<FunctionHelpCardView>,
     pub result_view: ResultView,
     pub status: StatusView,
+}
+
+/// View-model shape for the function-help hover tooltip.
+///
+/// Sourced from `editor_document.function_help: FunctionHelpPacket`.
+/// The bridge populates this packet for the caret-adjacent function;
+/// hover help on an arbitrary token in the formula would require a
+/// separate bridge call and is deferred to a future bead. For now,
+/// the hover only fires when the user hovers over a function token
+/// whose name matches `lookup_key` (case-insensitive).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionHelpCardView {
+    /// The bridge's lookup key for the function (uppercase canonical
+    /// name, e.g. "SUM"). The renderer uses this to gate which
+    /// `.syn-fn` span can trigger the tooltip.
+    pub lookup_key: String,
+    /// Display name for the heading line (typically the same as
+    /// `lookup_key` but may differ for localised function catalogues).
+    pub display_name: String,
+    /// First signature form's `display_signature`, e.g.
+    /// `SUM(number1, number2, ...)`. Multi-form / overload navigation
+    /// is a future bead — first form only here.
+    pub signature: Option<String>,
+    /// One-line description from the function-help packet. Optional
+    /// because not every catalogue entry carries a description.
+    pub short_description: Option<String>,
+    /// Availability summary from the packet, surfaced when present so
+    /// users can see why a deferred / profile-limited function might
+    /// not be evaluating.
+    pub availability_summary: Option<String>,
+    /// True when the function-help packet flags the function as
+    /// deferred or restricted by the active capability profile. The
+    /// renderer styles this state so the user knows the help is for
+    /// a function that won't fully evaluate today.
+    pub deferred_or_profile_limited: bool,
 }
 
 /// View-model shape for the signature-help line. Mirrors the
@@ -407,6 +451,7 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
     let result_context = project_result_context(formula_space);
     let completion_popup = project_completion_popup(formula_space);
     let signature_help = project_signature_help(formula_space, completion_popup.is_some());
+    let function_help_card = project_function_help_card(formula_space);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -418,9 +463,41 @@ fn project_formula_space(formula_space: &FormulaSpaceState) -> HomeShellViewMode
         result_context,
         completion_popup,
         signature_help,
+        function_help_card,
         result_view,
         status: project_status_view(formula_space),
     }
+}
+
+/// Project the bridge's `FunctionHelpPacket` into the view-model
+/// shape consumed by the hover-help tooltip. Returns `None` when:
+///   * the editor document is missing or stale, or
+///   * the bridge did not produce a function_help (no function
+///     context for the current caret position).
+///
+/// The component decides WHEN to render the tooltip (based on hover
+/// state); the view-model only carries the *content* and the
+/// `lookup_key` that gates which `.syn-fn` span is eligible.
+fn project_function_help_card(
+    formula_space: &FormulaSpaceState,
+) -> Option<FunctionHelpCardView> {
+    let document = formula_space.editor_document.as_ref()?;
+    if document.source_text != formula_space.raw_entered_cell_text {
+        return None;
+    }
+    let packet = document.function_help.as_ref()?;
+    let signature = packet
+        .signature_forms
+        .first()
+        .map(|form| form.display_signature.clone());
+    Some(FunctionHelpCardView {
+        lookup_key: packet.lookup_key.clone(),
+        display_name: packet.display_name.clone(),
+        signature,
+        short_description: packet.short_description.clone(),
+        availability_summary: packet.availability_summary.clone(),
+        deferred_or_profile_limited: packet.deferred_or_profile_limited,
+    })
 }
 
 /// Project the bridge's signature-help context into the home shell's
@@ -1656,6 +1733,76 @@ mod tests {
         assert_eq!(help.callee_text, "SUM");
         assert!(help.parameters.is_empty());
         assert_eq!(help.active_parameter, None);
+    }
+
+    // -----------------------------------------------------------------
+    // Function-help card
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn function_help_card_built_from_editor_document_packet() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        // sample_editor_document populates a function_help packet
+        // for SUM with three arg names + short description.
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let card = vm.function_help_card.expect("card projected");
+        assert_eq!(card.lookup_key, "SUM");
+        assert_eq!(card.display_name, "SUM");
+        assert_eq!(
+            card.signature.as_deref(),
+            Some("SUM(number1, number2, ...)")
+        );
+        assert_eq!(
+            card.short_description.as_deref(),
+            Some("Adds numbers together.")
+        );
+        assert_eq!(card.availability_summary.as_deref(), Some("supported"));
+        assert!(!card.deferred_or_profile_limited);
+    }
+
+    #[test]
+    fn function_help_card_is_none_when_packet_absent() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let mut document = sample_editor_document("=SUM(1,2)");
+        document.function_help = None;
+        formula_space.editor_document = Some(document);
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.function_help_card.is_none());
+    }
+
+    #[test]
+    fn function_help_card_is_none_when_document_is_stale() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2,3)");
+        // Document still reflects the pre-`,3` state.
+        formula_space.editor_document = Some(sample_editor_document("=SUM(1,2)"));
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        assert!(vm.function_help_card.is_none());
+    }
+
+    #[test]
+    fn function_help_card_signature_is_none_when_signature_forms_empty() {
+        // Defensive: bridge populates function_help but the packet has
+        // no signature forms. The card still renders display_name and
+        // description; the signature line is just absent.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let mut document = sample_editor_document("=SUM(1,2)");
+        if let Some(ref mut packet) = document.function_help {
+            packet.signature_forms.clear();
+        }
+        formula_space.editor_document = Some(document);
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let card = vm.function_help_card.expect("card projected");
+        assert_eq!(card.lookup_key, "SUM");
+        assert!(card.signature.is_none());
     }
 
     // -----------------------------------------------------------------

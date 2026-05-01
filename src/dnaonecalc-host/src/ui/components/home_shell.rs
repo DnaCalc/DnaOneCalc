@@ -20,7 +20,10 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent as WebKeyboardEvent};
+use web_sys::{
+    HtmlTextAreaElement, InputEvent as WebInputEvent, KeyboardEvent as WebKeyboardEvent,
+    MouseEvent as WebMouseEvent,
+};
 
 use crate::adapters::oxfml::{FormulaTextSpan, OxfmlEditorBridge};
 use crate::app::reducer::{
@@ -33,13 +36,14 @@ use crate::app::reducer::{
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
-    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, ResultClassPill,
-    ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
+    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FunctionHelpCardView,
+    ResultClassPill, ResultContextChip, ResultKind, ResultView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
 use crate::ui::editor::caret_box_measurement::measure_textarea_box;
+use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::commands::{classify_dom_input, EditorInputEvent, EditorInputKind};
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 
@@ -52,6 +56,21 @@ pub fn HomeShell(
 
     // Reactive view-model: rebuilds whenever the state signal changes.
     let view_model = Memo::new(move |_| state.with(build_home_shell_view_model));
+
+    // Function-help hover state. Component-local because hover is
+    // a UI concern that doesn't need to persist into the reducer
+    // state. Set by the editor-frame `on:mouseover` delegation
+    // handler when the pointer enters a `.syn-fn` span whose name
+    // matches the bridge's function-help packet; cleared by the
+    // frame's `on:mouseleave` and by an Effect that watches the
+    // raw textarea text (any keystroke dismisses the hover).
+    //
+    // First-version note: the WS-14 plan §2.3 calls for a 400 ms
+    // delay before showing the tooltip. v1 ships without the
+    // delay (hover shows immediately) — the wiring is what this
+    // bead pins; a follow-up bead can layer the delay on without
+    // touching the projector or component data flow.
+    let hover_target: RwSignal<Option<FunctionHelpHoverTarget>> = RwSignal::new(None);
 
     // Bridge dispatcher closure shared with the textarea's on:input.
     let editor_bridge_for_input = editor_bridge.clone();
@@ -231,8 +250,92 @@ pub fn HomeShell(
     let result_context = move || view_model.get().map(|vm| vm.result_context);
     let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
     let signature_help = move || view_model.get().and_then(|vm| vm.signature_help);
+    let function_help_card =
+        move || view_model.get().and_then(|vm| vm.function_help_card);
+    let hover_target_for_render = hover_target;
+    let function_help_hover = move || hover_target_for_render.get();
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
+
+    // Editor-frame mouseover delegation: when the pointer is over a
+    // `.syn-fn` span whose `data-token-text` matches the bridge's
+    // current `function_help.lookup_key`, surface a hover target.
+    // Non-function spans are ignored. We compute the anchor via
+    // `caret_box_for_offset(token_start, metrics)` rather than
+    // reading the span's bounding-client-rect, so the tooltip
+    // stays at the same pixel position the syntax overlay
+    // measured for that token (deterministic across reflows).
+    let on_overlay_mouseover = move |ev: WebMouseEvent| {
+        let target = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        let Some(target) = target else {
+            return;
+        };
+        if target.get_attribute("data-token-role").as_deref() != Some("function") {
+            return;
+        }
+        let Some(token_text) = target.get_attribute("data-token-text") else {
+            return;
+        };
+        let Some(token_start) = target
+            .get_attribute("data-token-start")
+            .and_then(|s| s.parse::<usize>().ok())
+        else {
+            return;
+        };
+        let card_lookup_key = view_model.with_untracked(|vm| {
+            vm.as_ref()
+                .and_then(|vm| vm.function_help_card.as_ref().map(|c| c.lookup_key.clone()))
+        });
+        let Some(lookup_key) = card_lookup_key else {
+            return;
+        };
+        if !lookup_key.eq_ignore_ascii_case(&token_text) {
+            return;
+        }
+        let anchor = state.with_untracked(|s| {
+            let formula_space = s
+                .workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| s.formula_spaces.get(id))?;
+            let metrics = formula_space.editor_box_metrics?;
+            let anchor =
+                caret_box_for_offset(&formula_space.raw_entered_cell_text, token_start, metrics);
+            Some((anchor.left_px, anchor.top_px, metrics.line_height_px.max(1)))
+        });
+        let Some((anchor_left_px, anchor_top_px, line_height_px)) = anchor else {
+            return;
+        };
+        hover_target.set(Some(FunctionHelpHoverTarget {
+            token_text,
+            anchor_left_px,
+            anchor_top_px,
+            line_height_px,
+        }));
+    };
+
+    let hover_target_for_clear = hover_target;
+    let on_overlay_mouseleave = move |_ev: WebMouseEvent| {
+        hover_target_for_clear.set(None);
+    };
+
+    // Any input change dismisses the hover — once the user types,
+    // the formula structure under the pointer might be stale.
+    let hover_target_for_effect = hover_target;
+    Effect::new(move |prev: Option<String>| {
+        let current = view_model
+            .get()
+            .map(|vm| vm.raw_entered_cell_text)
+            .unwrap_or_default();
+        if let Some(prev_value) = prev.as_ref() {
+            if prev_value != &current {
+                hover_target_for_effect.set(None);
+            }
+        }
+        current
+    });
     // Browser-measured caret-box metrics surfaced as data-attributes on
     // the editor frame. The corpus uses these to assert that
     // measurement actually happened on the first keystroke.
@@ -299,6 +402,8 @@ pub fn HomeShell(
                                     .unwrap_or_else(|| "0".to_string())
                             }
                             data-measure-tick=move || editor_box_measure_tick().to_string()
+                            on:mouseover=on_overlay_mouseover
+                            on:mouseleave=on_overlay_mouseleave
                         >
                             <div
                                 class="onecalc-home-shell__editor-overlay"
@@ -373,6 +478,10 @@ pub fn HomeShell(
                             ></textarea>
                             {move || render_completion_popup(completion_popup(), on_completion_click)}
                             {move || render_signature_help(signature_help())}
+                            {move || render_function_help_card(
+                                function_help_hover(),
+                                function_help_card(),
+                            )}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
                             {move || render_editor_metrics_chip(editor_metrics())}
@@ -525,7 +634,24 @@ fn render_syntax_overlay(runs: Vec<SyntaxRun>, fallback_text: String) -> AnyView
         .into_iter()
         .map(|run| {
             let class = format!("syn {}", role_class(run.role));
-            view! { <span class=class>{run.text}</span> }.into_any()
+            // data-token-start + data-token-text + data-token-role
+            // power the function-hover delegation handler attached
+            // on the editor frame (the corpus also reads
+            // data-token-text to assert which token is hovered).
+            let span_start = run.span_start.to_string();
+            let token_text = run.text.clone();
+            let role_slug = role_slug(run.role);
+            view! {
+                <span
+                    class=class
+                    data-token-start=span_start
+                    data-token-text=token_text.clone()
+                    data-token-role=role_slug
+                >
+                    {run.text}
+                </span>
+            }
+            .into_any()
         })
         .collect();
     view! {
@@ -644,6 +770,91 @@ fn splice_textarea_value(
 /// the popup wrapper is `pointer-events: none` so background clicks
 /// fall through to the textarea, while each item row reactivates
 /// `pointer-events: auto` for click handling.
+/// Hover-state for the function-help tooltip. Component-local
+/// (not in the reducer state) because hover is purely a UI
+/// concern. Set by the editor-frame `on:mouseover` handler when
+/// the pointer enters a `.syn-fn` span whose `data-token-text`
+/// matches the bridge's `function_help.lookup_key`. Cleared by
+/// the frame's `on:mouseleave` and by an Effect that watches
+/// `raw_entered_cell_text`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FunctionHelpHoverTarget {
+    token_text: String,
+    anchor_left_px: usize,
+    anchor_top_px: usize,
+    line_height_px: usize,
+}
+
+/// Render the function-help tooltip. Returns an empty span when
+/// either the hover state or the function-help card is missing,
+/// so visibility is reactive on both signals at once. The tooltip
+/// is positioned BELOW the hovered token (anchor_top + line_height
+/// + small gap) — different from the signature help which sits
+/// above the caret. Layout-wise it lives in the same editor-frame
+/// container as the popup and signature help, so it stays inside
+/// the editor's coordinate system.
+///
+/// Wrapper is `pointer-events: none` so the user can move the
+/// mouse off the function token without the tooltip itself
+/// stealing the hover.
+fn render_function_help_card(
+    hover: Option<FunctionHelpHoverTarget>,
+    card: Option<FunctionHelpCardView>,
+) -> AnyView {
+    let (Some(hover), Some(card)) = (hover, card) else {
+        return view! { <span></span> }.into_any();
+    };
+    if !card.lookup_key.eq_ignore_ascii_case(&hover.token_text) {
+        return view! { <span></span> }.into_any();
+    }
+    let style = format!(
+        "left: {}px; top: {}px;",
+        hover.anchor_left_px,
+        hover.anchor_top_px.saturating_add(hover.line_height_px),
+    );
+    let availability = card.availability_summary.clone().unwrap_or_default();
+    let signature_view = card
+        .signature
+        .clone()
+        .map(|sig| view! { <div class="onecalc-function-help__signature">{sig}</div> }.into_any())
+        .unwrap_or_else(|| view! { <span></span> }.into_any());
+    let description_view = card
+        .short_description
+        .clone()
+        .map(|desc| {
+            view! { <div class="onecalc-function-help__description">{desc}</div> }.into_any()
+        })
+        .unwrap_or_else(|| view! { <span></span> }.into_any());
+    let availability_view = if !availability.is_empty() {
+        view! {
+            <div class="onecalc-function-help__availability">{availability}</div>
+        }
+        .into_any()
+    } else {
+        view! { <span></span> }.into_any()
+    };
+    let deferred_attr = if card.deferred_or_profile_limited {
+        "true"
+    } else {
+        "false"
+    };
+    view! {
+        <div
+            class="onecalc-function-help"
+            role="tooltip"
+            data-lookup-key=card.lookup_key.clone()
+            data-deferred=deferred_attr
+            style=style
+        >
+            <div class="onecalc-function-help__heading">{card.display_name.clone()}</div>
+            {signature_view}
+            {description_view}
+            {availability_view}
+        </div>
+    }
+    .into_any()
+}
+
 /// Render the signature-help line ABOVE the caret.
 ///
 /// The view-model emits `None` whenever the help should be hidden
@@ -872,6 +1083,21 @@ fn role_class(role: SyntaxTokenRole) -> &'static str {
         SyntaxTokenRole::Identifier => "syn-id",
         SyntaxTokenRole::Text => "syn-text",
         SyntaxTokenRole::Trivia => "syn-trivia",
+    }
+}
+
+/// Slug for `data-token-role` attribute on syntax-overlay spans.
+/// Mirrors `role_class` but stripped of the `syn-` prefix so the
+/// attribute reads like an enum tag.
+fn role_slug(role: SyntaxTokenRole) -> &'static str {
+    match role {
+        SyntaxTokenRole::Operator => "operator",
+        SyntaxTokenRole::Function => "function",
+        SyntaxTokenRole::Number => "number",
+        SyntaxTokenRole::Delimiter => "delimiter",
+        SyntaxTokenRole::Identifier => "identifier",
+        SyntaxTokenRole::Text => "text",
+        SyntaxTokenRole::Trivia => "trivia",
     }
 }
 

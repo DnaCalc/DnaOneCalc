@@ -24,3 +24,6 @@ mod completion;
 
 #[path = "browser/signature_help.rs"]
 mod signature_help;
+
+#[path = "browser/function_help_hover.rs"]
+mod function_help_hover;
