@@ -12,7 +12,7 @@ fn ex_01_projection_uses_editor_syntax_snapshot_as_render_source() {
         ],
     );
 
-    let runs = syntax_runs_from_snapshot(&snapshot, "=LET(values");
+    let runs = syntax_runs_from_snapshot(&snapshot);
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[0].text, "=LET(");
     assert_eq!(runs[1].span_start, 5);

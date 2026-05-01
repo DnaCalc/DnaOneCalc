@@ -42,43 +42,18 @@ pub struct SyntaxRun {
 ///   trailing whitespace at the end of input that has no successor
 ///   token to claim it as leading-trivia).
 ///
-/// `source_text` is used to FILL GAPS where the upstream tokenizer
-/// produces a snapshot that's shorter than the user's input. The
-/// upstream OxFml tokenizer can drop trailing characters when the
-/// formula starts with certain whitespace (e.g. `\n=aaa` only
-/// tokenizes as `\n` + `=`, dropping `aaa` entirely). Without
-/// gap-filling the syntax overlay would be shorter than the
-/// textarea, leaving the visible caret floating past where the
-/// rendered text ends. Gaps are filled with `SyntaxTokenRole::Text`
-/// runs sourced from the textarea content directly — the user
-/// keeps their text on screen even when the parser can't classify
-/// it.
-///
-/// Pinned by the browser invariant
-/// `syntax_overlay_text_must_match_textarea_value_exactly` and the
-/// `\n=aaa` reproduction in `tests/browser/repro_enter_eq_aaa.rs`.
-pub fn syntax_runs_from_snapshot(
-    snapshot: &EditorSyntaxSnapshot,
-    source_text: &str,
-) -> Vec<SyntaxRun> {
-    let source_chars: Vec<char> = source_text.chars().collect();
-    let source_len = source_chars.len();
+/// The `expected_offset` cursor advances by each emitted run's text
+/// length. Gaps that the trivia doesn't fill (a defensive case for
+/// malformed snapshots) leave the overlay shorter than the textarea —
+/// preferable to longer/duplicated text, and caught by the
+/// browser-corpus invariant `syntax_overlay_text_must_match_textarea_value_exactly`.
+pub fn syntax_runs_from_snapshot(snapshot: &EditorSyntaxSnapshot) -> Vec<SyntaxRun> {
     let mut runs = Vec::with_capacity(snapshot.tokens.len() * 2 + 1);
     let mut expected_offset: usize = 0;
     let last_index = snapshot.tokens.len().saturating_sub(1);
     for (token_index, token) in snapshot.tokens.iter().enumerate() {
         for trivia in &token.leading_trivia {
             push_trivia_run(&mut runs, &mut expected_offset, &trivia.text);
-        }
-        // Pre-token gap fill: if the trivia didn't bring us up to
-        // the token's declared span_start, plug the gap with the
-        // raw source-text characters in that range. Defends
-        // against snapshots whose declared spans don't tile.
-        if token.span.start > expected_offset && token.span.start <= source_len {
-            let gap: String = source_chars[expected_offset..token.span.start]
-                .iter()
-                .collect();
-            push_text_run(&mut runs, &mut expected_offset, &gap);
         }
         runs.push(SyntaxRun {
             text: token.text.clone(),
@@ -92,15 +67,6 @@ pub fn syntax_runs_from_snapshot(
                 push_trivia_run(&mut runs, &mut expected_offset, &trivia.text);
             }
         }
-    }
-    // Tail fill: if the last token (plus trivia) did not reach the
-    // end of `source_text`, plug the remainder with a Text run.
-    // Critical for the `\n=aaa` upstream-tokenizer-dropped-tail
-    // case — without this the user types characters that never
-    // appear on screen.
-    if expected_offset < source_len {
-        let tail: String = source_chars[expected_offset..].iter().collect();
-        push_text_run(&mut runs, &mut expected_offset, &tail);
     }
     runs
 }
@@ -118,24 +84,6 @@ fn push_trivia_run(runs: &mut Vec<SyntaxRun>, expected_offset: &mut usize, text:
         span_start: *expected_offset,
         span_len: len,
         role: SyntaxTokenRole::Trivia,
-    });
-    *expected_offset = (*expected_offset).saturating_add(len);
-}
-
-/// Emit a `Text`-role gap-fill run sourced directly from
-/// `raw_entered_cell_text`. Used when the upstream tokenizer's
-/// snapshot is shorter than the source text — preserves the
-/// user's visible text even for inputs the parser can't classify.
-fn push_text_run(runs: &mut Vec<SyntaxRun>, expected_offset: &mut usize, text: &str) {
-    if text.is_empty() {
-        return;
-    }
-    let len = text.chars().count();
-    runs.push(SyntaxRun {
-        text: text.to_string(),
-        span_start: *expected_offset,
-        span_len: len,
-        role: SyntaxTokenRole::Text,
     });
     *expected_offset = (*expected_offset).saturating_add(len);
 }
@@ -229,7 +177,7 @@ mod tests {
             ],
         );
 
-        let runs = syntax_runs_from_snapshot(&snapshot, "=SUM");
+        let runs = syntax_runs_from_snapshot(&snapshot);
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[1].text, "SUM");
         assert_eq!(runs[1].span_start, 1);
@@ -277,7 +225,7 @@ mod tests {
             ],
         };
 
-        let runs = syntax_runs_from_snapshot(&snapshot, "= SUM");
+        let runs = syntax_runs_from_snapshot(&snapshot);
         let total_text: String = runs.iter().map(|run| run.text.as_str()).collect();
         assert_eq!(
             total_text, "= SUM",
@@ -317,104 +265,13 @@ mod tests {
                 span: FormulaTextSpan { start: 2, len: 1 },
             }],
         };
-        let runs = syntax_runs_from_snapshot(&snapshot, "  =");
+        let runs = syntax_runs_from_snapshot(&snapshot);
         let total_text: String = runs.iter().map(|run| run.text.as_str()).collect();
         assert_eq!(total_text, "  =");
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].role, SyntaxTokenRole::Trivia);
         assert_eq!(runs[0].text, "  ");
         assert_eq!(runs[1].role, SyntaxTokenRole::Operator);
-    }
-
-    #[test]
-    fn syntax_runs_fill_tail_when_snapshot_drops_trailing_chars() {
-        // Reproduces the `\n=aaa` upstream-tokenizer-truncation bug
-        // at the unit level. Snapshot reports only the `\n` trivia +
-        // `=` operator (the tokenizer dropped the `aaa` tail). The
-        // projector must plug the gap with a `Text`-role run sourced
-        // from the raw text — otherwise the user's `aaa` keystrokes
-        // never appear on the syntax-overlay layer and the visible
-        // caret floats past the rendered text.
-        use crate::adapters::oxfml::{EditorSyntaxSnapshot, EditorToken, FormulaTextSpan};
-        use oxfml_core::consumer::editor::{EditorTrivia, EditorTriviaKind};
-        use oxfml_core::source::FormulaChannelKind;
-        use oxfml_core::syntax::token::TokenKind;
-
-        let snapshot = EditorSyntaxSnapshot {
-            formula_stable_id: "f".to_string(),
-            formula_channel_kind: FormulaChannelKind::WorksheetA1,
-            green_tree_key: "g".to_string(),
-            tokens: vec![EditorToken {
-                kind: TokenKind::Equals,
-                text: "=".to_string(),
-                leading_trivia: vec![EditorTrivia {
-                    kind: EditorTriviaKind::Whitespace,
-                    text: "\n".to_string(),
-                }],
-                trailing_trivia: Vec::new(),
-                span: FormulaTextSpan { start: 1, len: 1 },
-            }],
-        };
-        let runs = syntax_runs_from_snapshot(&snapshot, "\n=aaa");
-        let total_text: String = runs.iter().map(|run| run.text.as_str()).collect();
-        assert_eq!(
-            total_text, "\n=aaa",
-            "concatenated runs must cover the full source text even when \
-             the snapshot's tokens don't",
-        );
-        assert_eq!(runs.len(), 3);
-        assert_eq!(runs[0].role, SyntaxTokenRole::Trivia);
-        assert_eq!(runs[0].text, "\n");
-        assert_eq!(runs[1].role, SyntaxTokenRole::Operator);
-        assert_eq!(runs[1].text, "=");
-        // The tail-fill run carries the dropped `aaa` chars.
-        assert_eq!(runs[2].role, SyntaxTokenRole::Text);
-        assert_eq!(runs[2].text, "aaa");
-        assert_eq!(runs[2].span_start, 2);
-        assert_eq!(runs[2].span_len, 3);
-    }
-
-    #[test]
-    fn syntax_runs_fill_gap_between_non_contiguous_tokens() {
-        // Defensive: if the upstream snapshot's declared spans
-        // don't tile (e.g. token 1 ends at offset 1 but token 2
-        // starts at offset 4 with no covering trivia), the
-        // projector plugs the gap with a Text run sourced from
-        // the raw source text. Same machinery as the tail fill.
-        use crate::adapters::oxfml::{EditorSyntaxSnapshot, EditorToken, FormulaTextSpan};
-        use oxfml_core::source::FormulaChannelKind;
-        use oxfml_core::syntax::token::TokenKind;
-
-        let snapshot = EditorSyntaxSnapshot {
-            formula_stable_id: "f".to_string(),
-            formula_channel_kind: FormulaChannelKind::WorksheetA1,
-            green_tree_key: "g".to_string(),
-            tokens: vec![
-                EditorToken {
-                    kind: TokenKind::Equals,
-                    text: "=".to_string(),
-                    leading_trivia: Vec::new(),
-                    trailing_trivia: Vec::new(),
-                    span: FormulaTextSpan { start: 0, len: 1 },
-                },
-                EditorToken {
-                    kind: TokenKind::Identifier,
-                    text: "X".to_string(),
-                    leading_trivia: Vec::new(),
-                    trailing_trivia: Vec::new(),
-                    // Note: starts at offset 4, leaving a 3-char gap
-                    // that no trivia accounts for.
-                    span: FormulaTextSpan { start: 4, len: 1 },
-                },
-            ],
-        };
-        let runs = syntax_runs_from_snapshot(&snapshot, "=ZZZX");
-        let total_text: String = runs.iter().map(|run| run.text.as_str()).collect();
-        assert_eq!(total_text, "=ZZZX");
-        assert_eq!(runs.len(), 3);
-        assert_eq!(runs[1].role, SyntaxTokenRole::Text);
-        assert_eq!(runs[1].text, "ZZZ");
-        assert_eq!(runs[1].span_start, 1);
     }
 
     #[test]
