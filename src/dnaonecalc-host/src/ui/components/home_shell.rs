@@ -346,17 +346,112 @@ pub fn HomeShell(
             let _ = close_scenario_breadcrumb(state);
         });
     });
-    // Stub action handler. Phase A: surfaces a console hint and
-    // closes the dropdown so the user gets feedback. Persistence
-    // wiring lives in the follow-up slice behind
-    // `SEAM-ONECALC-SCENARIO-PERSIST`.
+    // Scenario action dispatcher (slice 1b). NewScenario / Duplicate
+    // run synchronously through their existing reducers. SaveAs
+    // projects the active formula to the persisted `Scenario` shape,
+    // serialises to XML, and triggers a browser-native download.
+    // Open spawns an async task that surfaces the file picker, reads
+    // the chosen file, parses it, and inserts it into the workspace.
+    // ManageScenarios is still a SEAM stub (no UI for the manage
+    // page yet — that's a later slice).
     let on_scenario_action = Callback::new(move |action_id: ScenarioBreadcrumbActionId| {
-        web_sys::console::log_1(
-            &format!("[onecalc] scenario action invoked: {}", action_id.slug()).into(),
-        );
-        state.update(|state| {
-            let _ = close_scenario_breadcrumb(state);
-        });
+        // Always close the dropdown so the user gets visible feedback
+        // that the click was received, regardless of which action.
+        let close_dropdown = || {
+            state.update(|state| {
+                let _ = close_scenario_breadcrumb(state);
+            });
+        };
+
+        match action_id {
+            ScenarioBreadcrumbActionId::NewScenario => {
+                state.update(|state| {
+                    let _ = crate::app::case_lifecycle::new_formula_space(state);
+                });
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::Duplicate => {
+                state.update(|state| {
+                    if let Some(active_id) = state
+                        .workspace_shell
+                        .active_formula_space_id
+                        .clone()
+                    {
+                        let _ = crate::app::case_lifecycle::duplicate_formula_space(
+                            state,
+                            active_id.as_str(),
+                        );
+                    }
+                });
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::SaveAs => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let payload = state.with_untracked(|s| build_save_payload(s));
+                    if let Some((filename, xml)) = payload {
+                        if let Err(error) =
+                            crate::persistence::save_xml_via_download(&filename, &xml)
+                        {
+                            web_sys::console::error_1(
+                                &format!("[onecalc] save failed: {error}").into(),
+                            );
+                        }
+                    }
+                }
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::Open => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let state = state;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match crate::persistence::open_xml_via_file_input().await {
+                            Ok(Some(opened)) => match crate::persistence::read_formula_xml(
+                                &opened.xml,
+                            ) {
+                                Ok(scenario) => {
+                                    state.update(|s| {
+                                        let _ =
+                                            crate::app::case_lifecycle::open_loaded_scenario_into_workspace(
+                                                s, scenario,
+                                            );
+                                    });
+                                }
+                                Err(error) => {
+                                    web_sys::console::error_1(
+                                        &format!(
+                                            "[onecalc] failed to parse `{}`: {error}",
+                                            opened.filename,
+                                        )
+                                        .into(),
+                                    );
+                                }
+                            },
+                            Ok(None) => {
+                                // user cancelled — no-op
+                            }
+                            Err(error) => {
+                                web_sys::console::error_1(
+                                    &format!("[onecalc] open dialog failed: {error}").into(),
+                                );
+                            }
+                        }
+                    });
+                }
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::ManageScenarios => {
+                // SEAM-ONECALC-SCENARIO-PERSIST — full-screen
+                // management page lands in a later slice; for now
+                // just close the dropdown so the user sees the click
+                // was received.
+                web_sys::console::log_1(
+                    &"[onecalc] manage formulas: pending UI slice".into(),
+                );
+                close_dropdown();
+            }
+        }
     });
 
     // Editor-frame mouseover delegation: when the pointer is over a
@@ -1996,4 +2091,30 @@ fn display_kind_attr(kind: ResultKind) -> &'static str {
         ResultKind::RichValue => "rich-value",
         ResultKind::Other => "other",
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn build_save_payload(state: &OneCalcHostState) -> Option<(String, String)> {
+    let active_id = state.workspace_shell.active_formula_space_id.as_ref()?;
+    let formula_space = state.formula_spaces.get(active_id)?;
+    let now = current_iso8601_utc();
+    let scenario = crate::persistence::formula_space_to_scenario(
+        formula_space,
+        now.clone(),
+        now,
+    );
+    let stem = crate::persistence::suggested_filename_stem(
+        &scenario.identity.name,
+        &scenario.identity.id,
+    );
+    let xml = crate::persistence::write_formula_xml(&scenario);
+    Some((format!("{stem}.dnafml"), xml))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_iso8601_utc() -> String {
+    let date = js_sys::Date::new_0();
+    date.to_iso_string()
+        .as_string()
+        .unwrap_or_default()
 }

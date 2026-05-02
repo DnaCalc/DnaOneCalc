@@ -1337,6 +1337,15 @@ fn project_scenario_breadcrumb(
     // User-facing labels say "formula" (per docs/APP_UX_BRIEF.md
     // §1A); internal type / action-id slugs continue to say
     // `scenario`.
+    //
+    // Seam policy: NewScenario / Duplicate use existing in-memory
+    // reducers; SaveAs and Open are wired through the browser-host
+    // download / file-input adapter (slice 1b — see
+    // `persistence/browser_file_io.rs`). ManageScenarios still
+    // pends its full-screen page UI, hence the SEAM. Tauri-host
+    // file IO is a separate later slice; the per-host adapter
+    // lives below the action layer, so the breadcrumb sees the
+    // same dispatch surface either way.
     let actions = vec![
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::NewScenario,
@@ -1348,19 +1357,19 @@ fn project_scenario_breadcrumb(
             action_id: ScenarioBreadcrumbActionId::SaveAs,
             label: "Save as…",
             chord_label: "Ctrl+Shift+S",
-            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+            seam_id: None,
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::Open,
             label: "Open…",
             chord_label: "Ctrl+O",
-            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+            seam_id: None,
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::Duplicate,
             label: "Duplicate",
             chord_label: "",
-            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+            seam_id: None,
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::ManageScenarios,
@@ -2668,18 +2677,18 @@ mod tests {
                 ScenarioBreadcrumbActionId::ManageScenarios,
             ],
         );
-        // NewScenario is wired today (no seam).
-        let new_scenario = vm
-            .scenario_breadcrumb
-            .actions
-            .iter()
-            .find(|action| action.action_id == ScenarioBreadcrumbActionId::NewScenario)
-            .expect("new scenario action");
-        assert_eq!(new_scenario.seam_id, None);
-        // The persistence-bound actions are honest about their seam.
+        // After slice 1b, the only action that still carries a SEAM
+        // marker is `ManageScenarios` (the manage-formulas page is
+        // not yet built). NewScenario / Duplicate use existing
+        // in-memory reducers; SaveAs / Open are wired through
+        // `persistence/browser_file_io.rs`.
         for action in &vm.scenario_breadcrumb.actions {
-            if action.action_id != ScenarioBreadcrumbActionId::NewScenario {
-                assert_eq!(action.seam_id, Some("SEAM-ONECALC-SCENARIO-PERSIST"));
+            match action.action_id {
+                ScenarioBreadcrumbActionId::ManageScenarios => assert_eq!(
+                    action.seam_id,
+                    Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+                ),
+                _ => assert_eq!(action.seam_id, None, "{:?}", action.action_id),
             }
         }
     }

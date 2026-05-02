@@ -204,7 +204,11 @@ async fn recent_section_includes_active_scenario_marked_active() {
 }
 
 #[wasm_bindgen_test(async)]
-async fn save_as_action_carries_seam_id_and_open_action_too() {
+async fn manage_scenarios_is_the_only_action_with_a_seam_id_after_slice_1b() {
+    // After slice 1b (file-dialog wiring), NewScenario / Duplicate /
+    // SaveAs / Open are all wired in the browser host. Only the
+    // ManageScenarios full-screen page is still a stub, so it carries
+    // SEAM-ONECALC-SCENARIO-PERSIST. Keeps the seam-board honest.
     let shell = mount_home_shell();
     let _textarea = shell.textarea().await;
 
@@ -214,28 +218,26 @@ async fn save_as_action_carries_seam_id_and_open_action_too() {
     click_element(&button);
     super::scaffold::flush_microtasks(5).await;
 
-    let save_as = shell
-        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"save-as\"]")
-        .expect("save-as action");
-    assert_eq!(
-        save_as.get_attribute("data-seam-id").as_deref(),
-        Some("SEAM-ONECALC-SCENARIO-PERSIST"),
-    );
-    let open = shell
-        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"open\"]")
-        .expect("open action");
-    assert_eq!(
-        open.get_attribute("data-seam-id").as_deref(),
-        Some("SEAM-ONECALC-SCENARIO-PERSIST"),
-    );
+    let wired_action_ids = ["new-scenario", "save-as", "open", "duplicate"];
+    for action_id in wired_action_ids {
+        let item = shell
+            .select(&format!(
+                ".onecalc-home-shell__scenario-menu-item[data-action-id=\"{action_id}\"]",
+            ))
+            .expect("action item rendered");
+        let seam = item.get_attribute("data-seam-id").unwrap_or_default();
+        assert!(
+            seam.is_empty(),
+            "wired action `{action_id}` must NOT carry a seam id today; got {seam:?}",
+        );
+    }
 
-    let new_scenario = shell
-        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"new-scenario\"]")
-        .expect("new-scenario action");
-    let seam = new_scenario.get_attribute("data-seam-id").unwrap_or_default();
-    assert!(
-        seam.is_empty(),
-        "new-scenario must NOT carry a seam id today; got {seam:?}",
+    let manage = shell
+        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"manage-scenarios\"]")
+        .expect("manage-scenarios action");
+    assert_eq!(
+        manage.get_attribute("data-seam-id").as_deref(),
+        Some("SEAM-ONECALC-SCENARIO-PERSIST"),
     );
 
     shell.tear_down();
@@ -265,6 +267,120 @@ async fn clicking_action_button_closes_the_dropdown() {
         menu.get_attribute("data-open").as_deref(),
         Some("false"),
         "clicking an action item closes the dropdown",
+    );
+
+    shell.tear_down();
+}
+
+#[wasm_bindgen_test(async)]
+async fn new_formula_action_creates_a_new_untitled_space() {
+    // Slice 1b: clicking `New formula` should run
+    // `case_lifecycle::new_formula_space`, inserting an `untitled-N`
+    // space and switching the breadcrumb's active label. The
+    // preview-state seed starts on `untitled-1`; clicking New
+    // produces `untitled-2`.
+    let shell = mount_home_shell();
+    let _textarea = shell.textarea().await;
+
+    let button = shell
+        .select(".onecalc-home-shell__breadcrumb-button")
+        .expect("breadcrumb button");
+    click_element(&button);
+    super::scaffold::flush_microtasks(5).await;
+
+    let new_action = shell
+        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"new-scenario\"]")
+        .expect("new-scenario action");
+    click_element(&new_action);
+    super::scaffold::flush_microtasks(10).await;
+
+    // Breadcrumb's status-foot chip should reflect the new active
+    // formula. The preview state seeds `Untitled 1`; clicking New
+    // produces `Untitled 2`.
+    let scenario_name = shell
+        .select(".onecalc-home-shell__statusfoot-scenario-name")
+        .expect("statusfoot scenario name span")
+        .get_attribute("data-scenario-label")
+        .unwrap_or_default();
+    assert!(
+        scenario_name.starts_with("Untitled"),
+        "after New formula, the status-foot chip should show an Untitled label; got {scenario_name:?}",
+    );
+
+    shell.tear_down();
+}
+
+#[wasm_bindgen_test(async)]
+async fn duplicate_action_clones_active_with_copy_suffix() {
+    // Slice 1b: clicking `Duplicate` should run
+    // `case_lifecycle::duplicate_formula_space` on the active id,
+    // inserting a `<active>-…(copy)` named space and switching to it.
+    let shell = mount_home_shell();
+    let _textarea = shell.textarea().await;
+
+    let button = shell
+        .select(".onecalc-home-shell__breadcrumb-button")
+        .expect("breadcrumb button");
+    click_element(&button);
+    super::scaffold::flush_microtasks(5).await;
+
+    let duplicate_action = shell
+        .select(
+            ".onecalc-home-shell__scenario-menu-item[data-action-id=\"duplicate\"]",
+        )
+        .expect("duplicate action");
+    click_element(&duplicate_action);
+    super::scaffold::flush_microtasks(10).await;
+
+    let scenario_name = shell
+        .select(".onecalc-home-shell__statusfoot-scenario-name")
+        .expect("statusfoot scenario name span")
+        .get_attribute("data-scenario-label")
+        .unwrap_or_default();
+    assert!(
+        scenario_name.contains("(copy)"),
+        "duplicated formula's status-foot label should contain `(copy)`; got {scenario_name:?}",
+    );
+
+    shell.tear_down();
+}
+
+#[wasm_bindgen_test(async)]
+async fn save_as_action_does_not_panic_in_browser_host() {
+    // Slice 1b: clicking Save as… triggers the browser-host
+    // download adapter (`persistence/browser_file_io.rs`). We can't
+    // assert the user-side download UI from a wasm test, but we
+    // can pin "the click path runs without throwing." If the
+    // adapter ever regresses, this test catches the panic before
+    // it hits a user.
+    let shell = mount_home_shell();
+    let _textarea = shell.textarea().await;
+
+    let button = shell
+        .select(".onecalc-home-shell__breadcrumb-button")
+        .expect("breadcrumb button");
+    click_element(&button);
+    super::scaffold::flush_microtasks(5).await;
+
+    let save_as = shell
+        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"save-as\"]")
+        .expect("save-as action");
+    click_element(&save_as);
+    super::scaffold::flush_microtasks(10).await;
+
+    // Dropdown should have closed, and the home shell should still
+    // be mounted with no error chrome.
+    let menu = shell
+        .select(".onecalc-home-shell__scenario-menu")
+        .expect("menu still rendered");
+    assert_eq!(
+        menu.get_attribute("data-open").as_deref(),
+        Some("false"),
+        "Save as… closes the dropdown after running",
+    );
+    assert!(
+        shell.select(".onecalc-home-shell__textarea").is_some(),
+        "home shell still mounted after Save as…",
     );
 
     shell.tear_down();

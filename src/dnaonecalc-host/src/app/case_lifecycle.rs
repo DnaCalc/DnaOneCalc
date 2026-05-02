@@ -204,6 +204,72 @@ pub fn reopen_formula_space(state: &mut OneCalcHostState, formula_space_id: &str
     true
 }
 
+/// Insert a loaded `Scenario` into the workspace as a new formula
+/// space and switch to it. Used by the breadcrumb's `Open…` action
+/// in slice 1b. Reuses the loaded scenario's `identity.id` when
+/// possible; appends a numeric suffix when the id is already taken
+/// in this workspace, so opening the same file twice does not
+/// silently overwrite the first instance.
+///
+/// The previously-active formula space is preserved in
+/// `workspace_shell.open_formula_space_order` and remains in the
+/// `formula_spaces` map — the user can switch back via the
+/// breadcrumb dropdown / command palette.
+pub fn open_loaded_scenario_into_workspace(
+    state: &mut OneCalcHostState,
+    scenario: crate::persistence::formula_file::Scenario,
+) -> FormulaSpaceId {
+    let id = derive_unique_formula_space_id(state, &scenario.identity.id);
+    let mut formula_space = FormulaSpaceState::new(id.clone(), &scenario.entry.text);
+    crate::persistence::apply_loaded_scenario_to_formula_space(&mut formula_space, scenario);
+
+    state.formula_spaces.insert(formula_space);
+    if !state
+        .workspace_shell
+        .open_formula_space_order
+        .iter()
+        .any(|existing| existing == &id)
+    {
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(id.clone());
+    }
+    state.workspace_shell.active_formula_space_id = Some(id.clone());
+    state
+        .workspace_shell
+        .formula_space_modes
+        .insert(id.clone(), AppMode::Explore);
+    state.workspace_shell.navigation_selection =
+        crate::state::WorkspaceNavigationSelection::FormulaSpace(id.clone());
+    id
+}
+
+fn derive_unique_formula_space_id(
+    state: &OneCalcHostState,
+    candidate: &str,
+) -> FormulaSpaceId {
+    let trimmed = candidate.trim();
+    let base = if trimmed.is_empty() {
+        "imported".to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    let candidate_id = FormulaSpaceId::new(base.clone());
+    if !state.formula_spaces.spaces.contains_key(&candidate_id) {
+        return candidate_id;
+    }
+
+    for counter in 1usize.. {
+        let try_id = FormulaSpaceId::new(format!("{base}-{counter}"));
+        if !state.formula_spaces.spaces.contains_key(&try_id) {
+            return try_id;
+        }
+    }
+    unreachable!("usize range exhausted")
+}
+
 pub fn toggle_pin_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
     let id = FormulaSpaceId::new(formula_space_id.to_string());
     if state.formula_spaces.get(&id).is_none() {

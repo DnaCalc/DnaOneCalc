@@ -13,7 +13,7 @@ seam-tests = []
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 roxmltree = "0.21"
-web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "HtmlTextAreaElement", "HtmlInputElement", "HtmlElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MouseEventInit", "Event", "EventInit", "Window", "Document", "Element", "Node", "NodeList", "CssStyleDeclaration", "DomRect"] }
+web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "HtmlTextAreaElement", "HtmlInputElement", "HtmlElement", "HtmlAnchorElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MouseEventInit", "Event", "EventInit", "EventTarget", "Window", "Document", "Element", "Node", "NodeList", "CssStyleDeclaration", "DomRect", "Blob", "BlobPropertyBag", "Url", "File", "FileList", "FileReader"] }
 wasm-bindgen = "=0.2.117"
 oxfml_core = { path = "../../../OxFml/crates/oxfml_core" }
 oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core" }
@@ -23,7 +23,8 @@ leptos = { version = "0.8.17", default-features = false, features = ["ssr"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 leptos = { version = "0.8.17", default-features = false, features = ["csr"] }
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
-wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "=0.3.67"
