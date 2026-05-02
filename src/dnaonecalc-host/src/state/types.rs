@@ -176,6 +176,13 @@ pub struct FormulaSpaceState {
     /// and the result-caption. Toggled by Ctrl+D and by the
     /// editor-foot trigger row. Default false.
     pub formula_drill_open: bool,
+    /// Diagnostics surfaced from the persistence loader (slice 3 of
+    /// the persistence ladder). Empty by default; populated when the
+    /// user opens a `.dnafml` / `.xml` file that lacked the
+    /// `<dna:Formula>` extension and was loaded through the
+    /// Excel-only fallback path. The status-foot renders a warning
+    /// chip while this list is non-empty; the next save clears it.
+    pub load_diagnostics: Vec<crate::persistence::LoadDiagnostic>,
 }
 
 impl FormulaSpaceState {
@@ -204,6 +211,7 @@ impl FormulaSpaceState {
             proofed_cell_text: None,
             expanded_editor: false,
             formula_drill_open: false,
+            load_diagnostics: Vec::new(),
         }
     }
 

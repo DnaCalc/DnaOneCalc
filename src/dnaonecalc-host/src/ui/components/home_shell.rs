@@ -390,12 +390,29 @@ pub fn HomeShell(
                 {
                     let payload = state.with_untracked(|s| build_save_payload(s));
                     if let Some((filename, xml)) = payload {
-                        if let Err(error) =
-                            crate::persistence::save_xml_via_download(&filename, &xml)
-                        {
-                            web_sys::console::error_1(
-                                &format!("[onecalc] save failed: {error}").into(),
-                            );
+                        match crate::persistence::save_xml_via_download(&filename, &xml) {
+                            Ok(()) => {
+                                // Save established the canonical
+                                // dna: extension on disk, so any
+                                // "imported from Excel-only" warning
+                                // is no longer accurate. Clear it.
+                                state.update(|s| {
+                                    if let Some(active_id) =
+                                        s.workspace_shell.active_formula_space_id.clone()
+                                    {
+                                        if let Some(formula_space) =
+                                            s.formula_spaces.get_mut(&active_id)
+                                        {
+                                            formula_space.load_diagnostics.clear();
+                                        }
+                                    }
+                                });
+                            }
+                            Err(error) => {
+                                web_sys::console::error_1(
+                                    &format!("[onecalc] save failed: {error}").into(),
+                                );
+                            }
                         }
                     }
                 }
@@ -410,11 +427,11 @@ pub fn HomeShell(
                             Ok(Some(opened)) => match crate::persistence::read_formula_xml(
                                 &opened.xml,
                             ) {
-                                Ok(scenario) => {
+                                Ok(loaded) => {
                                     state.update(|s| {
                                         let _ =
                                             crate::app::case_lifecycle::open_loaded_scenario_into_workspace(
-                                                s, scenario,
+                                                s, loaded,
                                             );
                                     });
                                 }
@@ -991,6 +1008,7 @@ fn render_status_foot(status: Option<StatusView>) -> AnyView {
         .unwrap_or_else(|| "—".to_string());
     let scenario_label = status.scenario_label.clone();
     let scenario_label_attr = scenario_label.clone();
+    let load_diagnostics = status.load_diagnostics.clone();
     view! {
         <span class="onecalc-home-shell__statusfoot-dot" data-health=dot_health></span>
         <span>"live-bridge"</span>
@@ -1006,8 +1024,43 @@ fn render_status_foot(status: Option<StatusView>) -> AnyView {
                 {scenario_label}
             </span>
         </span>
+        {render_load_diagnostic_chips(load_diagnostics)}
     }
     .into_any()
+}
+
+/// Render persistence-loader warning chips in the status-foot
+/// (slice 3). Empty when `load_diagnostics` is empty so the chrome
+/// stays minimal. The chip's `data-load-diagnostic` attribute
+/// carries the diagnostic slug for browser-test inspection; the
+/// `title` carries the human-readable message.
+fn render_load_diagnostic_chips(
+    diagnostics: Vec<crate::persistence::LoadDiagnostic>,
+) -> AnyView {
+    if diagnostics.is_empty() {
+        return view! { <></> }.into_any();
+    }
+    let chips: Vec<_> = diagnostics
+        .into_iter()
+        .map(|diagnostic| {
+            let slug = diagnostic.slug();
+            let message = diagnostic.user_message();
+            view! {
+                <>
+                    <span class="onecalc-home-shell__statusfoot-sep">"·"</span>
+                    <span
+                        class="onecalc-home-shell__statusfoot-load-warning"
+                        data-load-diagnostic=slug
+                        title=message
+                    >
+                        "⚠ imported (Excel-only)"
+                    </span>
+                </>
+            }
+            .into_any()
+        })
+        .collect();
+    view! { <>{chips}</> }.into_any()
 }
 
 /// Trim a long `green:abcdef0123...` key down to a status-foot-friendly

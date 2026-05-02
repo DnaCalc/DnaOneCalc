@@ -15,10 +15,15 @@ pub mod scenario_projection;
 pub mod browser_file_io;
 
 pub use formula_file::{
-    read_formula_xml, write_formula_xml, CfRule, Context, Entry, EntryMode, FormulaFileError,
-    HostProfile, Identity, Locale, PublicationContext, Scenario, ScenarioPolicy, UiPreferences,
+    apply_bundle_retention_policy, read_formula_xml, write_formula_xml, BundleVerdict, CfRule,
+    CompareBundle, Context, Entry, EntryMode, FormulaFileError, HostProfile, Identity, LoadDiagnostic,
+    LoadedFormula, Locale, PublicationContext, Scenario, ScenarioPolicy, UiPreferences,
+    DEFAULT_BUNDLE_RETENTION_CAP,
 };
-pub use scenario_projection::{apply_loaded_scenario_to_formula_space, formula_space_to_scenario};
+pub use scenario_projection::{
+    apply_loaded_scenario_to_formula_space, apply_loaded_scenario_with_diagnostics,
+    formula_space_to_scenario,
+};
 
 #[cfg(target_arch = "wasm32")]
 pub use browser_file_io::{

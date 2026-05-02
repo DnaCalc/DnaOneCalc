@@ -100,9 +100,21 @@ pub fn formula_space_to_scenario(
 ///   loaded `name` is non-empty; otherwise the `id` is used as the
 ///   label so the breadcrumb has something to render.
 /// - UI prefs follow the loaded scenario.
+/// - `load_diagnostics` carries any loader warnings (slice 3).
 pub fn apply_loaded_scenario_to_formula_space(
     formula_space: &mut FormulaSpaceState,
     scenario: Scenario,
+) {
+    apply_loaded_scenario_with_diagnostics(formula_space, scenario, Vec::new());
+}
+
+/// Variant that also stamps the loader's diagnostics into the
+/// formula-space state. The status-foot renders a warning chip
+/// while `load_diagnostics` is non-empty; cleared on save.
+pub fn apply_loaded_scenario_with_diagnostics(
+    formula_space: &mut FormulaSpaceState,
+    scenario: Scenario,
+    diagnostics: Vec<crate::persistence::LoadDiagnostic>,
 ) {
     formula_space.raw_entered_cell_text = scenario.entry.text.clone();
     formula_space.committed_cell_text = Some(scenario.entry.text.clone());
@@ -127,6 +139,7 @@ pub fn apply_loaded_scenario_to_formula_space(
 
     formula_space.formula_drill_open = scenario.ui_preferences.formula_drill_expanded;
     formula_space.expanded_editor = scenario.ui_preferences.expanded_editor;
+    formula_space.load_diagnostics = diagnostics;
 }
 
 #[cfg(test)]

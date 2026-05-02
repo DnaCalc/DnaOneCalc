@@ -345,12 +345,54 @@ pub enum FormulaFileError {
     Parse(String),
     /// XML is well-formed but no recognisable `<dna:Formula>` extension
     /// AND no usable Excel-native fallback (e.g. missing `<Worksheet>` or
-    /// no cell). Slice 3 will widen the fallback path.
+    /// no cell).
     NotADnaFormula(String),
     /// `<dna:Formula>` carries a `version` attribute we do not understand.
     /// The caller is expected to surface this honestly to the user rather
     /// than silently downgrade.
     UnsupportedVersion(String),
+}
+
+/// A successful load. Carries the deserialised `Scenario` plus a list
+/// of diagnostics the caller can surface to the user — for example
+/// when a file was loaded through the Excel-only fallback path
+/// because `<dna:Formula>` wasn't present (the user opened a file
+/// that had been saved by Excel after a round-trip; non-formula
+/// fields filled in with defaults).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedFormula {
+    pub scenario: Scenario,
+    pub diagnostics: Vec<LoadDiagnostic>,
+}
+
+/// Per-file diagnostic surfaced from the reader. The host renders
+/// these as a non-blocking warning chip in the status-foot until
+/// the user explicitly saves (which re-establishes the canonical
+/// `dna:` extension and clears the diagnostic).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadDiagnostic {
+    /// File was loaded through the Excel-only fallback path: the
+    /// `<dna:Formula>` extension was absent, so identity / context
+    /// / UI prefs / compare-bundles all defaulted. The cell formula
+    /// (and any inline styling) was recovered from the worksheet.
+    ImportedFromExcelOnlyFile,
+}
+
+impl LoadDiagnostic {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::ImportedFromExcelOnlyFile => "imported-from-excel-only-file",
+        }
+    }
+
+    pub fn user_message(self) -> &'static str {
+        match self {
+            Self::ImportedFromExcelOnlyFile => {
+                "Imported from an Excel-only file — context defaults applied. \
+                 Save to write a full DnaOneCalc formula file."
+            }
+        }
+    }
 }
 
 impl fmt::Display for FormulaFileError {
@@ -770,7 +812,7 @@ fn xml_text_escape(value: &str) -> String {
 /// hard error with a soft "imported from Excel-only file" load
 /// diagnostic; today the partial-fallback path is on but the warning
 /// channel is not yet plumbed.)
-pub fn read_formula_xml(xml: &str) -> Result<Scenario, FormulaFileError> {
+pub fn read_formula_xml(xml: &str) -> Result<LoadedFormula, FormulaFileError> {
     let document =
         Document::parse(xml).map_err(|error| FormulaFileError::Parse(error.to_string()))?;
 
@@ -786,11 +828,19 @@ pub fn read_formula_xml(xml: &str) -> Result<Scenario, FormulaFileError> {
     let bundles = read_compare_bundles(workbook);
 
     if let Some(dna_formula) = dna_formula {
-        return read_with_dna_formula(workbook, dna_formula, bundles);
+        let scenario = read_with_dna_formula(workbook, dna_formula, bundles)?;
+        return Ok(LoadedFormula {
+            scenario,
+            diagnostics: Vec::new(),
+        });
     }
 
     // Excel-only fallback: pull from the worksheet cell.
-    read_excel_only(workbook, bundles)
+    let scenario = read_excel_only(workbook, bundles)?;
+    Ok(LoadedFormula {
+        scenario,
+        diagnostics: vec![LoadDiagnostic::ImportedFromExcelOnlyFile],
+    })
 }
 
 fn read_with_dna_formula(
@@ -1131,7 +1181,9 @@ mod tests {
 
     fn round_trip(scenario: &Scenario) -> Scenario {
         let xml = write_formula_xml(scenario);
-        read_formula_xml(&xml).expect("round-trip parse must succeed")
+        read_formula_xml(&xml)
+            .expect("round-trip parse must succeed")
+            .scenario
     }
 
     #[test]
@@ -1178,7 +1230,7 @@ mod tests {
             xml.contains(r#"<Data ss:Type="Number">12345.67</Data>"#),
             "expected Number-typed Data; got xml:\n{xml}",
         );
-        let restored = read_formula_xml(&xml).expect("round-trip");
+        let restored = read_formula_xml(&xml).expect("round-trip").scenario;
         assert_eq!(restored.entry.text, "12345.67");
         assert_eq!(restored.entry.mode, EntryMode::Value);
     }
@@ -1203,7 +1255,7 @@ mod tests {
             xml.contains("<dna:Entry mode=\"Text\">&apos;42</dna:Entry>"),
             "expected dna:Entry to preserve the raw '42; got xml:\n{xml}",
         );
-        let restored = read_formula_xml(&xml).expect("round-trip");
+        let restored = read_formula_xml(&xml).expect("round-trip").scenario;
         assert_eq!(restored.entry.text, "'42");
         assert_eq!(restored.entry.mode, EntryMode::Text);
     }
@@ -1234,7 +1286,7 @@ mod tests {
 "#,
             dna = DNA_NAMESPACE
         );
-        let scenario = read_formula_xml(&xml).expect("parse");
+        let scenario = read_formula_xml(&xml).expect("parse").scenario;
         assert_eq!(scenario.entry.text, "=SUM(1,2)");
     }
 
@@ -1252,13 +1304,31 @@ mod tests {
   </Worksheet>
 </Workbook>
 "#;
-        let scenario = read_formula_xml(xml).expect("parse");
+        let loaded = read_formula_xml(xml).expect("parse");
+        let scenario = loaded.scenario;
         assert_eq!(scenario.entry.text, "=SUM(7,8)");
         assert_eq!(scenario.entry.mode, EntryMode::Formula);
         // Identity / context / ui-prefs default since dna: extension was absent.
         assert_eq!(scenario.identity, Identity::default());
         assert_eq!(scenario.context, Context::default());
         assert_eq!(scenario.ui_preferences, UiPreferences::default());
+        // The Excel-only fallback path raises the warning chip.
+        assert_eq!(
+            loaded.diagnostics,
+            vec![LoadDiagnostic::ImportedFromExcelOnlyFile],
+        );
+    }
+
+    #[test]
+    fn full_dna_load_carries_no_diagnostics() {
+        let scenario = sample_full_scenario();
+        let xml = write_formula_xml(&scenario);
+        let loaded = read_formula_xml(&xml).expect("parse");
+        assert!(
+            loaded.diagnostics.is_empty(),
+            "full dna: load must not surface a diagnostic; got {:?}",
+            loaded.diagnostics,
+        );
     }
 
     #[test]

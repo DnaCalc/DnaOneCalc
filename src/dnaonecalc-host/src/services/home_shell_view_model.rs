@@ -657,6 +657,12 @@ pub struct StatusView {
     /// the chip so the user always knows which scenario they are
     /// editing.
     pub scenario_label: String,
+    /// Persistence-loader warnings for the active formula space.
+    /// Empty when the file was loaded with full fidelity (or no
+    /// file has been loaded). Slice 3 of the persistence ladder
+    /// surfaces a warning chip while this is non-empty; the next
+    /// save clears it.
+    pub load_diagnostics: Vec<crate::persistence::LoadDiagnostic>,
 }
 
 /// Coarse bridge health for the status-foot dot. `Live` is sage; `Stale`
@@ -1415,6 +1421,7 @@ fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {
         truth_source,
         green_tree_key,
         scenario_label,
+        load_diagnostics: formula_space.load_diagnostics.clone(),
     }
 }
 

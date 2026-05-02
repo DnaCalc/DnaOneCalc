@@ -217,11 +217,19 @@ pub fn reopen_formula_space(state: &mut OneCalcHostState, formula_space_id: &str
 /// breadcrumb dropdown / command palette.
 pub fn open_loaded_scenario_into_workspace(
     state: &mut OneCalcHostState,
-    scenario: crate::persistence::formula_file::Scenario,
+    loaded: crate::persistence::LoadedFormula,
 ) -> FormulaSpaceId {
+    let crate::persistence::LoadedFormula {
+        scenario,
+        diagnostics,
+    } = loaded;
     let id = derive_unique_formula_space_id(state, &scenario.identity.id);
     let mut formula_space = FormulaSpaceState::new(id.clone(), &scenario.entry.text);
-    crate::persistence::apply_loaded_scenario_to_formula_space(&mut formula_space, scenario);
+    crate::persistence::apply_loaded_scenario_with_diagnostics(
+        &mut formula_space,
+        scenario,
+        diagnostics,
+    );
 
     state.formula_spaces.insert(formula_space);
     if !state
