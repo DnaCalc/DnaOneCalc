@@ -77,6 +77,12 @@ pub fn formula_space_to_scenario(
             result_drill_expanded: false,
             expanded_editor: formula_space.expanded_editor,
         },
+        // Compare bundles aren't yet attached to FormulaSpaceState
+        // (no in-memory home for them yet — they live on the
+        // persisted file). Slice 4 ships the format slot; the
+        // workspace state field that mirrors them is a follow-up
+        // alongside the Compare-with-Excel UI surface.
+        bundles: Vec::new(),
     }
 }
 
@@ -186,12 +192,12 @@ mod tests {
                 mode: EntryMode::Formula,
                 text: "=A1+B1".to_string(),
             },
-            context: Context::default(),
             ui_preferences: UiPreferences {
                 formula_drill_expanded: true,
                 result_drill_expanded: false,
                 expanded_editor: true,
             },
+            ..Scenario::default()
         };
         apply_loaded_scenario_to_formula_space(&mut formula_space, scenario);
 
@@ -215,16 +221,13 @@ mod tests {
         let scenario = Scenario {
             identity: Identity {
                 id: "imported-from-disk".to_string(),
-                name: String::new(),
-                created_at: String::new(),
-                modified_at: String::new(),
+                ..Identity::default()
             },
             entry: Entry {
                 mode: EntryMode::Empty,
                 text: String::new(),
             },
-            context: Context::default(),
-            ui_preferences: UiPreferences::default(),
+            ..Scenario::default()
         };
         apply_loaded_scenario_to_formula_space(&mut formula_space, scenario);
         assert_eq!(

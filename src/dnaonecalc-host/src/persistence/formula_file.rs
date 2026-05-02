@@ -34,12 +34,19 @@ const FORMULA_VERSION: &str = "1";
 /// One persisted formula scenario. The on-disk XML round-trips this
 /// struct verbatim — every field maps to either an Excel-native location
 /// or a `dna:` extension element.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scenario {
     pub identity: Identity,
     pub entry: Entry,
     pub context: Context,
     pub ui_preferences: UiPreferences,
+    /// Compare-with-Excel evidence bundles in chronological-ascending
+    /// order by `compared_at`. Per `PERSISTENCE_FORMAT_PLAN §9` the
+    /// `.dnafml` carries zero-or-more bundles (empty by default; the
+    /// user adds them by running Compare with Excel and choosing
+    /// Save bundle). `apply_bundle_retention_policy` enforces the
+    /// §9.5 cap at save time.
+    pub bundles: Vec<CompareBundle>,
 }
 
 /// Stable identifying metadata. Timestamps are ISO-8601 UTC strings;
@@ -171,6 +178,164 @@ pub struct UiPreferences {
 }
 
 // ---------------------------------------------------------------------------
+// Compare bundles (slice 4)
+// ---------------------------------------------------------------------------
+
+/// One compare-with-Excel run. Per `PERSISTENCE_FORMAT_PLAN §9` the
+/// `.dnafml` carries zero-or-more bundles in chronological-ascending
+/// order by `compared_at`. Each bundle carries the metadata
+/// describing what was compared and the three top-level verdicts;
+/// the detailed VerificationRequest / VerificationReport / OxFmlSummary
+/// / ExcelObservationSummary / ReplayMismatch / ReplayExplain payloads
+/// are reserved schema slots that land in a later slice once a real
+/// Compare-with-Excel workflow produces them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompareBundle {
+    /// Stable id the UI targets for delete / replace / pin actions.
+    /// Convention from §9: `cb-<timestamp>-<excel-host-id>`, but the
+    /// reader does not parse the structure — any non-empty string
+    /// works and round-trips verbatim.
+    pub bundle_id: String,
+    /// ISO-8601 UTC. Format is up to the caller; the persistence
+    /// layer just round-trips.
+    pub compared_at: String,
+    /// e.g. `Excel365Win-16.0.18025`. Empty when unknown.
+    pub excel_host_id: String,
+    /// Digest of the formula state the bundle was generated against
+    /// (formula text + relevant context). Lets the UI distinguish
+    /// "live" bundles (digest matches the current scenario) from
+    /// "history" bundles. Empty when no digest was computed yet.
+    pub for_formula_state: String,
+    pub value_verdict: BundleVerdict,
+    pub display_verdict: BundleVerdict,
+    pub replay_verdict: BundleVerdict,
+    /// Optional human-readable summary the UI displays on the
+    /// bundle row. Slice 4 carries this as a single text node;
+    /// later slices add structured per-mismatch / per-explain
+    /// elements alongside.
+    pub summary: Option<String>,
+}
+
+/// Verdict for one of the three comparison families. `Unknown` is
+/// the safe default; round-trips through any future renames upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BundleVerdict {
+    Match,
+    Mismatch,
+    Equivalent,
+    Blocked,
+    #[default]
+    Unknown,
+}
+
+impl BundleVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Match => "match",
+            Self::Mismatch => "mismatch",
+            Self::Equivalent => "equivalent",
+            Self::Blocked => "blocked",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "match" => Self::Match,
+            "mismatch" => Self::Mismatch,
+            "equivalent" => Self::Equivalent,
+            "blocked" => Self::Blocked,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Default cap from `PERSISTENCE_FORMAT_PLAN §9.5`. The user can
+/// override per-file or globally; the value here is the floor.
+pub const DEFAULT_BUNDLE_RETENTION_CAP: usize = 10;
+
+/// Apply the §9.5 retention policy to a chronologically-ascending
+/// bundle list against the current formula state. Always keeps the
+/// most-recent bundle for each `(for_formula_state, excel_host_id)`
+/// pair; preserves all bundles whose `for_formula_state` matches
+/// the current state ("live" bundles); when over the cap, drops the
+/// oldest history-only bundles first; never drops a live bundle to
+/// satisfy the cap.
+///
+/// `bundles` is mutated in place. The result preserves chronological
+/// order. Pruning runs at save time only — see §9.5.
+pub fn apply_bundle_retention_policy(
+    bundles: &mut Vec<CompareBundle>,
+    current_for_formula_state: &str,
+    cap: usize,
+) {
+    if bundles.is_empty() {
+        return;
+    }
+
+    // Sort defensively — bundles should already be ascending, but
+    // re-sorting on save makes the contract robust to in-memory
+    // mutation order.
+    bundles.sort_by(|left, right| left.compared_at.cmp(&right.compared_at));
+
+    // Step 1: dedup `(for_formula_state, excel_host_id)` keeping the
+    // most-recent bundle per pair. Bundles with empty
+    // `for_formula_state` AND empty `excel_host_id` are treated as
+    // distinct from each other (we never coalesce into "everything
+    // unknown").
+    let mut latest_per_pair: std::collections::BTreeMap<(String, String), usize> =
+        std::collections::BTreeMap::new();
+    let mut keep = vec![true; bundles.len()];
+    for (index, bundle) in bundles.iter().enumerate() {
+        let key = (
+            bundle.for_formula_state.clone(),
+            bundle.excel_host_id.clone(),
+        );
+        if let Some(prior) = latest_per_pair.insert(key, index) {
+            keep[prior] = false;
+        }
+    }
+
+    // Step 2: enforce the cap, dropping oldest history-only entries
+    // first. Live bundles (digest matches the current state) are
+    // never dropped to make space.
+    let mut alive_count = keep.iter().filter(|&&k| k).count();
+    if alive_count > cap {
+        for index in 0..bundles.len() {
+            if alive_count <= cap {
+                break;
+            }
+            if !keep[index] {
+                continue;
+            }
+            // History-only bundle? Eligible for drop.
+            if bundles[index].for_formula_state != current_for_formula_state {
+                keep[index] = false;
+                alive_count -= 1;
+            }
+        }
+        // If even after dropping every history bundle we're still
+        // over, cap the live-bundle list by oldest-first to avoid
+        // unbounded growth. This shouldn't happen in normal use.
+        if alive_count > cap {
+            for index in 0..bundles.len() {
+                if alive_count <= cap {
+                    break;
+                }
+                if keep[index] {
+                    keep[index] = false;
+                    alive_count -= 1;
+                }
+            }
+        }
+    }
+
+    // Step 3: rebuild the list preserving the kept entries' order.
+    let mut iter = keep.into_iter();
+    bundles.retain(|_| iter.next().unwrap_or(false));
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
@@ -241,9 +406,32 @@ pub fn write_formula_xml(scenario: &Scenario) -> String {
 
     write_worksheet(&mut out, scenario);
     write_dna_formula(&mut out, scenario);
+    for bundle in &scenario.bundles {
+        write_dna_compare_bundle(&mut out, bundle);
+    }
 
     out.push_str("</Workbook>\n");
     out
+}
+
+fn write_dna_compare_bundle(out: &mut String, bundle: &CompareBundle) {
+    out.push_str("  <dna:CompareBundle");
+    write_attr(out, "bundle-id", &bundle.bundle_id);
+    write_attr(out, "compared-at", &bundle.compared_at);
+    write_attr(out, "excel-host-id", &bundle.excel_host_id);
+    write_attr(out, "for-formula-state", &bundle.for_formula_state);
+    write_attr(out, "value-verdict", bundle.value_verdict.as_str());
+    write_attr(out, "display-verdict", bundle.display_verdict.as_str());
+    write_attr(out, "replay-verdict", bundle.replay_verdict.as_str());
+    if let Some(summary) = bundle.summary.as_deref() {
+        out.push_str(">\n");
+        out.push_str("    <dna:Summary>");
+        out.push_str(&xml_text_escape(summary));
+        out.push_str("</dna:Summary>\n");
+        out.push_str("  </dna:CompareBundle>\n");
+    } else {
+        out.push_str("/>\n");
+    }
 }
 
 fn write_worksheet(out: &mut String, scenario: &Scenario) {
@@ -470,18 +658,20 @@ pub fn read_formula_xml(xml: &str) -> Result<Scenario, FormulaFileError> {
     }
 
     let dna_formula = find_child_in_namespace(workbook, DNA_NAMESPACE, "Formula");
+    let bundles = read_compare_bundles(workbook);
 
     if let Some(dna_formula) = dna_formula {
-        return read_with_dna_formula(workbook, dna_formula);
+        return read_with_dna_formula(workbook, dna_formula, bundles);
     }
 
     // Excel-only fallback: pull from the worksheet cell.
-    read_excel_only(workbook)
+    read_excel_only(workbook, bundles)
 }
 
 fn read_with_dna_formula(
     workbook: Node<'_, '_>,
     dna_formula: Node<'_, '_>,
+    bundles: Vec<CompareBundle>,
 ) -> Result<Scenario, FormulaFileError> {
     let version = dna_formula
         .attribute("version")
@@ -501,17 +691,62 @@ fn read_with_dna_formula(
         entry,
         context,
         ui_preferences,
+        bundles,
     })
 }
 
-fn read_excel_only(workbook: Node<'_, '_>) -> Result<Scenario, FormulaFileError> {
+fn read_excel_only(
+    workbook: Node<'_, '_>,
+    bundles: Vec<CompareBundle>,
+) -> Result<Scenario, FormulaFileError> {
     let entry = read_excel_entry(workbook);
     Ok(Scenario {
         identity: Identity::default(),
         entry,
         context: Context::default(),
         ui_preferences: UiPreferences::default(),
+        bundles,
     })
+}
+
+fn read_compare_bundles(workbook: Node<'_, '_>) -> Vec<CompareBundle> {
+    let mut bundles: Vec<CompareBundle> = workbook
+        .children()
+        .filter(|child| {
+            child.is_element()
+                && child.tag_name().namespace() == Some(DNA_NAMESPACE)
+                && child.tag_name().name() == "CompareBundle"
+        })
+        .map(read_compare_bundle)
+        .collect();
+    // Defensive: enforce chronological-ascending order regardless of
+    // the input. Per §11.9 of the plan this is the canonical order.
+    bundles.sort_by(|left, right| left.compared_at.cmp(&right.compared_at));
+    bundles
+}
+
+fn read_compare_bundle(node: Node<'_, '_>) -> CompareBundle {
+    CompareBundle {
+        bundle_id: node.attribute("bundle-id").unwrap_or_default().to_string(),
+        compared_at: node.attribute("compared-at").unwrap_or_default().to_string(),
+        excel_host_id: node.attribute("excel-host-id").unwrap_or_default().to_string(),
+        for_formula_state: node
+            .attribute("for-formula-state")
+            .unwrap_or_default()
+            .to_string(),
+        value_verdict: BundleVerdict::parse(
+            node.attribute("value-verdict").unwrap_or("unknown"),
+        ),
+        display_verdict: BundleVerdict::parse(
+            node.attribute("display-verdict").unwrap_or("unknown"),
+        ),
+        replay_verdict: BundleVerdict::parse(
+            node.attribute("replay-verdict").unwrap_or("unknown"),
+        ),
+        summary: find_child_in_namespace(node, DNA_NAMESPACE, "Summary")
+            .and_then(|summary| summary.text())
+            .map(ToOwned::to_owned),
+    }
 }
 
 fn read_identity(dna_formula: Node<'_, '_>) -> Identity {
@@ -765,6 +1000,7 @@ mod tests {
                 result_drill_expanded: true,
                 expanded_editor: false,
             },
+            bundles: Vec::new(),
         }
     }
 
@@ -782,12 +1018,7 @@ mod tests {
 
     #[test]
     fn empty_scenario_round_trips() {
-        let scenario = Scenario {
-            identity: Identity::default(),
-            entry: Entry::default(),
-            context: Context::default(),
-            ui_preferences: UiPreferences::default(),
-        };
+        let scenario = Scenario::default();
         let restored = round_trip(&scenario);
         assert_eq!(restored, scenario);
     }
@@ -815,12 +1046,7 @@ mod tests {
                 mode: EntryMode::Value,
                 text: "12345.67".to_string(),
             },
-            ..Scenario {
-                identity: Identity::default(),
-                entry: Entry::default(),
-                context: Context::default(),
-                ui_preferences: UiPreferences::default(),
-            }
+            ..Scenario::default()
         };
         let xml = write_formula_xml(&scenario);
         assert!(
@@ -839,12 +1065,7 @@ mod tests {
                 mode: EntryMode::Text,
                 text: "'42".to_string(),
             },
-            ..Scenario {
-                identity: Identity::default(),
-                entry: Entry::default(),
-                context: Context::default(),
-                ui_preferences: UiPreferences::default(),
-            }
+            ..Scenario::default()
         };
         let xml = write_formula_xml(&scenario);
         // Excel cell sees `42` (no leading apostrophe).
@@ -1006,16 +1227,262 @@ mod tests {
                         EntryMode::Empty => String::new(),
                     },
                 },
-                ..Scenario {
-                    identity: Identity::default(),
-                    entry: Entry::default(),
-                    context: Context::default(),
-                    ui_preferences: UiPreferences::default(),
-                }
+                ..Scenario::default()
             };
             let restored = round_trip(&scenario);
             assert_eq!(restored.entry.mode, mode, "mode {mode:?}");
             assert_eq!(restored.entry.text, scenario.entry.text, "text for {mode:?}");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Compare bundles (slice 4)
+    // -----------------------------------------------------------------
+
+    fn sample_bundle(
+        id: &str,
+        compared_at: &str,
+        excel_host: &str,
+        for_state: &str,
+    ) -> CompareBundle {
+        CompareBundle {
+            bundle_id: id.to_string(),
+            compared_at: compared_at.to_string(),
+            excel_host_id: excel_host.to_string(),
+            for_formula_state: for_state.to_string(),
+            value_verdict: BundleVerdict::Match,
+            display_verdict: BundleVerdict::Mismatch,
+            replay_verdict: BundleVerdict::Equivalent,
+            summary: Some("display: thousands separator differs".to_string()),
+        }
+    }
+
+    #[test]
+    fn empty_bundle_list_emits_nothing_extra() {
+        let scenario = Scenario::default();
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            !xml.contains("<dna:CompareBundle"),
+            "empty bundle list must not emit CompareBundle elements; got xml:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn single_bundle_round_trips_with_attributes_and_summary() {
+        let scenario = Scenario {
+            bundles: vec![sample_bundle(
+                "cb-2026-04-26T1430-Excel365Win",
+                "2026-04-26T14:30:11Z",
+                "Excel365Win-16.0.18025",
+                "sha256:abcd1234",
+            )],
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        assert_eq!(restored.bundles, scenario.bundles);
+    }
+
+    #[test]
+    fn bundle_without_summary_round_trips_as_self_closing_element() {
+        let mut bundle = sample_bundle("cb-1", "2026-04-26T14:30:11Z", "Excel365Win", "");
+        bundle.summary = None;
+        let scenario = Scenario {
+            bundles: vec![bundle.clone()],
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            xml.contains("<dna:CompareBundle") && xml.contains("/>"),
+            "no-summary bundle should emit a self-closing element; got xml:\n{xml}",
+        );
+        let restored = round_trip(&scenario);
+        assert_eq!(restored.bundles, vec![bundle]);
+    }
+
+    #[test]
+    fn multiple_bundles_round_trip_in_chronological_ascending_order() {
+        let scenario = Scenario {
+            bundles: vec![
+                sample_bundle(
+                    "cb-old",
+                    "2026-04-22T10:14:22Z",
+                    "Excel365Win",
+                    "sha256:older",
+                ),
+                sample_bundle(
+                    "cb-mid",
+                    "2026-04-23T10:14:22Z",
+                    "ExcelMac",
+                    "sha256:older",
+                ),
+                sample_bundle(
+                    "cb-new",
+                    "2026-04-26T14:30:11Z",
+                    "Excel365Win",
+                    "sha256:newer",
+                ),
+            ],
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        let restored_ids: Vec<_> = restored
+            .bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
+        assert_eq!(restored_ids, vec!["cb-old", "cb-mid", "cb-new"]);
+    }
+
+    #[test]
+    fn reader_sorts_out_of_order_bundles_chronological_ascending() {
+        // Even if a tampered file emits bundles out of order, the
+        // reader normalises them to chronological-ascending per
+        // §11.9.
+        let scenario = Scenario {
+            bundles: vec![
+                sample_bundle("cb-c", "2026-04-26T14:30:11Z", "host", "state"),
+                sample_bundle("cb-a", "2026-04-22T10:14:22Z", "host", "state"),
+                sample_bundle("cb-b", "2026-04-23T10:14:22Z", "host", "state"),
+            ],
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        let restored_ids: Vec<_> = restored
+            .bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
+        // Reader sorted by compared-at; the original "out of order"
+        // input is now ascending. The retention helper would dedup
+        // the (state, host) pair, but the reader itself does not.
+        assert_eq!(restored_ids, vec!["cb-a", "cb-b", "cb-c"]);
+    }
+
+    #[test]
+    fn unknown_verdict_strings_round_trip_as_unknown() {
+        let scenario = Scenario {
+            bundles: vec![CompareBundle {
+                bundle_id: "cb-unknown".to_string(),
+                compared_at: "2026-04-26T14:30:11Z".to_string(),
+                excel_host_id: "host".to_string(),
+                for_formula_state: "state".to_string(),
+                value_verdict: BundleVerdict::Unknown,
+                display_verdict: BundleVerdict::Blocked,
+                replay_verdict: BundleVerdict::Unknown,
+                summary: None,
+            }],
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.bundles[0].value_verdict,
+            BundleVerdict::Unknown,
+        );
+        assert_eq!(
+            restored.bundles[0].display_verdict,
+            BundleVerdict::Blocked,
+        );
+    }
+
+    #[test]
+    fn bundle_summary_with_xml_metacharacters_round_trips() {
+        let mut bundle = sample_bundle("cb-1", "2026-04-26T14:30:11Z", "host", "state");
+        bundle.summary = Some(
+            r#"display mismatch: "<&>'\""#.to_string(),
+        );
+        let scenario = Scenario {
+            bundles: vec![bundle.clone()],
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        assert_eq!(restored.bundles, vec![bundle]);
+    }
+
+    // ----- retention policy (§9.5) --------------------------------------
+
+    #[test]
+    fn retention_policy_keeps_live_bundle_for_current_formula_state() {
+        let mut bundles = vec![
+            sample_bundle("cb-1", "t1", "host", "old-state"),
+            sample_bundle("cb-2", "t2", "host", "new-state"),
+        ];
+        apply_bundle_retention_policy(&mut bundles, "new-state", 10);
+        let ids: Vec<_> = bundles.iter().map(|bundle| bundle.bundle_id.as_str()).collect();
+        assert_eq!(ids, vec!["cb-1", "cb-2"]);
+    }
+
+    #[test]
+    fn retention_policy_dedups_pair_keeping_most_recent() {
+        // Two bundles for same (formula_state, host) — keep only the
+        // most recent. A run with no significant change updates the
+        // existing bundle's compared-at in place per §9.2.
+        let mut bundles = vec![
+            sample_bundle("cb-old-host-a", "t1", "Excel365Win", "state"),
+            sample_bundle("cb-new-host-a", "t2", "Excel365Win", "state"),
+            sample_bundle("cb-old-host-b", "t1", "ExcelMac", "state"),
+        ];
+        apply_bundle_retention_policy(&mut bundles, "state", 10);
+        let ids: Vec<_> = bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
+        assert!(ids.contains(&"cb-new-host-a"));
+        assert!(ids.contains(&"cb-old-host-b"));
+        assert!(!ids.contains(&"cb-old-host-a"));
+    }
+
+    #[test]
+    fn retention_policy_caps_history_only_bundles_keeping_oldest_dropped_first() {
+        let mut bundles: Vec<CompareBundle> = (0..15)
+            .map(|n| {
+                sample_bundle(
+                    &format!("cb-{n:02}"),
+                    &format!("2026-04-{:02}", 1 + n),
+                    &format!("host-{n}"),
+                    &format!("state-{n}"),
+                )
+            })
+            .collect();
+        apply_bundle_retention_policy(&mut bundles, "no-current-state", 10);
+        assert_eq!(bundles.len(), 10);
+        // Oldest five should be dropped (cb-00..cb-04).
+        let ids: Vec<_> = bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
+        assert!(!ids.contains(&"cb-00"));
+        assert!(!ids.contains(&"cb-04"));
+        assert!(ids.contains(&"cb-05"));
+        assert!(ids.contains(&"cb-14"));
+    }
+
+    #[test]
+    fn retention_policy_never_drops_live_bundle_to_satisfy_cap() {
+        let mut bundles: Vec<CompareBundle> = (0..15)
+            .map(|n| {
+                sample_bundle(
+                    &format!("cb-history-{n:02}"),
+                    &format!("2026-04-{:02}", 1 + n),
+                    &format!("host-{n}"),
+                    "old-state",
+                )
+            })
+            .collect();
+        // One live bundle, oldest in the list — should survive even
+        // though it's older than every history bundle.
+        let mut live = sample_bundle("cb-live", "2025-01-01", "host", "current-state");
+        live.summary = Some("live bundle".to_string());
+        bundles.insert(0, live);
+
+        apply_bundle_retention_policy(&mut bundles, "current-state", 10);
+
+        let ids: Vec<_> = bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&"cb-live"),
+            "live bundle must never be dropped to satisfy the cap; got {ids:?}",
+        );
     }
 }
