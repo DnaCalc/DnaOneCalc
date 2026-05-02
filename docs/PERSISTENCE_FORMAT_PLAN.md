@@ -25,6 +25,56 @@ artefact that crosses tool boundaries. If it opens in Excel as-is, the
 formula is portable to any teammate, traceable in any backup, and
 recoverable from any USB stick — without DnaOneCalc.
 
+## 1A. Single file format: where everything goes
+
+The user-facing file family is **one format and one sidecar**:
+
+| File | Format | Scope | Per-formula? |
+|---|---|---|---|
+| `.dnafml` | XML Spreadsheet 2003 + `dna:` extension | the formula and (optionally) its compare-with-Excel evidence | yes |
+| `workspace.json` | JSON | app-level state — recents list, pinned list, editor settings | no, host-app singleton |
+
+There is **no separate `.dnacomparebundle`**. Compare-with-Excel evidence
+that used to be planned as a `.dnacomparebundle` JSON sibling now lives
+inside the same `.dnafml` as an optional `<dna:CompareBundle>` element —
+see [§9](#9-compare-bundle-as-an-optional-sibling-element).
+
+Reasoning:
+1. A compare bundle's `scenario_snapshot` field is literally an inlined
+   `.dnafml`. Two files would always travel together.
+2. The XML container already has a foreign-namespace extension lane that
+   Excel ignores; nothing stops us putting the bundle there too.
+3. The user mental model is "this is my formula and the work I did on
+   it" — one file, not two.
+4. The save-bundle action becomes "save the current `.dnafml` with the
+   bundle attached," not "write a second file alongside."
+
+`workspace.json` stays JSON because it is **not** per-formula — it
+records "what was the user looking at last session" (recents + pinned)
+plus app-level editor preferences. Putting it inside any one `.dnafml`
+would be a category error (the file would have to know about other
+files; opening one would mutate global app state).
+
+### 1A.1 What JSON files exist today
+**Zero user-facing JSON files exist on disk today.** The persistence
+slice has not been implemented; nothing in the running app writes a
+user file yet.
+
+What lives in the codebase:
+1. Internal verification-bundle outputs in `target/onecalc-verification/...`
+   — scratch artefacts produced when running a verification batch
+   (`input-request.json`, `verification-bundle-report.json`,
+   `xml-cell-extract.json`, per-case `scenario.json`, replay manifests,
+   etc.). These are subsystem audit files, not user-saved documents,
+   and they stay JSON because they're internal scratch.
+2. The `.dnacomparebundle` JSON envelope was *planned* in
+   [APP_UX_REALIZATION §5.2](APP_UX_REALIZATION.md) but never
+   implemented. This plan supersedes that design — the bundle
+   collapses into the XML file as described in §9.
+3. The `.dnascenario` JSON envelope was the original
+   [APP_UX_REALIZATION §5.1](APP_UX_REALIZATION.md) shape; this plan
+   replaces it with the XML container described below.
+
 ## 2. Past discussion summary
 
 ### 2.1 What `SCOPE_AND_SPEC §11` already says
@@ -170,8 +220,29 @@ schema in a namespace we own.
       formula-drill-expanded="false"
       result-drill-expanded="true"
       expanded-editor="false"/>
-    <dna:AttachedCompareBundle path=""/>
   </dna:Formula>
+
+  <!-- OPTIONAL. Compare-with-Excel evidence for the formula above.
+       Absent on a freshly-saved formula; present after the user
+       runs Compare-with-Excel and chooses Save bundle. Dropped
+       automatically by the next Save when the formula has been
+       edited (per §9.2). Encoding is JSON-in-CDATA per §9.3. -->
+  <dna:CompareBundle version="1" encoding="json-v1"
+                     compared-at="2026-04-26T14:30:11Z"
+                     value-verdict="match"
+                     display-verdict="mismatch"
+                     replay-verdict="equivalent">
+    <![CDATA[
+      {
+        "verification_request": { /* full VerificationBatchRequest */ },
+        "verification_report":  { /* full VerificationCaseReport with three verdicts */ },
+        "oxfml_summary":        { /* OxfmlVerificationSummary */ },
+        "excel_observation_summary": { /* ExcelObservationSummary or null */ },
+        "replay_mismatch_records": [ /* OxReplayMismatchRecord[] */ ],
+        "replay_explain_records":   [ /* OxReplayExplainRecord[] */ ]
+      }
+    ]]>
+  </dna:CompareBundle>
 
   <!-- Optional: the same data also embedded as a Custom Document
        Property whose name is "DnaOneCalc.Formula.v1.json". This
@@ -194,7 +265,7 @@ schema in a namespace we own.
 | `Date1904` flag | `x:WorkbookOptions/x:Date1904` AND `dna:Locale/@date1904` | affects date semantics |
 | host profile, scenario policy, UI prefs | `dna:*` only | invisible to Excel |
 | identity (id, timestamps), entry mode pill | `dna:Identity`, `dna:Entry/@mode` | invisible to Excel |
-| compare-bundle attachment ref | `dna:AttachedCompareBundle/@path` | invisible to Excel |
+| compare-with-Excel evidence | `dna:CompareBundle` (optional, see [§9](#9-compare-bundle-as-an-optional-sibling-element)) | invisible to Excel |
 
 ### 5.3 The write rule
 For **every** field that has an Excel-native representation, write **both**:
@@ -289,19 +360,68 @@ into Excel. Internal mime/file association in Tauri / Windows will route
 `.dnafml` to DnaOneCalc preferentially; the `.xml` copy is a
 courtesy for sending to non-DnaOneCalc users.
 
-## 9. Compare bundle stays separate
+## 9. Compare bundle as an optional sibling element
 
-Per `§11.4` and `APP_UX_REALIZATION §5.2`, the `.dnacomparebundle` is a
-JSON envelope (verification request + report + observations + replay
-records). It is NOT shoehorned into SpreadsheetML 2003 because:
-1. its content is verification-system-specific, not spreadsheet
-   content,
-2. no benefit to opening it in Excel,
-3. the existing serde-derived shapes already round-trip cleanly.
+Compare-with-Excel evidence (verification request, verification report,
+OxFml summary, Excel observation summary, replay mismatch + explain
+records) lives **inside the same `.dnafml`** as an optional
+`<dna:CompareBundle>` sibling under `<Workbook>`. It does **not** live
+in a separate `.dnacomparebundle` file.
 
-The `dna:AttachedCompareBundle/@path` field is just a relative path
-reference from a `.dnafml` to its bundle, the same way the JSON plan
-already specified.
+This supersedes the earlier `APP_UX_REALIZATION §5.2` proposal, which
+was a leftover from when the formula file itself was JSON.
+
+### 9.1 Why merged
+1. The bundle's `scenario_snapshot` is literally an inlined formula —
+   the two artefacts always travel together.
+2. The XML container already has the `dna:` extension lane Excel
+   ignores, so adding one more sibling is free.
+3. One file is easier to email, archive, attach to a bug report.
+4. The user concept is "the formula and the verification I ran on it"
+   — one piece of work, one file.
+
+### 9.2 Save semantics
+| Action | Effect on `<dna:CompareBundle>` |
+|---|---|
+| Save (Ctrl+S), formula unchanged since last bundle | preserved verbatim |
+| Save (Ctrl+S), formula edited since last bundle | dropped (a stale bundle is misleading) |
+| Save bundle (from compare view) | replaced with fresh bundle for the current formula state |
+| New formula | element absent on first save |
+| Open file with bundle, no edits, save | preserved verbatim |
+
+The "drop on edit" rule keeps bundles honest. The bundle records what
+was compared at a specific formula state; a bundle whose
+`scenario_snapshot` disagrees with the live formula is worse than no
+bundle at all.
+
+### 9.3 Bundle-content encoding inside the XML
+The bundle's data shapes (`VerificationCaseReport`,
+`OxReplayMismatchRecord`, `OxReplayExplainRecord`, etc.) already
+serialize cleanly to JSON via existing `#[derive(Serialize, Deserialize)]`
+in `services/verification_bundle.rs`. Two encoding options inside
+`<dna:CompareBundle>`:
+
+| Option | Pros | Cons |
+|---|---|---|
+| `A. Native XML elements` | XSLT-friendly; readable; structurally inspectable | re-write of all serde shapes; large surface; bidirectional churn when shapes evolve |
+| `B. CDATA-wrapped JSON` (`<dna:CompareBundle><![CDATA[ {...json...} ]]></dna:CompareBundle>`) | zero serde rework; lossless; trivial to implement | not XSLT-friendly; the inside is opaque to XML tooling |
+
+Recommendation: **option B for the first slice**, with a clear
+versioned `dna:CompareBundle/@encoding="json-v1"` attribute so we can
+migrate to option A later without breaking existing files. The
+extension lane is for things Excel cares about (formula, format, CF);
+the bundle is for things only OneCalc cares about (replay records,
+verdicts) — embedding JSON inside the same file is honest about that
+distinction without splitting into two files.
+
+### 9.4 What this replaces
+- `APP_UX_REALIZATION §5.2` `.dnacomparebundle` JSON file: gone.
+- `dna:Formula/dna:AttachedCompareBundle/@path` (the path-reference
+  field in §5.1's mapping): gone. The bundle is in the same file, no
+  reference needed.
+- `services/persistence/compare_bundle.rs` as a separate I/O module:
+  unnecessary. The compare-bundle (de)serialiser is one helper inside
+  `persistence/formula_file.rs`.
 
 ## 10. Implementation seam ladder
 
@@ -344,11 +464,23 @@ loaded back → state matches.
 2. Surface the "imported from Excel-only file" warning in a status-foot
    chip until the user explicitly saves back.
 
-### 10.4 Slice 4 — `.xml` companion export
+### 10.4 Slice 4 — Compare-bundle merge
+1. Define `dna:CompareBundle` element schema (one attribute set, JSON
+   payload in CDATA per §9.3).
+2. Add `write_compare_bundle_into(scenario_state, bundle, path)` and
+   `read_compare_bundle_from(path) -> Option<CompareBundle>` helpers
+   inside `persistence/formula_file.rs`.
+3. Wire the compare view's `Save bundle` action to write into the
+   current `.dnafml` instead of a sibling `.dnacomparebundle`.
+4. Implement the "drop on edit" rule from §9.2.
+5. Browser invariant: load file with bundle, edit formula text once,
+   save, reload; assert bundle is gone.
+
+### 10.5 Slice 5 — `.xml` companion export
 1. Add a "Save a copy as Excel XML (.xml)…" command-palette action.
 2. Writes the same bytes to a `.xml` file.
 
-### 10.5 Slice 5 — `<Names>` placeholder mode (deferred)
+### 10.6 Slice 6 — `<Names>` placeholder mode (deferred)
 Opt-in flag in `dna:Formula/@bind-placeholders` that adds workbook-level
 `<Names>` for the formula's identifiers, with placeholder values
 captured in the `dna:` extension so OneCalc round-trips them.
@@ -384,6 +516,18 @@ captured in the `dna:` extension so OneCalc round-trips them.
 7. **File-association under Tauri.** Windows `.dnafml` association
    needs an installer step. Browser host has no association; users
    download then upload. Document both paths.
+8. **Bundle-content native-XML promotion.** §9.3 starts with JSON-in-CDATA.
+   When does it become worth promoting bundle content to native XML
+   elements? Likely once X-Ray wants to walk the bundle structure with
+   XSLT-style queries. Until then the JSON form is fine. Define the
+   trigger criteria for the promotion.
+9. **Bundle-on-stale-formula warning UX.** §9.2 says we drop a bundle
+   when the formula has been edited since the bundle was generated.
+   Should the user get a confirmation toast, a status-foot chip, an
+   irreversible drop, or a "stash to side-bundle" recovery path?
+   Recommend: silent drop on first save with a chip in the status-foot
+   noting "previous compare bundle dropped"; user can re-run compare to
+   regenerate.
 
 ## 12. What changes vs the existing JSON plan
 
@@ -400,23 +544,42 @@ captured in the `dna:` extension so OneCalc round-trips them.
 | `context.publication_context.cf_rules` | `x:ConditionalFormatting` AND `dna:CfRules/dna:Rule` |
 | `context.scenario_policy` | `dna:ScenarioPolicy` |
 | `ui_preferences.*` | `dna:UiPreferences/@*` |
-| `attached_compare_bundle_path` | `dna:AttachedCompareBundle/@path` |
+| `attached_compare_bundle_path` | (removed — bundle is in-file) |
 
-The serde shape stays the SAME inside the codebase — `Scenario` is the
-struct that gets read / written. The container changes; the model does
-not.
+| `APP_UX_REALIZATION §5.2` `.dnacomparebundle` field | New XML location |
+|---|---|
+| (whole file) | `dna:CompareBundle` (optional, sibling of `dna:Formula`) |
+| `dnacomparebundle_version` | `dna:CompareBundle/@version` |
+| `created_at` | `dna:CompareBundle/@compared-at` |
+| `scenario_snapshot` | (removed — the same file IS the scenario) |
+| `verification_request`, `verification_report`, `oxfml_summary`, `excel_observation_summary`, `replay_mismatch_records`, `replay_explain_records` | `dna:CompareBundle` text node, JSON-in-CDATA per §9.3 |
+
+The serde shape stays the SAME inside the codebase — `Scenario` and the
+existing verification-bundle wrapper structs are what gets read /
+written. The container changes; the models do not.
 
 ## 13. Decision
 
-Proceed with the XML Spreadsheet 2003 + DnaOneCalc-namespace extension
-container as the canonical `.dnafml` format. Code lifecycle:
+Proceed with **one user-facing file format** — XML Spreadsheet 2003 +
+DnaOneCalc-namespace extension — as the canonical `.dnafml`. The same
+file carries the formula and (optionally) the compare-with-Excel
+evidence; there is no separate `.dnacomparebundle` JSON. The only
+remaining JSON file is `workspace.json`, which is host-app state
+(recents, pinned, editor settings) and explicitly not per-formula.
+
+Code lifecycle (full sequence is the seam ladder in §10):
 
 1. Lift the existing emit + parse code into a dedicated `persistence/`
    module.
-2. Add the `dna:` extension schema and the round-trip serialiser.
+2. Add the `dna:Formula` extension schema and the round-trip
+   serialiser.
 3. Wire the breadcrumb's `Save as…` and `Open…` actions to it.
 4. Write the `format-round-trip` invariant suite first, before exposing
    the actions in the UI.
+5. Add the `dna:CompareBundle` element after the formula round-trip is
+   stable; merge the previously-planned `.dnacomparebundle` JSON path
+   into the compare-view's `Save bundle` action writing into the
+   current `.dnafml`.
 
 The matching internal-architectural term remains `scenario`; the
 on-disk extension namespace is `dna:` (short for `dnaonecalc`); the
