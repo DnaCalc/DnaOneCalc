@@ -404,6 +404,15 @@ pub fn write_formula_xml(scenario: &Scenario) -> String {
     out.push_str(DNA_NAMESPACE);
     out.push_str("\">\n");
 
+    // Slice 2: Excel-native fidelity — emit native sub-elements that
+    // a fresh Excel double-click renders correctly. Each native
+    // emission is paired with the `dna:` form so the next OneCalc
+    // load reads from a single canonical source (per §5.3 write
+    // rule). The native emission is conditional: empty fields
+    // (no number format, no colours, default Date1904) skip emit
+    // so simple scenarios stay simple.
+    write_excel_workbook_options(&mut out, scenario);
+    write_styles_block(&mut out, scenario);
     write_worksheet(&mut out, scenario);
     write_dna_formula(&mut out, scenario);
     for bundle in &scenario.bundles {
@@ -412,6 +421,71 @@ pub fn write_formula_xml(scenario: &Scenario) -> String {
 
     out.push_str("</Workbook>\n");
     out
+}
+
+/// Emit the `<ExcelWorkbook>` block when the scenario's locale
+/// requires it. Only `<Date1904>` is emitted today; future workbook
+/// options (refmode, iteration, protection) land here when their
+/// `dna:` schema slots are added.
+fn write_excel_workbook_options(out: &mut String, scenario: &Scenario) {
+    if !scenario.context.locale.date1904 {
+        return;
+    }
+    out.push_str("  <ExcelWorkbook>\n");
+    out.push_str("    <Date1904/>\n");
+    out.push_str("  </ExcelWorkbook>\n");
+}
+
+/// Emit a `<Styles>` block with one `<Style>` per non-empty
+/// publication-context style group. Slice 2 covers NumberFormat,
+/// Font color, and Interior color — the core round-trip targets in
+/// the WS-14 admitted formatting set. Borders, Alignment, and the
+/// rest of the Font and Interior attribute matrix are reserved for
+/// later slices once their `dna:` schema slots exist.
+fn write_styles_block(out: &mut String, scenario: &Scenario) {
+    if !needs_default_style(scenario) {
+        return;
+    }
+    out.push_str("  <Styles>\n");
+    let style_id = effective_style_id(scenario);
+    out.push_str("    <Style ss:ID=\"");
+    out.push_str(&xml_attr_escape(&style_id));
+    out.push_str("\">\n");
+    let pc = &scenario.context.publication_context;
+    if !pc.number_format_code.is_empty() {
+        out.push_str("      <NumberFormat ss:Format=\"");
+        out.push_str(&xml_attr_escape(&pc.number_format_code));
+        out.push_str("\"/>\n");
+    }
+    if !pc.font_color.is_empty() {
+        out.push_str("      <Font ss:Color=\"");
+        out.push_str(&xml_attr_escape(&pc.font_color));
+        out.push_str("\"/>\n");
+    }
+    if !pc.fill_color.is_empty() {
+        out.push_str("      <Interior ss:Color=\"");
+        out.push_str(&xml_attr_escape(&pc.fill_color));
+        out.push_str("\" ss:Pattern=\"Solid\"/>\n");
+    }
+    out.push_str("    </Style>\n");
+    out.push_str("  </Styles>\n");
+}
+
+fn needs_default_style(scenario: &Scenario) -> bool {
+    let pc = &scenario.context.publication_context;
+    !pc.number_format_code.is_empty()
+        || !pc.font_color.is_empty()
+        || !pc.fill_color.is_empty()
+        || !pc.style_id.is_empty()
+}
+
+fn effective_style_id(scenario: &Scenario) -> String {
+    let pc = &scenario.context.publication_context;
+    if !pc.style_id.is_empty() {
+        pc.style_id.clone()
+    } else {
+        "dna-cell-style".to_string()
+    }
 }
 
 fn write_dna_compare_bundle(out: &mut String, bundle: &CompareBundle) {
@@ -441,14 +515,22 @@ fn write_worksheet(out: &mut String, scenario: &Scenario) {
     write_cell(out, scenario);
     out.push_str("      </Row>\n");
     out.push_str("    </Table>\n");
+    write_native_conditional_formatting(out, scenario);
     out.push_str("  </Worksheet>\n");
 }
 
 fn write_cell(out: &mut String, scenario: &Scenario) {
     let raw = &scenario.entry.text;
+    let style_attr = if needs_default_style(scenario) {
+        format!(" ss:StyleID=\"{}\"", xml_attr_escape(&effective_style_id(scenario)))
+    } else {
+        String::new()
+    };
     match scenario.entry.mode {
         EntryMode::Formula => {
-            out.push_str("        <Cell ss:Formula=\"");
+            out.push_str("        <Cell");
+            out.push_str(&style_attr);
+            out.push_str(" ss:Formula=\"");
             out.push_str(&xml_attr_escape(raw));
             out.push_str("\"><Data ss:Type=\"String\"></Data></Cell>\n");
         }
@@ -458,13 +540,17 @@ fn write_cell(out: &mut String, scenario: &Scenario) {
             // from the canonical "value" entry mode.
             if let Ok(number) = raw.parse::<f64>() {
                 if number.is_finite() {
-                    out.push_str("        <Cell><Data ss:Type=\"Number\">");
+                    out.push_str("        <Cell");
+                    out.push_str(&style_attr);
+                    out.push_str("><Data ss:Type=\"Number\">");
                     out.push_str(&xml_text_escape(raw));
                     out.push_str("</Data></Cell>\n");
                     return;
                 }
             }
-            out.push_str("        <Cell><Data ss:Type=\"String\">");
+            out.push_str("        <Cell");
+            out.push_str(&style_attr);
+            out.push_str("><Data ss:Type=\"String\">");
             out.push_str(&xml_text_escape(raw));
             out.push_str("</Data></Cell>\n");
         }
@@ -473,13 +559,52 @@ fn write_cell(out: &mut String, scenario: &Scenario) {
             // for the Excel-visible cell since Excel handles that prefix
             // natively.
             let stripped = raw.strip_prefix('\'').unwrap_or(raw);
-            out.push_str("        <Cell><Data ss:Type=\"String\">");
+            out.push_str("        <Cell");
+            out.push_str(&style_attr);
+            out.push_str("><Data ss:Type=\"String\">");
             out.push_str(&xml_text_escape(stripped));
             out.push_str("</Data></Cell>\n");
         }
         EntryMode::Empty => {
-            out.push_str("        <Cell><Data ss:Type=\"String\"></Data></Cell>\n");
+            out.push_str("        <Cell");
+            out.push_str(&style_attr);
+            out.push_str("><Data ss:Type=\"String\"></Data></Cell>\n");
         }
+    }
+}
+
+/// Emit one `<ConditionalFormatting>` block per CF rule. Slice 2
+/// covers both qualifier-comparison rules (when `rule_kind` is
+/// `CellIs` and a value/operator are present) and Expression rules
+/// (when `formula` is present). The rule's effective style is
+/// expressed as inline `<Font>` / `<Interior>` children. The full
+/// CF schema (color scales, data bars, icon sets) is OOXML-only and
+/// out of scope for SpreadsheetML 2003.
+fn write_native_conditional_formatting(out: &mut String, scenario: &Scenario) {
+    let rules = &scenario.context.publication_context.cf_rules;
+    if rules.is_empty() {
+        return;
+    }
+    for rule in rules {
+        if rule.range.is_empty() {
+            continue;
+        }
+        out.push_str("    <ConditionalFormatting ss:Range=\"");
+        out.push_str(&xml_attr_escape(&rule.range));
+        out.push_str("\">\n");
+        out.push_str("      <Condition");
+        if rule.rule_kind.as_deref() == Some("Expression") {
+            out.push_str(" ss:Type=\"Expression\"");
+        }
+        if let Some(formula) = rule.formula.as_deref() {
+            if !formula.is_empty() {
+                out.push_str(" ss:Formula=\"");
+                out.push_str(&xml_attr_escape(formula));
+                out.push_str("\"");
+            }
+        }
+        out.push_str("/>\n");
+        out.push_str("    </ConditionalFormatting>\n");
     }
 }
 
@@ -1454,6 +1579,184 @@ mod tests {
         assert!(!ids.contains(&"cb-04"));
         assert!(ids.contains(&"cb-05"));
         assert!(ids.contains(&"cb-14"));
+    }
+
+    // -----------------------------------------------------------------
+    // Excel-native fidelity (slice 2)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn excel_workbook_block_is_omitted_when_date1904_is_default_false() {
+        let scenario = Scenario::default();
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            !xml.contains("<ExcelWorkbook>"),
+            "default Date1904=false must not emit ExcelWorkbook block; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn excel_workbook_block_is_emitted_when_date1904_is_true() {
+        let scenario = Scenario {
+            context: Context {
+                locale: Locale {
+                    id: "EnUs".to_string(),
+                    date1904: true,
+                },
+                ..Context::default()
+            },
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            xml.contains("<ExcelWorkbook>") && xml.contains("<Date1904/>"),
+            "Date1904=true must emit ExcelWorkbook/Date1904; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn styles_block_is_omitted_when_no_publication_context_styling() {
+        let scenario = Scenario::default();
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            !xml.contains("<Styles>"),
+            "default scenario must not emit a Styles block; got:\n{xml}",
+        );
+        assert!(
+            !xml.contains("ss:StyleID="),
+            "default scenario must not emit ss:StyleID on the cell; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn styles_block_emits_native_number_format_font_and_interior() {
+        let scenario = Scenario {
+            context: Context {
+                publication_context: PublicationContext {
+                    number_format_code: "€ #,##0.00".to_string(),
+                    font_color: "#112233".to_string(),
+                    fill_color: "#445566".to_string(),
+                    style_id: "calc".to_string(),
+                    ..PublicationContext::default()
+                },
+                ..Context::default()
+            },
+            entry: Entry {
+                mode: EntryMode::Formula,
+                text: "=SUM(1,2,3)".to_string(),
+            },
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        // The Styles block exists and references the style by id.
+        assert!(xml.contains("<Styles>"), "expected Styles block; got:\n{xml}");
+        assert!(
+            xml.contains(r##"<Style ss:ID="calc">"##),
+            "expected named Style entry; got:\n{xml}",
+        );
+        assert!(
+            xml.contains(r##"<NumberFormat ss:Format="€ #,##0.00"/>"##),
+            "expected NumberFormat; got:\n{xml}",
+        );
+        assert!(
+            xml.contains(r##"<Font ss:Color="#112233"/>"##),
+            "expected Font color; got:\n{xml}",
+        );
+        assert!(
+            xml.contains(r##"<Interior ss:Color="#445566" ss:Pattern="Solid"/>"##),
+            "expected Interior fill with Solid pattern; got:\n{xml}",
+        );
+        // Cell carries ss:StyleID referencing the style.
+        assert!(
+            xml.contains(r##"<Cell ss:StyleID="calc""##),
+            "expected ss:StyleID on Cell; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn styles_block_uses_default_style_id_when_publication_context_style_id_is_blank() {
+        let scenario = Scenario {
+            context: Context {
+                publication_context: PublicationContext {
+                    number_format_code: "0.00%".to_string(),
+                    ..PublicationContext::default()
+                },
+                ..Context::default()
+            },
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            xml.contains(r#"<Style ss:ID="dna-cell-style">"#),
+            "expected default style id; got:\n{xml}",
+        );
+        assert!(
+            xml.contains(r#"ss:StyleID="dna-cell-style""#),
+            "expected default style id on Cell; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn cf_rules_emit_native_conditional_formatting_inside_worksheet() {
+        let scenario = Scenario {
+            context: Context {
+                publication_context: PublicationContext {
+                    cf_rules: vec![CfRule {
+                        range: "A1".to_string(),
+                        formula: Some("=A1>0".to_string()),
+                        rule_kind: Some("Expression".to_string()),
+                    }],
+                    ..PublicationContext::default()
+                },
+                ..Context::default()
+            },
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            xml.contains(r#"<ConditionalFormatting ss:Range="A1">"#),
+            "expected CF block; got:\n{xml}",
+        );
+        assert!(
+            xml.contains(r#"<Condition ss:Type="Expression" ss:Formula="=A1&gt;0"/>"#),
+            "expected Expression-typed Condition with escaped formula; got:\n{xml}",
+        );
+    }
+
+    #[test]
+    fn excel_native_emit_round_trips_through_dna_extension() {
+        // Even with native Excel emit on, the dna: extension still
+        // round-trips the canonical PublicationContext / Locale
+        // values verbatim — so the next OneCalc load reads from the
+        // single canonical source.
+        let scenario = Scenario {
+            context: Context {
+                locale: Locale {
+                    id: "EnUs".to_string(),
+                    date1904: true,
+                },
+                publication_context: PublicationContext {
+                    number_format_code: "€ #,##0.00".to_string(),
+                    font_color: "#112233".to_string(),
+                    fill_color: "#445566".to_string(),
+                    style_id: "calc".to_string(),
+                    cf_rules: vec![CfRule {
+                        range: "A1".to_string(),
+                        formula: Some("=A1>0".to_string()),
+                        rule_kind: Some("Expression".to_string()),
+                    }],
+                    ..PublicationContext::default()
+                },
+                ..Context::default()
+            },
+            entry: Entry {
+                mode: EntryMode::Formula,
+                text: "=SUM(1,2,3)".to_string(),
+            },
+            ..Scenario::default()
+        };
+        let restored = round_trip(&scenario);
+        assert_eq!(restored, scenario);
     }
 
     #[test]
