@@ -57,3 +57,6 @@ mod walk_tree_intermediate_values;
 
 #[path = "browser/scenario_breadcrumb.rs"]
 mod scenario_breadcrumb;
+
+#[path = "browser/diagnostic_codes_and_spans.rs"]
+mod diagnostic_codes_and_spans;

@@ -270,6 +270,7 @@ fn sample_live_diagnostic(
         },
         related_spans: Vec::new(),
         code: None,
+        worksheet_error_class: None,
         suggested_fix_kind: None,
     }
 }

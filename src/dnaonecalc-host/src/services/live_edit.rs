@@ -176,12 +176,26 @@ fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEdit
         .map(|document| document.editor_syntax_snapshot.formula_stable_id.clone())
         .unwrap_or_else(|| formula_space.formula_space_id.as_str().to_string());
 
+    // Full-semantic-plan stage so live diagnostics include
+    // SemanticPlan-stage codes such as `unknown_function` and
+    // `function_gated_or_unavailable` (W067). With only
+    // `SyntaxAndBind` the editor surfaces `unknown_name` (Bind) but
+    // not `unknown_function` (SemanticPlan), which is a fidelity
+    // gap the user notices on day one.
+    //
+    // Cost: one extra phase per keystroke, dominated by catalog
+    // lookup for the small number of function calls in a typical
+    // single-formula scenario. Acceptable at the OneCalc scale; if
+    // perf ever becomes a concern, the right fix is a debounced
+    // upgrade — keep `SyntaxAndBind` on every input event and run
+    // `FullSemanticPlan` after a quiet interval — rather than
+    // dropping the SemanticPlan diagnostics.
     ApplyFormulaEditIntent {
         formula_space_id: formula_space.formula_space_id.clone(),
         formula_stable_id,
         entered_text: formula_space.raw_entered_cell_text.clone(),
         cursor_offset: formula_space.editor_surface_state.caret.offset,
-        analysis_stage: EditorAnalysisStage::SyntaxAndBind,
+        analysis_stage: EditorAnalysisStage::FullSemanticPlan,
     }
 }
 
@@ -202,7 +216,7 @@ mod tests {
             &self,
             request: FormulaEditRequest,
         ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
-            assert_eq!(request.analysis_stage, EditorAnalysisStage::SyntaxAndBind);
+            assert_eq!(request.analysis_stage, EditorAnalysisStage::FullSemanticPlan);
             Ok(FormulaEditResult {
                 document: self.document.clone(),
             })

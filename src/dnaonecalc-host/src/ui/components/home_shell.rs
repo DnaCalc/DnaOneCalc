@@ -1072,12 +1072,24 @@ fn render_diagnostic_squiggle_overlay(
             let segment: String = chars[span_start..span_end].iter().collect();
             let class = format!("squiggle squiggle--{}", squiggle.severity.slug());
             let title = format!("{}: {}", squiggle.diagnostic_id, squiggle.message);
+            // OxFml W067: surface `code`, `stage`, and
+            // `worksheet_error_class` as data attributes so browser
+            // tests and the eventual UI grouping surface can read
+            // them without inference.
+            let code_attr = squiggle.code.clone().unwrap_or_default();
+            let worksheet_error_class_attr =
+                squiggle.worksheet_error_class.clone().unwrap_or_default();
             segments.push(
                 view! {
                     <span
                         class=class
                         data-diagnostic-id=squiggle.diagnostic_id
                         data-severity=squiggle.severity.slug()
+                        data-stage=squiggle.stage.slug()
+                        data-code=code_attr
+                        data-worksheet-error-class=worksheet_error_class_attr
+                        data-span-start=squiggle.span_start.to_string()
+                        data-span-len=squiggle.span_len.to_string()
                         title=title
                     >
                         {segment}

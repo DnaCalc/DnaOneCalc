@@ -441,13 +441,60 @@ impl ContextChipField {
 /// A single underline overlay positioned at a diagnostic's source span.
 /// Carries enough information to render the squiggle, drive its colour by
 /// severity, and supply a hover tooltip via `title` attribute.
+///
+/// Per OxFml W067 (`docs/upstream/NOTES_FOR_DNAONECALC.md` §10), this
+/// view-model passes through three additional upstream-owned fields:
+///
+/// * `code` — stable classification key (`unknown_function`,
+///   `unknown_name`, `function_arity_mismatch`,
+///   `known_symbol_not_callable`, `function_gated_or_unavailable`,
+///   etc.). Used by the test corpus and by the eventual UI grouping
+///   surface; never inferred host-side.
+/// * `stage` — `Syntax` / `Bind` / `SemanticPlan`, the upstream phase
+///   that emitted the diagnostic. Surfaced as a data attribute so the
+///   corpus and X-Ray can read it without collapsing the distinction.
+/// * `worksheet_error_class` — the worksheet-visible error consequence
+///   when OxFml already knows it (e.g. `"#NAME?"`). Lets the UI render
+///   the squiggle alongside the same error glyph Excel would show; the
+///   host never derives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticSquiggle {
     pub diagnostic_id: String,
     pub message: String,
     pub severity: SquiggleSeverity,
+    pub stage: DiagnosticStage,
+    pub code: Option<String>,
+    pub worksheet_error_class: Option<String>,
     pub span_start: usize,
     pub span_len: usize,
+}
+
+/// Mirror of `LiveDiagnosticStage` lifted to the view-model layer so
+/// the renderer doesn't depend on the upstream enum directly. Three
+/// values: `Syntax`, `Bind`, `SemanticPlan`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticStage {
+    Syntax,
+    Bind,
+    SemanticPlan,
+}
+
+impl DiagnosticStage {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Syntax => "syntax",
+            Self::Bind => "bind",
+            Self::SemanticPlan => "semantic-plan",
+        }
+    }
+
+    fn from_upstream(stage: crate::adapters::oxfml::LiveDiagnosticStage) -> Self {
+        match stage {
+            crate::adapters::oxfml::LiveDiagnosticStage::Syntax => Self::Syntax,
+            crate::adapters::oxfml::LiveDiagnosticStage::Bind => Self::Bind,
+            crate::adapters::oxfml::LiveDiagnosticStage::SemanticPlan => Self::SemanticPlan,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1011,6 +1058,9 @@ fn project_diagnostic_squiggles(formula_space: &FormulaSpaceState) -> Vec<Diagno
             diagnostic_id: diag.diagnostic_id.clone(),
             message: diag.message.clone(),
             severity: SquiggleSeverity::from_upstream(diag.severity),
+            stage: DiagnosticStage::from_upstream(diag.stage),
+            code: diag.code.clone(),
+            worksheet_error_class: diag.worksheet_error_class.clone(),
             span_start: diag.primary_span.start,
             span_len: diag.primary_span.len,
         })
@@ -1802,6 +1852,7 @@ mod tests {
             primary_span: FormulaTextSpan { start, len },
             related_spans: Vec::new(),
             code: None,
+            worksheet_error_class: None,
             suggested_fix_kind: None,
         }
     }
