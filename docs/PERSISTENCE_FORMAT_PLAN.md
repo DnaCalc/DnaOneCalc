@@ -82,8 +82,8 @@ lane and lifting both sides into the persistence service.
 
 | Option | Excel opens it? | Carries our metadata? | Round-trip-safe? | Bytes overhead | Implementation work |
 |---|---|---|---|---|---|
-| `A. Plain JSON .dnaformula` | ❌ | ✅ | ✅ | low | small (just serde) |
-| `B. JSON .dnaformula + sidecar .xml` | ✅ (sidecar) | ✅ (JSON) | ✅ | medium | two files, sync issues |
+| `A. Plain JSON .dnafml` | ❌ | ✅ | ✅ | low | small (just serde) |
+| `B. JSON .dnafml + sidecar .xml` | ✅ (sidecar) | ✅ (JSON) | ✅ | medium | two files, sync issues |
 | `C. SpreadsheetML 2003 + foreign-namespace extension` | ✅ | ✅ | ✅ if Excel ignores foreign ns | medium | medium |
 | `D. SpreadsheetML 2003 + custom-document-properties` | ✅ | ✅ (string-typed only) | ✅ (Excel preserves) | medium | medium |
 | `E. OOXML .xlsx + custom XML part` | ✅ | ✅ | ✅ | high (zip + many xml parts) | large |
@@ -209,7 +209,7 @@ express (host profile, scenario policy, identity, UI prefs, attachment
 refs). Read code must explicitly note divergence in a load report.
 
 ### 5.4 The read rule
-When loading a `.dnaformula`:
+When loading a `.dnafml`:
 1. Try to parse the `dna:Formula` extension. If present and the version
    is one we know, take it as the authoritative source.
 2. If absent (e.g. file was saved by Excel after a round-trip), fall
@@ -239,7 +239,7 @@ context is present — that is acceptable and expected. The file is still
 *open-able* and *inspectable*; what fails is *evaluation*.
 
 ### 6.3 Excel → disk → OneCalc (recovery flow)
-A user might save a `.dnaformula` from Excel after editing. We must:
+A user might save a `.dnafml` from Excel after editing. We must:
 1. Still load the file.
 2. Detect that the `dna:` extension is gone or stale (Excel will likely
    strip our foreign-namespace elements on save).
@@ -277,16 +277,16 @@ Path 1 belongs in a follow-up bead behind a flag.
 
 | Extension | Excel auto-opens? | OneCalc recognises it? | Notes |
 |---|---|---|---|
-| `.dnaformula` | ❌ (need "Open with…") | ✅ (registered owner) | Cleanest in our app |
+| `.dnafml` | ❌ (need "Open with…") | ✅ (registered owner) | Cleanest in our app |
 | `.xml` | ✅ | ❌ (any XML) | Excel grabs every XML |
-| `.dnaformula.xml` | ✅ | ✅ (we strip the inner stem) | Compromise |
+| `.dnafml.xml` | ✅ | ✅ (we strip the inner stem) | Compromise |
 | `.xls` (rename) | ✅ | mismatch | misleading |
 
-Recommendation: **`.dnaformula` as the canonical extension**, with the
+Recommendation: **`.dnafml` as the canonical extension**, with the
 save dialog offering an explicit "Save a copy as Excel XML (.xml)"
 action that writes the same bytes to a `.xml` file for direct double-click
 into Excel. Internal mime/file association in Tauri / Windows will route
-`.dnaformula` to DnaOneCalc preferentially; the `.xml` copy is a
+`.dnafml` to DnaOneCalc preferentially; the `.xml` copy is a
 courtesy for sending to non-DnaOneCalc users.
 
 ## 9. Compare bundle stays separate
@@ -300,7 +300,7 @@ records). It is NOT shoehorned into SpreadsheetML 2003 because:
 3. the existing serde-derived shapes already round-trip cleanly.
 
 The `dna:AttachedCompareBundle/@path` field is just a relative path
-reference from a `.dnaformula` to its bundle, the same way the JSON plan
+reference from a `.dnafml` to its bundle, the same way the JSON plan
 already specified.
 
 ## 10. Implementation seam ladder
@@ -372,7 +372,7 @@ captured in the `dna:` extension so OneCalc round-trips them.
 4. **`.xll` / RTD scenario fields.** Out of scope for v1; the format
    must reserve attribute / element names for them so we don't have to
    bump the version when they land.
-5. **Browser-host save target.** Tauri can write `.dnaformula` to disk
+5. **Browser-host save target.** Tauri can write `.dnafml` to disk
    directly. The browser host has to use `localStorage` or
    `OPFS` (Origin Private File System) until a Save File Picker shim is
    wired. Document the SEAM (`SEAM-ONECALC-SCENARIO-PERSIST` already
@@ -381,7 +381,7 @@ captured in the `dna:` extension so OneCalc round-trips them.
    version. Define the bump rules: unknown attributes are tolerated,
    unknown elements at Identity / Context / UiPreferences level are
    tolerated, unknown sub-elements within those bump the major version.
-7. **File-association under Tauri.** Windows `.dnaformula` association
+7. **File-association under Tauri.** Windows `.dnafml` association
    needs an installer step. Browser host has no association; users
    download then upload. Document both paths.
 
@@ -409,7 +409,7 @@ not.
 ## 13. Decision
 
 Proceed with the XML Spreadsheet 2003 + DnaOneCalc-namespace extension
-container as the canonical `.dnaformula` format. Code lifecycle:
+container as the canonical `.dnafml` format. Code lifecycle:
 
 1. Lift the existing emit + parse code into a dedicated `persistence/`
    module.
@@ -420,4 +420,4 @@ container as the canonical `.dnaformula` format. Code lifecycle:
 
 The matching internal-architectural term remains `scenario`; the
 on-disk extension namespace is `dna:` (short for `dnaonecalc`); the
-user-facing extension is `.dnaformula`.
+user-facing extension is `.dnafml`.

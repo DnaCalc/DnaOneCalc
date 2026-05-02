@@ -72,7 +72,7 @@ Rule of thumb when editing:
 The file extension (today proposed `.dnascenario`) is
 borderline because the user encounters it in save dialogs.
 The current rule is to rename the file extension to
-`.dnaformula` only when the persistence slice lands; until
+`.dnafml` only when the persistence slice lands; until
 then the placeholder stays `.dnascenario` in plan docs and
 no on-disk file is written.
 
