@@ -1284,10 +1284,13 @@ fn project_scenario_breadcrumb(
         })
         .collect();
 
+    // User-facing labels say "formula" (per docs/APP_UX_BRIEF.md
+    // §1A); internal type / action-id slugs continue to say
+    // `scenario`.
     let actions = vec![
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::NewScenario,
-            label: "New scenario",
+            label: "New formula",
             chord_label: "Ctrl+N",
             seam_id: None,
         },
@@ -1311,7 +1314,7 @@ fn project_scenario_breadcrumb(
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::ManageScenarios,
-            label: "Manage scenarios…",
+            label: "Manage formulas…",
             chord_label: "",
             seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
         },

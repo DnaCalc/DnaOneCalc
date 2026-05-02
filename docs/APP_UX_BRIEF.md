@@ -30,6 +30,52 @@ The brief should guide:
 5. responsive behavior,
 6. and later implementation work across desktop and browser hosts.
 
+## 1A. User-Facing Terminology
+
+The persistable work unit — the formula text plus its presentation
+context (locale, format, host profile, scenario policy, attached
+verification bundle, etc.) — is a single concept. To keep that
+concept readable to the user, the user-visible vocabulary is:
+
+1. `Formula` is the user-facing name for this work unit.
+   Buttons, dropdown items, status-foot chips, save dialogs,
+   tooltip prose, command-palette entries, and any other
+   string the user reads should call it a `formula`.
+2. `Scenario` remains the internal architectural name.
+   Type names (`ScenarioBreadcrumbView`, …), state fields
+   (`scenario_label`, `scenario_breadcrumb_open`, …), reducer
+   functions (`toggle_scenario_breadcrumb`, …), CSS class
+   stems (`__scenario-menu`, …), bead and workset prose,
+   on-disk struct shapes, and this brief itself continue to
+   say `scenario`.
+3. The reason internal docs keep `scenario`:
+   1. the term has a long history in the codebase, in
+      `WorkspaceShellState`, in retained-run identities,
+      in `.beads/` records, and in upstream contracts,
+   2. renaming the internal term would touch hundreds of
+      identifiers without changing any user-observable
+      behaviour,
+   3. and the existing word distinguishes `scenario`
+      (the persistable work unit) from `formula` (the
+      formula-text content of a scenario) cleanly inside
+      the code.
+
+Rule of thumb when editing:
+1. Strings inside `view!` / JSX, `aria-label` / `title` /
+   placeholder text, dropdown labels, file-dialog filter
+   names, command-palette entries, and visible chips are
+   user-facing — write `formula`.
+2. Identifiers, comments, code docstrings, internal
+   markdown, mockup CSS class names, and on-disk fields
+   are internal — write `scenario`.
+
+The file extension (today proposed `.dnascenario`) is
+borderline because the user encounters it in save dialogs.
+The current rule is to rename the file extension to
+`.dnaformula` only when the persistence slice lands; until
+then the placeholder stays `.dnascenario` in plan docs and
+no on-disk file is written.
+
 ## 2. Product Position
 The ordered product expression remains:
 1. `Formula / Function Explorer`,

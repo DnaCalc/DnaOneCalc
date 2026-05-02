@@ -705,7 +705,7 @@ fn render_scenario_breadcrumb(
                 data-dirty=dirty_attr
                 aria-haspopup="menu"
                 aria-expanded=aria_expanded
-                aria-label=format!("scenario: {}", label_for_button)
+                aria-label=format!("formula: {}", label_for_button)
                 on:click=move |_| {
                     on_toggle.run(());
                 }
@@ -761,8 +761,8 @@ fn render_scenario_menu_entries(
                 data-section=section
             >
                 {match section {
-                    "pinned" => "No pinned scenarios",
-                    "recent" => "No recent scenarios",
+                    "pinned" => "No pinned formulas",
+                    "recent" => "No recent formulas",
                     _ => "(empty)",
                 }}
             </div>
@@ -903,7 +903,7 @@ fn render_status_foot(status: Option<StatusView>) -> AnyView {
         <span>{format!("green-tree {green_key}")}</span>
         <span class="onecalc-home-shell__statusfoot-sep">"·"</span>
         <span class="onecalc-home-shell__statusfoot-scenario">
-            "scenario · "
+            "formula · "
             <span
                 class="onecalc-home-shell__statusfoot-scenario-name"
                 data-scenario-label=scenario_label_attr

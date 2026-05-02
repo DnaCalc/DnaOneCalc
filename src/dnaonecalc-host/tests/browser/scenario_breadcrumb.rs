@@ -169,11 +169,14 @@ async fn dropdown_renders_recent_pinned_and_actions_sections() {
         actions_text.contains("Actions"),
         "actions section heading missing in {actions_text:?}",
     );
-    assert!(actions_text.contains("New scenario"));
+    // User-facing labels say "formula" (per docs/APP_UX_BRIEF.md
+    // §1A); the internal action-id slugs (`new-scenario`,
+    // `manage-scenarios`, …) keep `scenario`.
+    assert!(actions_text.contains("New formula"));
     assert!(actions_text.contains("Save as…"));
     assert!(actions_text.contains("Open…"));
     assert!(actions_text.contains("Duplicate"));
-    assert!(actions_text.contains("Manage scenarios…"));
+    assert!(actions_text.contains("Manage formulas…"));
 
     shell.tear_down();
 }

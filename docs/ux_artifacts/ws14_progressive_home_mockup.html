@@ -1109,11 +1109,11 @@ body[data-result-drill="open"] .result-drill {
         <div class="scenario-menu__divider"></div>
         <div class="scenario-menu__section">
           <div class="scenario-menu__heading">Actions</div>
-          <button class="scenario-menu__item"><span class="name">New scenario</span><span class="meta">⌃N</span></button>
+          <button class="scenario-menu__item"><span class="name">New formula</span><span class="meta">⌃N</span></button>
           <button class="scenario-menu__item"><span class="name">Save as…</span><span class="meta">⌃⇧S</span></button>
           <button class="scenario-menu__item"><span class="name">Open…</span><span class="meta">⌃O</span></button>
           <button class="scenario-menu__item"><span class="name">Duplicate</span><span class="meta"></span></button>
-          <button class="scenario-menu__item"><span class="name">Manage scenarios…</span><span class="meta"></span></button>
+          <button class="scenario-menu__item"><span class="name">Manage formulas…</span><span class="meta"></span></button>
         </div>
       </div>
     </span>
@@ -1333,7 +1333,7 @@ body[data-result-drill="open"] .result-drill {
               <!-- Step 2: per-CF rule evaluation -->
               <div style="margin-top: 6px; padding: 10px 12px; background: rgba(36,93,90,0.04); border-radius: var(--oc-radius-sm); border: 1px dashed var(--oc-color-card-edge);">
                 <div style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--oc-color-accent); font-weight: 600; margin-bottom: 6px;">Step 2 · CF rule evaluation (last-wins)</div>
-                <div style="font-family: var(--oc-font-mono); font-size: 12px; color: var(--oc-color-muted); padding: 4px 0;"><em>no rules in this scenario</em></div>
+                <div style="font-family: var(--oc-font-mono); font-size: 12px; color: var(--oc-color-muted); padding: 4px 0;"><em>no rules in this formula</em></div>
               </div>
 
               <!-- Final OxFml-authoritative output -->
@@ -1353,8 +1353,9 @@ body[data-result-drill="open"] .result-drill {
           </div>
 
           <!-- RIGHT COLUMN: editable scenario context (writes into next-eval VerificationPublicationContext) -->
+          <!-- User-facing label says "Formula context"; internal scenario-context CSS / VerificationPublicationContext / etc. keep "scenario". -->
           <div>
-            <div class="result-drill__section-title">Scenario context · controls populating VerificationPublicationContext</div>
+            <div class="result-drill__section-title">Formula context · controls populating VerificationPublicationContext</div>
             <div class="scenario-context">
               <div class="ctx-row">
                 <span class="key">host profile</span>
@@ -1417,7 +1418,7 @@ body[data-result-drill="open"] .result-drill {
                 </div>
               </div>
               <div class="ctx-row">
-                <span class="key">scenario policy</span>
+                <span class="key">formula policy</span>
                 <div class="radio-group">
                   <label><input type="radio" name="scenario-policy" checked> deterministic</label>
                   <label><input type="radio" name="scenario-policy"> live-recalc</label>
@@ -1428,7 +1429,7 @@ body[data-result-drill="open"] .result-drill {
 
           <div class="result-drill__footer">
             <button class="btn-ghost">Reset context to defaults</button>
-            <button class="btn-primary">Save as scenario…</button>
+            <button class="btn-primary">Save as formula…</button>
           </div>
         </div>
       </section>
@@ -1462,7 +1463,7 @@ body[data-result-drill="open"] .result-drill {
               <span class="seam-badge">SEAM-…UPLOAD</span>
             </button>
             <button class="save-bundle__item">
-              <span>Attach to current scenario</span>
+              <span>Attach to current formula</span>
               <span></span>
             </button>
           </div>
@@ -1567,7 +1568,7 @@ body[data-result-drill="open"] .result-drill {
     <span class="sep">·</span>
     <span>green-tree a3f91e…</span>
     <span class="sep">·</span>
-    <span>scenario · invoice-eu-tax</span>
+    <span>formula · invoice-eu-tax</span>
     <span class="push-right">saved 14:22 · auto-proof 120 ms</span>
   </footer>
 
@@ -1579,7 +1580,7 @@ body[data-result-drill="open"] .result-drill {
     <input
       class="command-palette__input"
       type="text"
-      placeholder="Type an action, a scenario, or a function…"
+      placeholder="Type an action, a formula, or a function…"
       id="command-palette-input"
       autocomplete="off"
     >
@@ -1602,12 +1603,12 @@ body[data-result-drill="open"] .result-drill {
       </button>
       <button class="command-palette__item">
         <span class="command-palette__glyph">⎈</span>
-        <span class="command-palette__label">Save scenario</span>
+        <span class="command-palette__label">Save formula</span>
         <span class="command-palette__chord">⌃S</span>
       </button>
       <button class="command-palette__item">
         <span class="command-palette__glyph">⎈</span>
-        <span class="command-palette__label">New scenario</span>
+        <span class="command-palette__label">New formula</span>
         <span class="command-palette__chord">⌃N</span>
       </button>
       <button class="command-palette__item">
@@ -1616,7 +1617,7 @@ body[data-result-drill="open"] .result-drill {
         <span class="command-palette__chord">⌃,</span>
       </button>
 
-      <div class="command-palette__section">Scenarios</div>
+      <div class="command-palette__section">Formulas</div>
       <button class="command-palette__item">
         <span class="command-palette__glyph">§</span>
         <span class="command-palette__label">invoice-eu-tax</span>
