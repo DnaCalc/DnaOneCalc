@@ -103,6 +103,63 @@ pub struct HomeShellViewModel {
     /// formula space; the dropdown's `is_open` flag drives
     /// visibility of the menu body.
     pub scenario_breadcrumb: ScenarioBreadcrumbView,
+    /// Slice 5 — formatting controls row rendered under the
+    /// result section. Mirrors the active formula's
+    /// `FormulaFormattingState`; the renderer's `on:input` handlers
+    /// dispatch the matching reducer setters.
+    pub formatting_controls: FormattingControlsView,
+}
+
+/// Live-edited formatting fields for the active formula. Pure
+/// projection of `FormulaFormattingState` plus a small set of
+/// preset chips the UI offers as quick-buttons for the number
+/// format code (matches the WS-14 mockup's `code presets` row).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormattingControlsView {
+    pub number_format_code: String,
+    pub font_color: String,
+    pub fill_color: String,
+    pub date1904: bool,
+    pub number_format_presets: Vec<NumberFormatPreset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumberFormatPreset {
+    pub label: &'static str,
+    pub format_code: &'static str,
+}
+
+impl FormattingControlsView {
+    pub fn from_state(formatting: &crate::state::FormulaFormattingState) -> Self {
+        Self {
+            number_format_code: formatting.number_format_code.clone(),
+            font_color: formatting.font_color.clone(),
+            fill_color: formatting.fill_color.clone(),
+            date1904: formatting.date1904,
+            number_format_presets: vec![
+                NumberFormatPreset {
+                    label: "General",
+                    format_code: "",
+                },
+                NumberFormatPreset {
+                    label: "Number",
+                    format_code: "0.00",
+                },
+                NumberFormatPreset {
+                    label: "Currency",
+                    format_code: "$#,##0.00",
+                },
+                NumberFormatPreset {
+                    label: "Percent",
+                    format_code: "0.00%",
+                },
+                NumberFormatPreset {
+                    label: "Date",
+                    format_code: "yyyy-mm-dd",
+                },
+            ],
+        }
+    }
 }
 
 /// View-model shape for the titlebar scenario breadcrumb + its
@@ -700,6 +757,7 @@ fn project_formula_space(
     let function_help_card = project_function_help_card(formula_space);
     let formula_drill = project_formula_drill(formula_space);
     let scenario_breadcrumb = project_scenario_breadcrumb(formula_space, state);
+    let formatting_controls = FormattingControlsView::from_state(&formula_space.formatting);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -717,6 +775,7 @@ fn project_formula_space(
         result_view,
         status: project_status_view(formula_space),
         scenario_breadcrumb,
+        formatting_controls,
     }
 }
 

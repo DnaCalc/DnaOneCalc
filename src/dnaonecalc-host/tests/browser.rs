@@ -60,3 +60,6 @@ mod scenario_breadcrumb;
 
 #[path = "browser/diagnostic_codes_and_spans.rs"]
 mod diagnostic_codes_and_spans;
+
+#[path = "browser/formatting_controls.rs"]
+mod formatting_controls;

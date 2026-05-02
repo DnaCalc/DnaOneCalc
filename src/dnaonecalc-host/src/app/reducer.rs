@@ -187,6 +187,54 @@ pub fn close_scenario_breadcrumb(state: &mut OneCalcHostState) -> bool {
     true
 }
 
+/// Slice 5 — formatting-control mutations on the active formula's
+/// FormulaFormattingState. Each setter returns `true` when the value
+/// actually changed (so callers can short-circuit re-renders) and
+/// `false` when the value is unchanged.
+pub fn set_active_number_format_code(state: &mut OneCalcHostState, value: String) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.formatting.number_format_code == value {
+        return false;
+    }
+    formula_space.formatting.number_format_code = value;
+    true
+}
+
+pub fn set_active_font_color(state: &mut OneCalcHostState, value: String) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.formatting.font_color == value {
+        return false;
+    }
+    formula_space.formatting.font_color = value;
+    true
+}
+
+pub fn set_active_fill_color(state: &mut OneCalcHostState, value: String) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.formatting.fill_color == value {
+        return false;
+    }
+    formula_space.formatting.fill_color = value;
+    true
+}
+
+pub fn set_active_date1904(state: &mut OneCalcHostState, value: bool) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.formatting.date1904 == value {
+        return false;
+    }
+    formula_space.formatting.date1904 = value;
+    true
+}
+
 pub fn apply_editor_overlay_measurement_to_active_formula_space(
     state: &mut OneCalcHostState,
     measurement_event: EditorOverlayMeasurementEvent,

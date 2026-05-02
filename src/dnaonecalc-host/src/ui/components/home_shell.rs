@@ -37,11 +37,11 @@ use crate::app::reducer::{
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, BridgeHealth, CompletionPopupItemView, CompletionPopupView,
-    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormulaDrillNode,
-    FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView, FunctionHelpCardView,
-    ResultClassPill, ResultContextChip, ResultKind, ResultView, ScenarioBreadcrumbAction,
-    ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry, ScenarioBreadcrumbView,
-    SignatureHelpView, StatusView,
+    ContextChipField, DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormattingControlsView,
+    FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView,
+    FunctionHelpCardView, NumberFormatPreset, ResultClassPill, ResultContextChip, ResultKind,
+    ResultView, ScenarioBreadcrumbAction, ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry,
+    ScenarioBreadcrumbView, SignatureHelpView, StatusView,
 };
 use crate::state::ViewMode;
 use crate::services::live_edit::apply_live_editor_input;
@@ -306,6 +306,7 @@ pub fn HomeShell(
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
     let scenario_breadcrumb = move || view_model.get().map(|vm| vm.scenario_breadcrumb);
+    let formatting_controls = move || view_model.get().map(|vm| vm.formatting_controls);
     let view_mode = move || {
         view_model
             .get()
@@ -329,6 +330,31 @@ pub fn HomeShell(
     let on_view_mode_toggle = Callback::new(move |()| {
         state.update(|state| {
             let _ = toggle_view_mode_on_workspace(state);
+        });
+    });
+
+    // Slice 5 — formatting-control callbacks. Each setter dispatches
+    // to the matching reducer; reducers return whether the value
+    // actually changed so we don't spuriously re-render on no-op
+    // input events.
+    let on_set_number_format_code = Callback::new(move |value: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::set_active_number_format_code(s, value);
+        });
+    });
+    let on_set_font_color = Callback::new(move |value: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::set_active_font_color(s, value);
+        });
+    });
+    let on_set_fill_color = Callback::new(move |value: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::set_active_fill_color(s, value);
+        });
+    });
+    let on_set_date1904 = Callback::new(move |value: bool| {
+        state.update(|s| {
+            let _ = crate::app::reducer::set_active_date1904(s, value);
         });
     });
 
@@ -757,6 +783,16 @@ pub fn HomeShell(
                             {move || render_result_context_chip(result_context(), view_mode())}
                         </div>
                     </section>
+
+                    <section class="onecalc-home-shell__formatting-section">
+                        {move || render_formatting_controls(
+                            formatting_controls(),
+                            on_set_number_format_code,
+                            on_set_font_color,
+                            on_set_fill_color,
+                            on_set_date1904,
+                        )}
+                    </section>
                 </Show>
             </main>
 
@@ -1027,6 +1063,140 @@ fn render_status_foot(status: Option<StatusView>) -> AnyView {
         {render_load_diagnostic_chips(load_diagnostics)}
     }
     .into_any()
+}
+
+/// Render the slice-5 formatting-controls row. Three input
+/// controls — number format code (text input + preset chips),
+/// font color (color picker), fill color (color picker) — plus
+/// a Date1904 toggle. Each fires a callback that dispatches the
+/// matching reducer setter.
+fn render_formatting_controls(
+    controls: Option<FormattingControlsView>,
+    on_set_number_format_code: Callback<String>,
+    on_set_font_color: Callback<String>,
+    on_set_fill_color: Callback<String>,
+    on_set_date1904: Callback<bool>,
+) -> AnyView {
+    let Some(controls) = controls else {
+        return view! { <></> }.into_any();
+    };
+    let number_format_code_value = controls.number_format_code.clone();
+    let number_format_code_attr = number_format_code_value.clone();
+    let font_color_value = controls.font_color.clone();
+    let fill_color_value = controls.fill_color.clone();
+    let date1904 = controls.date1904;
+    view! {
+        <div class="onecalc-home-shell__formatting-row" role="group" aria-label="formula formatting">
+            <span class="onecalc-home-shell__formatting-caption">"format ▸"</span>
+            <label class="onecalc-home-shell__formatting-field">
+                <span class="onecalc-home-shell__formatting-field-label">"number format"</span>
+                <input
+                    type="text"
+                    class="onecalc-home-shell__formatting-input"
+                    data-formatting-field="number-format-code"
+                    placeholder="General"
+                    prop:value=number_format_code_value
+                    value=number_format_code_attr
+                    on:input=move |ev| {
+                        let target: web_sys::HtmlInputElement =
+                            event_target::<web_sys::HtmlInputElement>(&ev);
+                        on_set_number_format_code.run(target.value());
+                    }
+                />
+            </label>
+            <span class="onecalc-home-shell__formatting-presets">
+                {render_number_format_presets(
+                    controls.number_format_presets.clone(),
+                    on_set_number_format_code,
+                )}
+            </span>
+            <label class="onecalc-home-shell__formatting-field">
+                <span class="onecalc-home-shell__formatting-field-label">"font color"</span>
+                <input
+                    type="color"
+                    class="onecalc-home-shell__formatting-color"
+                    data-formatting-field="font-color"
+                    prop:value=move || normalize_color_for_input(&font_color_value)
+                    value=normalize_color_for_input(&controls.font_color)
+                    on:input=move |ev| {
+                        let target: web_sys::HtmlInputElement =
+                            event_target::<web_sys::HtmlInputElement>(&ev);
+                        on_set_font_color.run(target.value());
+                    }
+                />
+            </label>
+            <label class="onecalc-home-shell__formatting-field">
+                <span class="onecalc-home-shell__formatting-field-label">"fill color"</span>
+                <input
+                    type="color"
+                    class="onecalc-home-shell__formatting-color"
+                    data-formatting-field="fill-color"
+                    prop:value=move || normalize_color_for_input(&fill_color_value)
+                    value=normalize_color_for_input(&controls.fill_color)
+                    on:input=move |ev| {
+                        let target: web_sys::HtmlInputElement =
+                            event_target::<web_sys::HtmlInputElement>(&ev);
+                        on_set_fill_color.run(target.value());
+                    }
+                />
+            </label>
+            <label class="onecalc-home-shell__formatting-field">
+                <span class="onecalc-home-shell__formatting-field-label">"1904 dates"</span>
+                <input
+                    type="checkbox"
+                    class="onecalc-home-shell__formatting-toggle"
+                    data-formatting-field="date1904"
+                    prop:checked=date1904
+                    on:change=move |ev| {
+                        let target: web_sys::HtmlInputElement =
+                            event_target::<web_sys::HtmlInputElement>(&ev);
+                        on_set_date1904.run(target.checked());
+                    }
+                />
+            </label>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_number_format_presets(
+    presets: Vec<NumberFormatPreset>,
+    on_set: Callback<String>,
+) -> AnyView {
+    let chips: Vec<_> = presets
+        .into_iter()
+        .map(|preset| {
+            let label = preset.label;
+            let format_code = preset.format_code;
+            view! {
+                <button
+                    type="button"
+                    class="onecalc-home-shell__formatting-preset"
+                    data-format-code=format_code
+                    on:click=move |_| {
+                        on_set.run(format_code.to_string());
+                    }
+                >
+                    {label}
+                </button>
+            }
+            .into_any()
+        })
+        .collect();
+    view! { <>{chips}</> }.into_any()
+}
+
+/// `<input type="color">` requires a `#RRGGBB` value with a leading
+/// hash; an empty string makes Edge / Chrome render the picker as
+/// black. Map empty → `#000000` for the control's prop:value while
+/// preserving the empty state in the underlying scenario (so an
+/// untouched color still serialises as empty / inherit).
+fn normalize_color_for_input(raw: &str) -> String {
+    if raw.is_empty() {
+        "#000000".to_string()
+    } else {
+        raw.to_string()
+    }
 }
 
 /// Render persistence-loader warning chips in the status-foot

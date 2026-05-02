@@ -183,6 +183,36 @@ pub struct FormulaSpaceState {
     /// Excel-only fallback path. The status-foot renders a warning
     /// chip while this list is non-empty; the next save clears it.
     pub load_diagnostics: Vec<crate::persistence::LoadDiagnostic>,
+    /// Editable formatting state that drives the result hero's
+    /// rendering AND gets persisted into the `.dnafml`'s
+    /// `<dna:PublicationContext>` + native `<Styles>` block.
+    /// Populated at load time from the saved scenario; mutated by
+    /// the UI's formatting-controls row; serialised back at save
+    /// time via `scenario_projection::formula_space_to_scenario`.
+    pub formatting: FormulaFormattingState,
+}
+
+/// Live editable formatting settings for the active formula.
+/// Mirrors a subset of `persistence::PublicationContext` plus the
+/// locale's `date1904` flag — the fields the UI's formatting-
+/// controls row exposes today.
+///
+/// Fields that aren't yet UI-editable but are part of the persisted
+/// schema (style hierarchy, CF rules, host profile, scenario
+/// policy) live in their own future home; this struct only carries
+/// the slice-5 surface.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FormulaFormattingState {
+    /// Excel format-string-text (e.g. `"0.00"`, `"$#,##0.00"`,
+    /// `"yyyy-mm-dd"`). Empty = inherit / `General`.
+    pub number_format_code: String,
+    /// Hex `#RRGGBB`. Empty = inherit / default.
+    pub font_color: String,
+    /// Hex `#RRGGBB`. Empty = inherit / default.
+    pub fill_color: String,
+    /// Locale's date-system flag. False = 1900 (default), true =
+    /// 1904 (Mac legacy).
+    pub date1904: bool,
 }
 
 impl FormulaSpaceState {
@@ -212,6 +242,7 @@ impl FormulaSpaceState {
             expanded_editor: false,
             formula_drill_open: false,
             load_diagnostics: Vec::new(),
+            formatting: FormulaFormattingState::default(),
         }
     }
 

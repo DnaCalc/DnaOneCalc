@@ -49,6 +49,7 @@ pub fn formula_space_to_scenario(
         formula_space.context.scenario_label.clone()
     };
 
+    let formatting = &formula_space.formatting;
     Scenario {
         identity: Identity {
             id: formula_space.formula_space_id.as_str().to_string(),
@@ -60,15 +61,25 @@ pub fn formula_space_to_scenario(
             mode: entry_mode,
             text: formula_space.raw_entered_cell_text.clone(),
         },
-        // Slice 1b — most context fields aren't yet wired into
-        // FormulaSpaceState. They are reserved schema slots; slice 2
-        // and the formatting-controls slice fill them in. The
-        // ScenarioPolicy default (`Deterministic`) matches the WS-14
-        // plan §6.4 default.
+        // Slice 5 — formatting fields drive PublicationContext +
+        // Locale. Other Context fields (host_profile,
+        // scenario_policy beyond default) remain reserved schema
+        // slots until their UI controls land.
         context: Context {
             host_profile: HostProfile::default(),
-            locale: Locale::default(),
-            publication_context: PublicationContext::default(),
+            locale: Locale {
+                id: String::new(),
+                date1904: formatting.date1904,
+            },
+            publication_context: PublicationContext {
+                format_profile: String::new(),
+                number_format_code: formatting.number_format_code.clone(),
+                style_id: String::new(),
+                font_color: formatting.font_color.clone(),
+                fill_color: formatting.fill_color.clone(),
+                style_hierarchy: Vec::new(),
+                cf_rules: Vec::new(),
+            },
             scenario_policy: ScenarioPolicy::Deterministic,
         },
         ui_preferences: UiPreferences {
@@ -147,6 +158,16 @@ pub fn apply_loaded_scenario_with_diagnostics(
     formula_space.formula_drill_open = scenario.ui_preferences.formula_drill_expanded;
     formula_space.expanded_editor = scenario.ui_preferences.expanded_editor;
     formula_space.load_diagnostics = diagnostics;
+
+    // Slice 5: formatting state mirrors the persisted PublicationContext
+    // + Locale so the UI's formatting-controls row reflects what was
+    // saved.
+    formula_space.formatting = crate::state::FormulaFormattingState {
+        number_format_code: scenario.context.publication_context.number_format_code,
+        font_color: scenario.context.publication_context.font_color,
+        fill_color: scenario.context.publication_context.fill_color,
+        date1904: scenario.context.locale.date1904,
+    };
 }
 
 #[cfg(test)]
@@ -254,6 +275,44 @@ mod tests {
             formula_space.context.scenario_label,
             "imported-from-disk",
         );
+    }
+
+    #[test]
+    fn formatting_state_round_trips_through_publication_context_and_locale() {
+        // Slice 5: FormulaFormattingState mutations must travel into
+        // the persisted Scenario's PublicationContext + Locale, then
+        // come back unchanged on load.
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("f-1"), "=A1");
+        formula_space.formatting = crate::state::FormulaFormattingState {
+            number_format_code: "$#,##0.00".to_string(),
+            font_color: "#112233".to_string(),
+            fill_color: "#445566".to_string(),
+            date1904: true,
+        };
+
+        let scenario = formula_space_to_scenario(
+            &formula_space,
+            "now".to_string(),
+            "now".to_string(),
+        );
+        assert_eq!(
+            scenario.context.publication_context.number_format_code,
+            "$#,##0.00",
+        );
+        assert_eq!(scenario.context.publication_context.font_color, "#112233");
+        assert_eq!(scenario.context.publication_context.fill_color, "#445566");
+        assert!(scenario.context.locale.date1904);
+
+        // Apply the same scenario back into a fresh formula space —
+        // the formatting state must round-trip verbatim.
+        let mut destination =
+            FormulaSpaceState::new(FormulaSpaceId::new("f-2"), "");
+        apply_loaded_scenario_to_formula_space(&mut destination, scenario);
+        assert_eq!(destination.formatting.number_format_code, "$#,##0.00");
+        assert_eq!(destination.formatting.font_color, "#112233");
+        assert_eq!(destination.formatting.fill_color, "#445566");
+        assert!(destination.formatting.date1904);
     }
 
     #[test]

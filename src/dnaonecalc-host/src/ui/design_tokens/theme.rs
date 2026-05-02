@@ -3782,6 +3782,103 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: grid;
 }
 
+/* ----- formatting controls (slice 5) ----------------------------------- */
+.onecalc-home-shell__formatting-section {
+  display: block;
+}
+
+.onecalc-home-shell__formatting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--oc-space-3);
+  padding: var(--oc-space-3) var(--oc-space-4);
+  background: var(--oc-color-panel);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  font-family: var(--oc-font-ui);
+  font-size: 0.85rem;
+}
+
+.onecalc-home-shell__formatting-caption {
+  font-weight: 600;
+  color: var(--oc-color-ink);
+  letter-spacing: 0.01em;
+  margin-right: var(--oc-space-2);
+}
+
+.onecalc-home-shell__formatting-field {
+  display: flex;
+  align-items: center;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-home-shell__formatting-field-label {
+  color: var(--oc-color-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.onecalc-home-shell__formatting-input {
+  font-family: var(--oc-font-mono);
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: var(--oc-color-surface);
+  min-width: 8rem;
+}
+
+.onecalc-home-shell__formatting-input:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 0;
+}
+
+.onecalc-home-shell__formatting-color {
+  width: 2rem;
+  height: 1.6rem;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  padding: 1px;
+  background: var(--oc-color-surface);
+  cursor: pointer;
+}
+
+.onecalc-home-shell__formatting-toggle {
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+}
+
+.onecalc-home-shell__formatting-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.onecalc-home-shell__formatting-preset {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-family: var(--oc-font-ui);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-pill);
+  background: var(--oc-color-surface);
+  color: var(--oc-color-muted);
+  cursor: pointer;
+}
+
+.onecalc-home-shell__formatting-preset:hover {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__formatting-preset:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 1px;
+}
+
 .onecalc-home-shell__result-block {
   min-height: 4.5rem;
   padding: var(--oc-space-4) var(--oc-space-5);
