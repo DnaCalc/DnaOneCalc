@@ -83,6 +83,13 @@ pub fn formula_space_to_scenario(
         // workspace state field that mirrors them is a follow-up
         // alongside the Compare-with-Excel UI surface.
         bundles: Vec::new(),
+        // Unknown-element preservation: not yet plumbed into the
+        // host state. When the host opens a file via slice 1b's
+        // file picker the full LoadedFormula (including the
+        // unknowns vec) is dropped — first save loses them. A
+        // follow-up bead lifts them onto FormulaSpaceState so
+        // they survive the open→edit→save round-trip.
+        unknown_root_xml: Vec::new(),
     }
 }
 

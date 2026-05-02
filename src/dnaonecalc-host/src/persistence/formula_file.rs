@@ -47,6 +47,20 @@ pub struct Scenario {
     /// Save bundle). `apply_bundle_retention_policy` enforces the
     /// §9.5 cap at save time.
     pub bundles: Vec<CompareBundle>,
+    /// Forward-compat: raw outer-XML of any element under `<Workbook>`
+    /// this build did not recognise. Populated on read for workbook-
+    /// root elements outside the known set (Worksheet, ExcelWorkbook,
+    /// Styles, dna:Formula, dna:CompareBundle); re-emitted verbatim
+    /// at the workbook root after the known children on write. Lets
+    /// an older OneCalc build open a file written by a newer one,
+    /// edit the formula, and save without silently destroying data
+    /// the older build doesn't understand.
+    ///
+    /// Limitations: only workbook-root unknowns are preserved.
+    /// Unknown attributes / sub-elements nested inside known elements
+    /// (e.g. a new attribute on `<dna:Identity>`) are still lost —
+    /// per-element walking is a follow-up bead.
+    pub unknown_root_xml: Vec<String>,
 }
 
 /// Stable identifying metadata. Timestamps are ISO-8601 UTC strings;
@@ -460,6 +474,17 @@ pub fn write_formula_xml(scenario: &Scenario) -> String {
     for bundle in &scenario.bundles {
         write_dna_compare_bundle(&mut out, bundle);
     }
+    // Forward-compat: re-emit any unrecognised workbook-root
+    // children verbatim (per the unknown-element preservation
+    // contract). Indented by two spaces to match the rest of the
+    // workbook body.
+    for unknown in &scenario.unknown_root_xml {
+        out.push_str("  ");
+        out.push_str(unknown);
+        if !unknown.ends_with('\n') {
+            out.push('\n');
+        }
+    }
 
     out.push_str("</Workbook>\n");
     out
@@ -826,9 +851,11 @@ pub fn read_formula_xml(xml: &str) -> Result<LoadedFormula, FormulaFileError> {
 
     let dna_formula = find_child_in_namespace(workbook, DNA_NAMESPACE, "Formula");
     let bundles = read_compare_bundles(workbook);
+    let unknown_root_xml = collect_unknown_root_xml(xml, workbook);
 
     if let Some(dna_formula) = dna_formula {
-        let scenario = read_with_dna_formula(workbook, dna_formula, bundles)?;
+        let mut scenario = read_with_dna_formula(workbook, dna_formula, bundles)?;
+        scenario.unknown_root_xml = unknown_root_xml;
         return Ok(LoadedFormula {
             scenario,
             diagnostics: Vec::new(),
@@ -836,11 +863,58 @@ pub fn read_formula_xml(xml: &str) -> Result<LoadedFormula, FormulaFileError> {
     }
 
     // Excel-only fallback: pull from the worksheet cell.
-    let scenario = read_excel_only(workbook, bundles)?;
+    let mut scenario = read_excel_only(workbook, bundles)?;
+    scenario.unknown_root_xml = unknown_root_xml;
     Ok(LoadedFormula {
         scenario,
         diagnostics: vec![LoadDiagnostic::ImportedFromExcelOnlyFile],
     })
+}
+
+/// Collect raw outer-XML of any workbook-root element this build
+/// does not recognise. Indices are byte ranges into the original
+/// source string. Per `Scenario::unknown_root_xml` — only root-
+/// level unknowns are captured today.
+fn collect_unknown_root_xml(source: &str, workbook: Node<'_, '_>) -> Vec<String> {
+    workbook
+        .children()
+        .filter(|child| child.is_element() && !is_known_workbook_child(*child))
+        .filter_map(|node| {
+            let range = node.range();
+            source.get(range).map(str::to_string)
+        })
+        .collect()
+}
+
+/// Whitelist of workbook-root children this build understands. Any
+/// other element is captured into `unknown_root_xml` for verbatim
+/// round-trip.
+fn is_known_workbook_child(node: Node<'_, '_>) -> bool {
+    let tag = node.tag_name();
+    let name = tag.name();
+    let namespace = tag.namespace();
+    if namespace == Some(DNA_NAMESPACE) {
+        // dna:Formula and dna:CompareBundle are known; other
+        // dna: elements at the root are unknown to this build
+        // (forward-compat for future schema extensions like
+        // dna:Workspace).
+        matches!(name, "Formula" | "CompareBundle")
+    } else if namespace == Some(SS_NAMESPACE) || namespace.is_none() {
+        // Top-level SpreadsheetML elements this build emits or
+        // tolerates: Worksheet, ExcelWorkbook (+x: prefix from
+        // the excel namespace, but at the root it's spreadsheet-
+        // namespaced in our emitter), Styles, DocumentProperties.
+        matches!(
+            name,
+            "Worksheet" | "ExcelWorkbook" | "Styles" | "DocumentProperties"
+        )
+    } else if namespace == Some("urn:schemas-microsoft-com:office:office") {
+        matches!(name, "DocumentProperties")
+    } else if namespace == Some("urn:schemas-microsoft-com:office:excel") {
+        matches!(name, "ExcelWorkbook")
+    } else {
+        false
+    }
 }
 
 fn read_with_dna_formula(
@@ -867,6 +941,7 @@ fn read_with_dna_formula(
         context,
         ui_preferences,
         bundles,
+        unknown_root_xml: Vec::new(),
     })
 }
 
@@ -881,6 +956,7 @@ fn read_excel_only(
         context: Context::default(),
         ui_preferences: UiPreferences::default(),
         bundles,
+        unknown_root_xml: Vec::new(),
     })
 }
 
@@ -1176,6 +1252,7 @@ mod tests {
                 expanded_editor: false,
             },
             bundles: Vec::new(),
+            unknown_root_xml: Vec::new(),
         }
     }
 
@@ -1316,6 +1393,84 @@ mod tests {
         assert_eq!(
             loaded.diagnostics,
             vec![LoadDiagnostic::ImportedFromExcelOnlyFile],
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Forward-compat: unknown-element preservation
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn unknown_dna_root_element_round_trips_verbatim() {
+        // Future schema extension: imagine v2 adds <dna:Workspace>
+        // as a workbook-root element. This v1 build must not
+        // silently drop it on save.
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+          xmlns:dna="{dna}">
+  <dna:Formula version="1">
+    <dna:Entry mode="Formula">=A1</dna:Entry>
+  </dna:Formula>
+  <dna:Workspace name="future-extension"><dna:Tab id="t1"/></dna:Workspace>
+</Workbook>
+"#,
+            dna = DNA_NAMESPACE,
+        );
+        let loaded = read_formula_xml(&xml).expect("parse");
+        assert_eq!(loaded.scenario.unknown_root_xml.len(), 1);
+        let preserved = &loaded.scenario.unknown_root_xml[0];
+        assert!(
+            preserved.contains("dna:Workspace") && preserved.contains("future-extension"),
+            "unknown element must be preserved verbatim; got {preserved:?}",
+        );
+
+        let rewritten = write_formula_xml(&loaded.scenario);
+        assert!(
+            rewritten.contains("dna:Workspace") && rewritten.contains("future-extension"),
+            "rewriter must re-emit the unknown element verbatim; got xml:\n{rewritten}",
+        );
+    }
+
+    #[test]
+    fn foreign_namespace_root_element_round_trips_verbatim() {
+        // A third-party tool might add a workbook-root element in
+        // its own namespace (e.g. some extension's metadata block).
+        // We preserve it.
+        let xml = r#"<?xml version="1.0"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+          xmlns:thirdparty="urn:thirdparty:tool:1">
+  <thirdparty:Annotation key="value">third-party content</thirdparty:Annotation>
+</Workbook>
+"#;
+        let loaded = read_formula_xml(xml).expect("parse");
+        assert_eq!(loaded.scenario.unknown_root_xml.len(), 1);
+        let preserved = &loaded.scenario.unknown_root_xml[0];
+        assert!(
+            preserved.contains("thirdparty:Annotation"),
+            "got {preserved:?}",
+        );
+
+        let rewritten = write_formula_xml(&loaded.scenario);
+        assert!(
+            rewritten.contains("thirdparty:Annotation"),
+            "rewriter must re-emit the foreign-namespace element verbatim; got xml:\n{rewritten}",
+        );
+    }
+
+    #[test]
+    fn known_root_elements_are_not_captured_into_unknowns() {
+        // Worksheet / ExcelWorkbook / Styles / dna:Formula /
+        // dna:CompareBundle / DocumentProperties are all in the
+        // whitelist. A file containing only those should yield an
+        // empty unknown-root list.
+        let scenario = sample_full_scenario();
+        let xml = write_formula_xml(&scenario);
+        let loaded = read_formula_xml(&xml).expect("parse");
+        assert!(
+            loaded.scenario.unknown_root_xml.is_empty(),
+            "known elements must not be captured as unknowns; got {:?}",
+            loaded.scenario.unknown_root_xml,
         );
     }
 
