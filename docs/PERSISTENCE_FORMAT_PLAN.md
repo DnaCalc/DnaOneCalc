@@ -516,11 +516,22 @@ The contract:
    bundles — they just mean the current-formula-state digest no longer
    matches the old bundles, and the UI flags those bundles as
    "history" rather than "live."
-4. Running Compare again **appends** a new bundle. It does not
-   overwrite existing bundles even when the formula state is unchanged
-   (a re-run of the same scenario against the same Excel host is itself
-   evidence — it should reproduce, but capturing both runs lets the
-   user see when reproducibility breaks).
+4. Running Compare with **no significant change** since the last
+   bundle for the same `(for-formula-state, excel-host-id)` updates
+   that bundle's `compared-at` timestamp in place. Bundles are not
+   precious audit evidence — we only want a new entry when something
+   the user cares about has actually changed (formula state, Excel
+   host id, or any of the three verdicts). The same-everything
+   re-run shows up as "last verified <new-date>" on the existing
+   row instead of cluttering the history.
+5. Running Compare with a significant change (different
+   `for-formula-state`, different `excel-host-id`, or different
+   verdicts) **appends** a new bundle.
+6. The user can **delete** any bundle and **replace** any bundle
+   from the UI. Bundles are not precious audit evidence — they
+   are local notes the user keeps about their formula's behaviour.
+   Deleting an old bundle is a normal operation, not a destructive
+   one.
 
 ### 9.3 Native XML, not CDATA-JSON
 Bundle content is encoded as **native XML elements** inside
@@ -621,10 +632,16 @@ user:
    compare view machinery acts on whichever bundle is selected).
 3. Diff two bundles to see how behaviour changed between them.
 4. Pin a bundle to prevent it being pruned by the retention policy.
-5. Manually delete a bundle.
+5. **Delete** a bundle (a normal operation; bundles are local
+   notes, not precious audit evidence).
+6. **Replace** a bundle in place — re-run Compare for the same
+   `(formula-state, excel-host-id)` pair and overwrite the existing
+   bundle's payload. Useful when the user wants to refresh evidence
+   without growing the history list.
 
 Out of scope here, but the file format must support each of those —
-which is why bundles carry stable `bundle-id` attributes.
+which is why bundles carry stable `bundle-id` attributes the UI can
+target.
 
 ### 9.7 What this replaces
 - `APP_UX_REALIZATION §5.2` `.dnacomparebundle` JSON file: gone.
@@ -742,13 +759,9 @@ captured in the `dna:` extension so OneCalc round-trips them.
    the user can right-click → "Open with → DnaOneCalc"). Browser host
    has no association; users download then upload via the breadcrumb's
    `Open…` dialog. Document the installer step in the Tauri build doc.
-8. **Bundle retention default.** §9.5 introduces a retention cap. What
-   is the default? Proposal: keep the most-recent bundle for the
-   current formula state, plus the most-recent bundle for each prior
-   formula-state digest, capped at 10 total. User can override per-file
-   ("never prune") or globally in workspace settings.
-9. **Bundle ordering.** §9 emits multiple `<dna:CompareBundle>`
-   elements. DOM order should be **chronological ascending** by
+8. **Bundle retention default — DECIDED.** Cap at 10 bundles. The
+   user can delete bundles from the UI; pruning is per §9.5.
+9. **Bundle ordering — DECIDED.** Chronological ascending by
    `compared-at` (oldest first, newest last) so a tail-read-only diff
    shows the freshest bundle at the bottom. Confirm and pin in the
    schema.
