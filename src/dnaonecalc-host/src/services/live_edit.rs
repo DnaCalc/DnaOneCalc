@@ -157,11 +157,17 @@ fn refresh_active_formula_space_from_bridge_with_overrides(
     skip_runtime_evaluation: bool,
     force_runtime: bool,
 ) -> Result<(), LiveEditError> {
+    let language_tag = state.ambient_app_context.language_tag.clone();
     let formula_space = state
         .formula_spaces
         .get(formula_space_id)
         .ok_or_else(|| LiveEditError::UnknownFormulaSpace(formula_space_id.clone()))?;
-    let intent = build_live_edit_intent(formula_space, skip_runtime_evaluation, force_runtime);
+    let intent = build_live_edit_intent(
+        formula_space,
+        skip_runtime_evaluation,
+        force_runtime,
+        &language_tag,
+    );
     EditorSessionService::handle_formula_edit_intent(bridge, &mut state.formula_spaces, intent)
         .map_err(|error| match error {
             EditorSessionError::UnknownFormulaSpace(id) => LiveEditError::UnknownFormulaSpace(id),
@@ -359,6 +365,7 @@ fn build_live_edit_intent(
     formula_space: &FormulaSpaceState,
     skip_runtime_evaluation: bool,
     force_runtime: bool,
+    language_tag: &str,
 ) -> ApplyFormulaEditIntent {
     let formula_stable_id = formula_space
         .editor_document
@@ -394,6 +401,7 @@ fn build_live_edit_intent(
         scenario_policy: scenario_policy_request_for(formula_space),
         skip_runtime_evaluation,
         recalc_mode,
+        language_tag: language_tag.to_string(),
     }
 }
 

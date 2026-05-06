@@ -80,12 +80,13 @@ impl Default for OneCalcHostState {
 pub struct AmbientAppContext {
     /// BCP-47 language tag of the active workspace locale preset
     /// (e.g. `"en-US"`, `"de-DE"`). Drives the format-code triple
-    /// below. Surface-only today: month / weekday name tables and
-    /// numeric separators stay en-US until OxFml's locale-expansion
-    /// chain (`SEAM-OXFML-LOCALE-EXPAND`, blocked on OxFunc W094)
-    /// lands. The user can still switch this — the result-hero
-    /// format defaults follow immediately, the runtime locale
-    /// tables follow when upstream lands.
+    /// below AND the runtime `LocaleFormatContext` that
+    /// `live_bridge::build_runtime_locale_context` builds for every
+    /// bridge round-trip. With OxFunc W094 + OxFml's locale-context
+    /// surface in place, switching this tag flips both the
+    /// presentation-hint defaults *and* the runtime month / weekday
+    /// tables, decimal / thousands separators, currency symbol, and
+    /// `General` rendering.
     pub language_tag: String,
     /// Excel format-string-text used as the default for the
     /// `DateLike` presentation hint **without** a time component

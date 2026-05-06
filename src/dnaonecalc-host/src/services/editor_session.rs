@@ -37,6 +37,7 @@ impl EditorSessionService {
             scenario_policy: intent.scenario_policy,
             skip_runtime_evaluation: intent.skip_runtime_evaluation,
             recalc_mode: intent.recalc_mode,
+            language_tag: intent.language_tag,
         };
         let result = bridge
             .apply_formula_edit(request)
@@ -352,6 +353,7 @@ mod tests {
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
+                language_tag: "en-US".to_string(),
             },
         )
         .expect("edit intent should update via bridge");

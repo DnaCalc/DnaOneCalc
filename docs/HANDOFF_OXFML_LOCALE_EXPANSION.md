@@ -2,7 +2,10 @@
 
 # OxFml Handoff: Multi-Locale Expansion (Names, Separators, Currency)
 
-Status: blocked on OxFunc (`BLK-FML-005`, `HANDOFF-OXFUNC-006`)
+Status: **LANDED 2026-05-06** — OxFunc W094 +
+  `oxfml_locale_context` ship; host wired through
+  `live_bridge::build_runtime_locale_context`. Originally blocked
+  on OxFunc (`BLK-FML-005`, `HANDOFF-OXFUNC-006`).
 Direction: DnaOneCalc → OxFml (with OxFunc co-implementation)
 Source repo / workset: DnaOneCalc / Formatting closeout
 Filed date: 2026-05-04
@@ -12,6 +15,39 @@ Related:
   `OxFml/crates/oxfml_core/src/format/{engine.rs,datetime.rs,locale_tables.rs}`,
   `OxFunc/crates/oxfunc_core/src/locale_format.rs`,
   `docs/HANDOFF_OXFML_FORMAT_ENGINE_TIME_FRACTION_ACCOUNTING.md` (W069 landed)
+
+## Landing summary (2026-05-06)
+
+Upstream:
+- OxFunc W094 ships 30 canonical `LocaleProfileId` entries
+  (`CANONICAL_LOCALE_PROFILE_IDS`), `format_profile(id)` returning
+  per-locale `FormatProfile`s, and
+  `LocaleProfileId::from_bcp47_language_tag(tag) -> Option<Self>`
+  for resolving workspace tags.
+- OxFml exposes `oxfml_core::format::oxfml_locale_context(profile,
+  date_system)` to construct a runtime `LocaleFormatContext` for
+  any locale, plus the existing `oxfml_en_us_locale_context()`
+  static fast-path.
+
+Host wiring:
+- `FormulaEditRequest.language_tag` (BCP-47 tag) added to the
+  bridge boundary in `adapters/oxfml/bridge.rs`.
+- `app::intents::ApplyFormulaEditIntent.language_tag` mirrors the
+  bridge field; `services::live_edit::build_live_edit_intent`
+  populates it from
+  `OneCalcHostState.ambient_app_context.language_tag`.
+- `services::editor_session::handle_formula_edit_intent` copies
+  the tag through to the bridge request.
+- `adapters/oxfml/live_bridge::build_runtime_locale_context`
+  resolves the tag (en-US fallback when empty / unrecognised) and
+  builds `LocaleFormatContext` per round-trip.
+- `services::home_shell_view_model::FormattingControlsView.locale_seam_id`
+  defaults to `None`. The workspace-locale dropdown surfaces in
+  the formatting panel and is fully functional today.
+
+Test pin:
+- `tests/seams/locale_expand.rs` un-ignored, replaced with three
+  positive assertions against the upstream API.
 
 ## Blocker note (2026-05-04, in progress)
 

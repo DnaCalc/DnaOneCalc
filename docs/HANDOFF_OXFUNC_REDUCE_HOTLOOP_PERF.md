@@ -2,10 +2,59 @@
 
 # OxFunc Handoff: REDUCE / lambda-helper hot-loop allocator pressure
 
-Status: filed
+Status: **partial — lazy iteration landed (W095); small-row pool +
+numeric-scalar specialisation still open**.
 Direction: DnaOneCalc → OxFunc
 Source repo / workset: DnaOneCalc / Performance investigation
 Filed date: 2026-05-05
+Landing-progress check: 2026-05-06
+
+## Landing-progress check (2026-05-06)
+
+OxFunc W095 + companion OxFml `invoke_many` shipped:
+- `CallableInvocationBatch` / `CallableBatchMode` / `CallableInvoker::invoke_many`
+  now exist on `oxfunc_core/src/functions/callable_helpers.rs`. The
+  `materialize_iterable -> Vec<PreparedArgValue>` path is replaced by
+  `PreparedIterableSource` walking the storage in place, and
+  `eval_reduce_prepared` / `eval_scan_prepared` / `eval_byrow_prepared` /
+  `eval_bycol_prepared` / `eval_map_prepared` route through
+  `invoker.invoke_many(...)`. ➟ ASK A (lazy iteration) **DONE**.
+- `OxFmlCallableInvoker::invoke_many` in
+  `oxfml_core/src/eval/mod.rs` resolves the binding once per batch
+  and reuses the closure / parameter slots / resolver across
+  iterations, only falling back to per-call resolution for built-in
+  callables. ➟ companion OxFml work **DONE**.
+
+Re-measured Mandelbrot probe under
+`cargo test --release -p dnaonecalc-host --test mandelbrot_perf_probe
+-- --ignored --nocapture` on the same hardware as the original
+filing:
+
+| rows × cols × maxIter | inner iters | elapsed | per-inner-iter |
+| --- | --- | --- | --- |
+|   5 ×  5 ×  5 |     125 |    40.6 ms |  324.98 µs |
+|  10 × 10 × 10 |   1 000 |   143.7 ms |  143.66 µs |
+|  10 × 10 × 30 |   3 000 |   180.2 ms |   60.05 µs |
+|  20 × 20 × 30 |  12 000 |   714.5 ms |   59.54 µs |
+|  40 × 40 × 30 |  48 000 |    2.82 s |   58.77 µs |
+|  50 × 30 × 30 |  45 000 |    2.65 s |   58.82 µs |
+| 100 × 60 × 30 | 180 000 |   10.80 s |   59.99 µs |
+
+Reading: per-iter cost asymptotes at ~60 µs. The lazy-iteration
+landing flattened the small-N tail (5×5×5 dominated by setup ➟
+wall clock, not per-iter), but the steady-state regime is still in
+the 26–35 → 60 µs band. The original filing measured 26–35 µs per
+inner iter; the current numbers are ~2× that. Two plausible
+explanations:
+
+1. Baseline machine variance (filing was on different hardware).
+2. The remaining cost is dominated by the per-iter `EvalArray`
+   1×3 row allocations and `INDEX(state, 1, k)` dispatch, neither
+   of which W095 directly addresses.
+
+Either way ASKS B and C (numeric-scalar specialisation; small-row
+`EvalArray` inline-storage pool) remain open and are the next
+likely wins. Filed status updated to "partial" on this basis.
 Related:
   `OxFunc/crates/oxfunc_core/src/functions/callable_helpers.rs::eval_reduce_prepared`,
   `OxFunc/crates/oxfunc_core/src/functions/callable_helpers.rs::materialize_iterable`,

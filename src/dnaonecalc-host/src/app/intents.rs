@@ -39,4 +39,11 @@ pub struct ApplyFormulaEditIntent {
     /// `Manual` gates the runtime on an explicit Calculate / F9
     /// request, decoupling typing latency from formula complexity.
     pub recalc_mode: RecalcModeRequest,
+    /// Workspace locale as a BCP-47 language tag (e.g. `"en-US"`,
+    /// `"de-DE"`). The host lifts this from
+    /// `OneCalcHostState.ambient_app_context.language_tag` and
+    /// forwards it through the bridge so the runtime pass binds the
+    /// matching `LocaleProfileId` for month / weekday / separator /
+    /// currency rendering. An empty string falls back to en-US.
+    pub language_tag: String,
 }

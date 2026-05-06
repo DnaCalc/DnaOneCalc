@@ -544,9 +544,13 @@ pub fn HomeShell(
     };
     // Workspace locale preset. Drives the date / datetime / time
     // format-code defaults applied to General-format result heroes
-    // via the presentation hint. Surface-only today: month / weekday
-    // names and numeric separators stay en-US until OxFml's locale
-    // tables land (`SEAM-OXFML-LOCALE-EXPAND`).
+    // via the presentation hint AND the runtime `LocaleFormatContext`
+    // built in `live_bridge::build_runtime_locale_context`. With
+    // OxFunc W094 + OxFml's locale-context wiring in place, switching
+    // the dropdown to e.g. `de-DE` now flips both the presentation
+    // hint defaults *and* the runtime month / weekday tables, decimal
+    // / thousands separators, currency symbol, and `General` rendering
+    // for the active formula. (Was `SEAM-OXFML-LOCALE-EXPAND`.)
     let on_set_locale_preset = {
         let refresh = refresh_after_calc_opts_change.clone();
         Callback::new(move |language_tag: String| {
@@ -2048,20 +2052,18 @@ fn render_formatting_controls(
     .into_any()
 }
 
-/// Read-only locale chip rendered inside the formatting panel's
-/// calc-options row. Shows the workspace's ambient-locale label
-/// (derived from `navigator.language`) plus a SEAM marker when
-/// OxFml's per-locale tables aren't yet rendered. Becomes a
-/// proper picker once the locale-expansion handoff lands.
-/// Workspace-locale picker. Replaces the prior read-only chip with
-/// a `<select>` that updates the workspace's `AmbientAppContext`
-/// (date / datetime / time format-code triple). The SEAM badge
-/// continues to flag the runtime locale-table gap upstream — month
-/// and weekday names, numeric separators, and currency symbols stay
-/// en-US until OxFml lands `SEAM-OXFML-LOCALE-EXPAND`. The dropdown
-/// is functional today: switching to e.g. `de-DE` flips the
-/// presentation-hint default from `m/d/yyyy h:mm:ss AM/PM` to
-/// `dd.mm.yyyy HH:mm:ss` immediately.
+/// Workspace-locale picker. The `<select>` updates the workspace's
+/// `AmbientAppContext` (date / datetime / time format-code triple)
+/// and is forwarded through the bridge as the per-edit
+/// `language_tag`, which `live_bridge::build_runtime_locale_context`
+/// resolves through `LocaleProfileId::from_bcp47_language_tag` into
+/// a runtime `LocaleFormatContext`. Switching to e.g. `de-DE` now
+/// flips both the presentation-hint default *and* the runtime month
+/// / weekday tables, decimal / thousands separators, currency
+/// symbol, and `General` rendering. The `seam_id` argument is kept
+/// for any host that wants to flag *additional* locale-related gaps
+/// (e.g. an as-yet-unmapped Excel locale id) — the core dropdown is
+/// no longer SEAM-tagged.
 fn render_locale_picker(
     language_tag: &str,
     presets: &[(&'static str, &'static str)],

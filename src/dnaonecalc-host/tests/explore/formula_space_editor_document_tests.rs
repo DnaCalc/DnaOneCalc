@@ -79,6 +79,7 @@ fn ex_03_formula_edit_intent_preserves_raw_cell_entry_path_for_direct_values() {
             scenario_policy: dnaonecalc_host::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
             skip_runtime_evaluation: false,
             recalc_mode: dnaonecalc_host::adapters::oxfml::RecalcModeRequest::Auto,
+            language_tag: "en-US".to_string(),
         },
     )
     .expect("direct value edit should round-trip through bridge");

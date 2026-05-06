@@ -932,7 +932,7 @@ Legend: 🟢 LIVE = end-to-end through a real bridge or pure logic with no facad
 
 | Feature | Status | Seam | Notes |
 |---|---|---|---|
-| Locale selection | 🔴 | `SEAM-OXFUNC-LOCALE-EXPAND` | OxFunc only ships `EnUs` and `CurrentExcelHost`. OneCalc has no locale field on state. |
+| Locale selection | 🟢 | — | OxFunc W094 ships 30 canonical `LocaleProfileId`s + `format_profile()`; OxFml exposes `oxfml_locale_context`; host plumbs `OneCalcHostState.ambient_app_context.language_tag` through `live_bridge::build_runtime_locale_context` per bridge round-trip. Workspace-locale dropdown surfaces in the formatting panel. |
 | Date system (1900 / 1904) | 🔴 | `SEAM-ONECALC-CAPABILITY-SNAPSHOT` | OxFml `EditorPlanOptions` carries it; OneCalc never sets it. |
 | Host profile string | 🟢 | — | `FormulaSpaceContextState.host_profile` is a string field; populated by bootstrap; rendered in the scope strip. No editing UI. |
 | Reference style (A1 vs R1C1) | 🔴 | `SEAM-OXFML-R1C1-PUBLIC` | No state. |

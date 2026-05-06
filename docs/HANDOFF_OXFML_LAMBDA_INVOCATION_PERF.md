@@ -2,10 +2,49 @@
 
 # OxFml Handoff: Lambda invocation hot-loop overhead in `OxFmlCallableInvoker`
 
-Status: filed
+Status: **partial — `invoke_many` with cached binding lookup
+landed; per-iter `evaluate_expr_value` cost still dominates**.
 Direction: DnaOneCalc → OxFml
 Source repo / workset: DnaOneCalc / Performance investigation
 Filed date: 2026-05-05
+Landing-progress check: 2026-05-06
+
+## Landing-progress check (2026-05-06)
+
+OxFml's `OxFmlCallableInvoker::invoke_many` in
+`oxfml_core/src/eval/mod.rs` resolves the
+`callable_token → binding` lookup once per batch and reuses the
+closure / param-slots / resolver across all iterations of a
+`REDUCE` / `MAP` / `SCAN` / `BYROW` / `BYCOL`. Built-in callables
+still use the per-call fallback. Combined with OxFunc W095's
+sibling `invoke_many` plumbing, the cached-binding ask from this
+handoff is **DONE**.
+
+The probe re-measured under `cargo test --release -p
+dnaonecalc-host --test mandelbrot_perf_probe -- --ignored
+--nocapture`:
+
+```
+rows= 5 cols= 5 maxIter= 5  per_inner_iter=324.98 µs
+rows=10 cols=10 maxIter=10  per_inner_iter=143.66 µs
+rows=10 cols=10 maxIter=30  per_inner_iter= 60.05 µs
+rows=20 cols=20 maxIter=30  per_inner_iter= 59.54 µs
+rows=40 cols=40 maxIter=30  per_inner_iter= 58.77 µs
+rows=50 cols=30 maxIter=30  per_inner_iter= 58.82 µs
+rows=100×60   maxIter=30  per_inner_iter= 59.99 µs  (wall=10.80 s)
+```
+
+Per-iter cost flattens to ~60 µs once the lambda body amortises
+its setup. Original filing observed 26–35 µs per inner iter; the
+current numbers are ~2× that, which suggests the remaining cost
+sits in `evaluate_expr_value` over the lambda body plus the small
+per-iter `EvalArray` 1×3 row alloc inside `HSTACK`. Both are
+covered by the OxFunc-side small-row pool ask (sibling handoff)
+and any further OxFml-side `evaluate_expr_value` interpreter
+work.
+
+Filed status updated to "partial" until the per-iter cost drops
+below the original observed band.
 Related:
   `OxFml/crates/oxfml_core/src/eval/mod.rs::OxFmlCallableInvoker`,
   `OxFml/crates/oxfml_core/src/eval/mod.rs::evaluate_expr_value`,

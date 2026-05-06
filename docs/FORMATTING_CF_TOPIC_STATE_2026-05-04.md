@@ -168,17 +168,28 @@ done. The remaining lanes are smaller:
 2. **OxFml lands the text 4th section**:
    - No host-side change required; user-typed codes like
      `0.00;-0.00;"-";@` start working transparently.
-3. **Locale tables land in OxFml** (after OxFunc unblocks
-   `BLK-FML-005`):
-   - Construct `LocaleFormatContext` from the workspace's
-     selected `LocaleProfileId` instead of always en-US;
-     remove `SEAM-OXFML-LOCALE-EXPAND` from the result-foot
-     chip.
-   - Add a workspace-locale dropdown UI (one slice; the state
-     slot for `AmbientAppContext` and the
-     `nearest_locale_profile_for_language_tag` mapping helper
-     already exist).
-4. **OxFml lands locale-prefix grammar** (depends on item 3):
+3. **Locale tables land in OxFml** — **DONE 2026-05-06**
+   (OxFunc W094 + OxFml `oxfml_locale_context` shipped):
+   - Bridge `FormulaEditRequest` now carries a `language_tag`,
+     plumbed through `app::intents::ApplyFormulaEditIntent` and
+     `services::live_edit::build_live_edit_intent` from
+     `OneCalcHostState.ambient_app_context.language_tag`.
+   - `live_bridge::build_runtime_locale_context` resolves the tag
+     through `LocaleProfileId::from_bcp47_language_tag` and builds
+     a runtime `LocaleFormatContext` per call (en-US falls back to
+     the static `oxfml_en_us_locale_context()` for an
+     allocation-free path).
+   - `formatting_controls.locale_seam_id` defaults to `None`. The
+     workspace-locale dropdown UI is live; switching presets
+     flips the date-format triple, runtime month / weekday tables,
+     decimal / thousands separators, currency symbol, and
+     `General` rendering on the next bridge round-trip.
+   - Coverage pinned in `tests/seams/locale_expand.rs` with three
+     fast assertions against `CANONICAL_LOCALE_PROFILE_IDS`,
+     `from_bcp47_language_tag`, and per-locale separator
+     differences.
+4. **OxFml lands locale-prefix grammar** (depends on item 3, now
+   independently unblockable):
    - No host-side change required; user-typed codes like
      `[$-040C]dddd, d mmmm yyyy` start working transparently.
 5. **Typed CF visualization-rule authoring UI** — landed

@@ -8,7 +8,7 @@ use oxfml_core::consumer::editor::{
 use oxfml_core::consumer::runtime::{
     RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult,
 };
-use oxfml_core::format::oxfml_en_us_locale_context;
+use oxfml_core::format::{oxfml_en_us_locale_context, oxfml_locale_context};
 use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
 use oxfml_core::publication::{
     AverageRuleOptions, ColorScaleRuleOptions, ColorScaleRuleStop, ConditionalFormattingRank,
@@ -18,6 +18,7 @@ use oxfml_core::publication::{
 };
 use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::{BindContext, FormulaChannelKind};
+use oxfunc_core::locale_format::{format_profile, LocaleProfileId, WorkbookDateSystem};
 
 use super::bridge::{
     FormulaEditRequest, FormulaEditResult, FormulaFormattingCfDataBarDirection,
@@ -177,10 +178,22 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
             && !matches!(request.recalc_mode, RecalcModeRequest::Manual);
 
         let runtime_result = if should_run_runtime {
-            // Pre-MVP locale: en-US, 1900 calendar. See
-            // `docs/HANDOFF_OXFML_LOCALE_EXPANSION.md`
-            // (`SEAM-OXFML-LOCALE-EXPAND`).
-            let locale_ctx = oxfml_en_us_locale_context();
+            // Resolve the runtime locale from the workspace's
+            // BCP-47 language tag (W094 OxFunc + OxFml landed
+            // 2026-05-06). An unset / unknown tag falls back to
+            // en-US so the runtime always has a usable locale.
+            // The `date1904` flag flows through the formatting
+            // request — when the user toggles 1904 dates in the
+            // formatting panel, the locale context picks up the
+            // matching `WorkbookDateSystem`.
+            let locale_ctx = build_runtime_locale_context(
+                &request.language_tag,
+                request
+                    .formatting_request
+                    .as_ref()
+                    .map(|formatting| formatting.date1904)
+                    .unwrap_or(false),
+            );
             let (now_serial, random_value) = scenario_seeds(request.scenario_policy);
             let typed_context = TypedContextQueryBundle::new(
                 None,
@@ -802,6 +815,32 @@ fn bridge_threshold_to_upstream(
 /// clock and a fresh `random_value` from the platform RNG on every
 /// bridge round-trip. `=NOW()` advances per keystroke and `=RAND()`
 /// rolls a new value per round-trip.
+/// Resolve the runtime locale context for a bridge call. Pulls
+/// the profile via `LocaleProfileId::from_bcp47_language_tag` —
+/// unrecognised / empty tags fall back to en-US. The
+/// `WorkbookDateSystem` follows the formula's `date1904` flag.
+///
+/// Reusing the static `oxfml_en_us_locale_context()` for the
+/// fallback path keeps the en-US case allocation-free; non-en-US
+/// locales build a fresh context each call (cheap — `FormatProfile`
+/// is `Copy`, the parser/formatter trait objects are `'static`).
+fn build_runtime_locale_context(
+    language_tag: &str,
+    date1904: bool,
+) -> oxfunc_core::locale_format::LocaleFormatContext<'static> {
+    let date_system = if date1904 {
+        WorkbookDateSystem::System1904
+    } else {
+        WorkbookDateSystem::System1900
+    };
+    let profile_id = LocaleProfileId::from_bcp47_language_tag(language_tag.trim())
+        .unwrap_or(LocaleProfileId::EnUs);
+    if profile_id == LocaleProfileId::EnUs && !date1904 {
+        return oxfml_en_us_locale_context();
+    }
+    oxfml_locale_context(format_profile(profile_id), date_system)
+}
+
 fn scenario_seeds(policy: ScenarioPolicyRequest) -> (f64, f64) {
     match policy {
         ScenarioPolicyRequest::Deterministic => (46000.0, 0.5),

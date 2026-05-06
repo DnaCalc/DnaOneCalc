@@ -179,13 +179,13 @@ pub struct FormattingControlsView {
     /// Curated list of selectable locale presets surfaced in the
     /// formatting-panel dropdown. `(language_tag, label)` pairs.
     pub locale_presets: Vec<(&'static str, &'static str)>,
-    /// SEAM id flagging that runtime locale tables (month/weekday
-    /// names, separators) aren't yet rendered upstream (today:
-    /// always `Some("SEAM-OXFML-LOCALE-EXPAND")`). The picker is
-    /// usable today — it sets the format-code defaults — but the
-    /// SEAM marker stays alongside until OxFml lands the runtime
-    /// locale plumbing. Becomes `None` when the locale chain
-    /// unblocks.
+    /// Optional SEAM id surfaced next to the locale picker. The
+    /// runtime locale chain landed (OxFunc W094 +
+    /// `live_bridge::build_runtime_locale_context`), so the default
+    /// for the standard preset list is `None`. The field is kept so
+    /// hosts can still flag *additional* locale-related gaps
+    /// (e.g. an as-yet-unmapped Excel locale id) without code
+    /// changes here.
     pub locale_seam_id: Option<&'static str>,
 }
 
@@ -275,7 +275,12 @@ impl FormattingControlsView {
             locale_language_tag: ambient.language_tag.clone(),
             locale_presets: crate::services::ambient_app_context::supported_locale_presets()
                 .to_vec(),
-            locale_seam_id: Some("SEAM-OXFML-LOCALE-EXPAND"),
+            // Locale chain is live: OxFunc W094 ships
+            // `LocaleProfileId::from_bcp47_language_tag`, OxFml exposes
+            // `oxfml_locale_context`, and `live_bridge` plumbs the
+            // workspace's selected tag through every edit. No SEAM
+            // shim required for the curated preset list any more.
+            locale_seam_id: None,
         }
     }
 }
@@ -3037,13 +3042,12 @@ mod tests {
             vm.result_context.is_none(),
             "default formula must collapse the result-foot",
         );
-        // Locale moved to the formatting panel; check it surfaces
-        // there with the expected SEAM marker until the locale-
-        // expansion handoff lands.
-        assert_eq!(
-            vm.formatting_controls.locale_seam_id,
-            Some("SEAM-OXFML-LOCALE-EXPAND")
-        );
+        // Locale moved to the formatting panel. The runtime locale
+        // chain is live (OxFunc W094 + `build_runtime_locale_context`
+        // in `live_bridge`), so the picker no longer carries the
+        // `SEAM-OXFML-LOCALE-EXPAND` marker for the curated preset
+        // list — the field is `None`.
+        assert_eq!(vm.formatting_controls.locale_seam_id, None);
         assert!(!vm.formatting_controls.locale_label.is_empty());
     }
 

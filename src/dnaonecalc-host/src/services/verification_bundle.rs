@@ -1636,6 +1636,12 @@ fn run_oxfml_case(
             scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
             skip_runtime_evaluation: false,
             recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
+            // Empty falls back to en-US in the bridge. The verification
+            // path attaches its own typed-context query bundle a few
+            // lines below, so this language_tag only steers the
+            // bridge's interactive response (parse / bind / popup),
+            // not the runtime locale used for the verification report.
+            language_tag: String::new(),
         })
         .map_err(|error| {
             format!(

@@ -50,6 +50,7 @@ mod tests {
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
+                language_tag: "en-US".to_string(),
             })
             .is_ok());
         assert!(web
@@ -63,6 +64,7 @@ mod tests {
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
+                language_tag: "en-US".to_string(),
             })
             .is_ok());
     }

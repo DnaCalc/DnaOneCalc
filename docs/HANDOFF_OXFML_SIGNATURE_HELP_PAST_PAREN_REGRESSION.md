@@ -2,11 +2,17 @@
 
 # OxFml Handoff: signature-help past-`)` guard never fires (regression)
 
-Status: filed — fix applied directly to `OxFml/d069b5c`+ working tree
-(see provenance note below)
+Status: **LANDED 2026-05-06** — OxFml's
+`closed_call_close_paren_end` now walks one level deep into the
+`ArgumentList` child to find `RParen`. Host-side regression tests
+in `src/dnaonecalc-host/tests/scenarios/typing.rs`
+(`signature_help_disappears_when_caret_is_past_close_paren` and
+`signature_help_disappears_after_caret_moves_past_close_paren`)
+have been un-ignored and now pass.
 Direction: DnaOneCalc → OxFml
 Source repo / workset: DnaOneCalc / Editor regression report
 Filed date: 2026-05-05
+Landing date: 2026-05-06
 Related:
   `docs/HANDOFF_OXFML_LET_LAMBDA_AND_SIGNATURE_HELP.md` (the prior
   past-`)` handoff whose fix never actually fired),

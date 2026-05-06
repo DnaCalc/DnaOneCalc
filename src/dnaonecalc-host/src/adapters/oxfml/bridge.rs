@@ -38,6 +38,15 @@ pub struct FormulaEditRequest {
     /// `skip_runtime_evaluation`, which is per-event; this is a
     /// per-formula opt-in.
     pub recalc_mode: RecalcModeRequest,
+    /// Workspace locale as a BCP-47 language tag (e.g. `"en-US"`,
+    /// `"de-DE"`). The bridge resolves this through
+    /// `LocaleProfileId::from_bcp47_language_tag` to a profile and
+    /// builds the runtime `LocaleFormatContext` accordingly. An
+    /// empty string or unrecognised tag falls back to en-US so the
+    /// runtime always has a usable locale. Drives month / weekday
+    /// names, decimal / thousands separators, currency symbol, and
+    /// the `General` rendering for the active formula.
+    pub language_tag: String,
 }
 
 /// Mirror of `crate::persistence::ScenarioRecalcMode` at the bridge

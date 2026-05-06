@@ -444,13 +444,13 @@ pub fn set_active_scenario_policy(
 
 /// Switch the workspace's ambient locale preset to the given
 /// BCP-47 language tag. Replaces the date / datetime / time format
-/// codes and the `language_tag` field on `AmbientAppContext`.
-/// Returns true when the value actually changed.
-///
-/// Note: surface-only today — the result hero's format defaults
-/// follow this preset, but month / weekday names and numeric
-/// separators stay en-US until OxFml's locale tables land
-/// (`SEAM-OXFML-LOCALE-EXPAND`).
+/// codes and the `language_tag` field on `AmbientAppContext`. Each
+/// subsequent bridge round-trip carries this tag through to
+/// `live_bridge::build_runtime_locale_context`, which resolves it
+/// to a `LocaleProfileId` and builds the matching runtime
+/// `LocaleFormatContext` — month / weekday tables, separators,
+/// currency symbol, and `General` rendering all flip with the
+/// preset. Returns true when the value actually changed.
 pub fn set_workspace_locale_preset(state: &mut OneCalcHostState, language_tag: String) -> bool {
     let next = crate::services::ambient_app_context::ambient_app_context_for_language_tag(Some(
         &language_tag,

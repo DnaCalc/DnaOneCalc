@@ -958,7 +958,7 @@ is owned by the noted repo (`OxFml`/`OxFunc`/etc.) or by OneCalc itself.
 | SEAM id | Surface | Owner repo | What's needed |
 |---|---|---|---|
 | `SEAM-OXFML-PARTIAL-EVAL` | `F9` evaluate-selection; drill context-menu "Evaluate subtree with…" | `OxFml` | Subtree-eval bridge call accepting selection span and returning an `ExtendedValue` |
-| `SEAM-OXFUNC-LOCALE-EXPAND` | Locale dropdown beyond `EnUs` and `CurrentExcelHost` | `OxFunc` | Add `LocaleProfileId` variants (DeDe, FrFr, JaJp, …) and corresponding `FormatProfile`s |
+| `SEAM-OXFUNC-LOCALE-EXPAND` ✅ LANDED 2026-05-06 | Locale dropdown beyond `EnUs` and `CurrentExcelHost` | `OxFunc` (W094) + `OxFml` (`oxfml_locale_context`) + host (`live_bridge::build_runtime_locale_context`) | OxFunc now ships 30 canonical `LocaleProfileId`s; OxFml exposes `oxfml_locale_context`; host plumbs `OneCalcHostState.ambient_app_context.language_tag` through every bridge round-trip. |
 | `SEAM-OXFUNC-FORMAT-CODE-PICKER` | Inline format-code editor with curated preset shortcuts (Currency-Euro, Date-ISO, Percentage-2, etc.) | OneCalc | Host-curated preset list mapping label → format code string. *Not* a typed family taxonomy — see [§7.3](#73-mismatches-mockup-vs-library-shape). |
 | `SEAM-BRIDGE-PUBLICATION-SURFACE` | Bridge mirror exposing the full `VerificationPublicationSurface` | OneCalc | Extend bridge `EditorDocument` (or add a sibling field) with `Option<VerificationPublicationSurface>`. Required so result drill cascade can show per-CF-rule `applies` + `effective_*`, base font/fill, and effective colors. |
 | `SEAM-OXFML-EXPOSE-BASE-EFFECTIVE-DISPLAY` | The pre-CF intermediate display string | `OxFml` | Either publish `base_effective_display_text` as a field on `VerificationPublicationSurface`, or have the host re-run publication without CF rules. Small upstream change preferred. |
@@ -1242,10 +1242,12 @@ Decisions that should be made before implementation kicks off.
   produced one, is shown in a **separate sidecar** and is not editable.
   Decision: stop pretending a unified taxonomy exists; treat OxFml's format
   string + locale context as authoritative.
-- **Locale catalog.** Single SEAM (`SEAM-OXFUNC-LOCALE-EXPAND`) gates the
-  whole non-en-US world. Should WS-14 attempt a starter de-DE profile in
-  `OxFunc` to validate end-to-end? **Recommendation:** no — keep WS-14 host
-  side; let upstream prove locale expansion in its own workset.
+- **Locale catalog.** ✅ Landed 2026-05-06. OxFunc W094 ships 30 canonical
+  `LocaleProfileId`s with full `format_profile()` rows; OxFml exposes
+  `oxfml_locale_context(profile, date_system)`; the host plumbs
+  `language_tag` through `FormulaEditRequest` → `live_bridge::build_runtime_locale_context`.
+  The picker in the formatting panel is functional today and the
+  `SEAM-OXFUNC-LOCALE-EXPAND` shim has been retired.
 - **Walk-node span attribution.** Bridge today returns `FormulaWalkNode`
   without a `source_span`. Two options: (a) host-side label→span attribution
   (works for simple cases, brittle for nested same-name calls); (b) bridge

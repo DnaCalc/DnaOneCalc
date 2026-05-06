@@ -210,15 +210,13 @@ fn typing_an_invalid_formula_surfaces_a_diagnostic_in_the_result_view() {
 /// popup must be suppressed at every cursor position outside the
 /// call's argument list, end-to-end through the real bridge.
 ///
-/// Pinned-failing today against an OxFml regression: the past-`)`
-/// guard in `signature_help_context_at_cursor` looks for `RParen` as
-/// a direct child of the CallExpr node, but the parser places the
-/// `)` inside the ArgumentList child — so the guard is never
-/// reachable and `signature_help` keeps firing past `)`. Tracked in
-/// `docs/HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION.md`.
-/// Re-enable when the OxFml fix lands.
+/// Originally pinned-failing against an OxFml regression where the
+/// past-`)` guard looked for `RParen` as a direct child of the
+/// CallExpr node, but the parser placed `)` inside the ArgumentList
+/// child. OxFml's `closed_call_close_paren_end` now walks into the
+/// ArgumentList, the regression is fixed, and the test is live.
+/// See `docs/HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION.md`.
 #[test]
-#[ignore = "pending HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION"]
 fn signature_help_disappears_when_caret_is_past_close_paren() {
     let mut state = fresh_state_with_active_space();
     let bridge = scenario_bridge();
@@ -265,13 +263,11 @@ fn signature_help_disappears_when_caret_is_past_close_paren() {
 
 /// Caret-only navigation (mouse click, arrow keys) past a closed
 /// call must suppress signature help — the user expects the popup
-/// to disappear without having to type more text. Same upstream
-/// regression as
-/// `signature_help_disappears_when_caret_is_past_close_paren`;
-/// re-enable when OxFml's `closed_call_close_paren_end` walks into
-/// the ArgumentList child.
+/// to disappear without having to type more text. Companion to
+/// `signature_help_disappears_when_caret_is_past_close_paren`; the
+/// OxFml fix that makes the typed-past-`)` guard work covers this
+/// caret-move shape too.
 #[test]
-#[ignore = "pending HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION"]
 fn signature_help_disappears_after_caret_moves_past_close_paren() {
     let mut state = fresh_state_with_active_space();
     let bridge = scenario_bridge();
