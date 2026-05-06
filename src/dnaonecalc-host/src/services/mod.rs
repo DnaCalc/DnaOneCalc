@@ -7,3 +7,4 @@ pub mod programmatic_testing;
 pub mod retained_artifacts;
 pub mod spreadsheet_xml;
 pub mod verification_bundle;
+pub mod wall_clock;

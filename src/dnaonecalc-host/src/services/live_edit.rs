@@ -27,20 +27,144 @@ pub enum LiveEditError {
     Bridge(OxfmlEditorBridgeError),
 }
 
+/// Threshold above which the host flips into auto-debounced
+/// runtime mode. The most recent runtime-included bridge pass
+/// determines this: if it took longer than the threshold, the
+/// next text-input events run with `skip_runtime_evaluation=true`
+/// and the host marks `pending_runtime_recalc` so the UI can
+/// schedule an idle-window flush.
+///
+/// 150 ms picks the boundary at "the user notices the lag". Below
+/// that, every keystroke runs runtime live (current behaviour).
+/// Above it, the editor stays responsive and the runtime pass
+/// fires once after the typing burst settles.
+pub const AUTO_DEBOUNCE_THRESHOLD_MS: f64 = 150.0;
+
+/// Suggested idle-window duration the UI should wait before
+/// flushing the pending runtime pass. Exposed as a constant so the
+/// browser-side `setTimeout` and the host stay aligned.
+pub const AUTO_DEBOUNCE_IDLE_WINDOW_MS: u32 = 350;
+
+/// Result of `apply_live_editor_input` when the caller needs to
+/// know whether a debounced runtime flush is now pending. The
+/// boolean answers "did anything change in host state?" exactly
+/// like before; the new field tells the UI whether to (re)arm its
+/// idle-window timer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LiveEditOutcome {
+    /// True when host state changed and the renderer should
+    /// re-project. Mirrors the prior `bool` return.
+    pub changed: bool,
+    /// True when the runtime pass was deferred for this event
+    /// because the last runtime pass exceeded
+    /// `AUTO_DEBOUNCE_THRESHOLD_MS`. The UI is expected to (re)arm
+    /// a `setTimeout(AUTO_DEBOUNCE_IDLE_WINDOW_MS)` that calls
+    /// `flush_pending_runtime_recalc` on fire.
+    pub runtime_recalc_pending: bool,
+}
+
 pub fn apply_live_editor_input(
     bridge: &dyn OxfmlEditorBridge,
     state: &mut OneCalcHostState,
     input_event: EditorInputEvent,
-) -> Result<bool, LiveEditError> {
+) -> Result<LiveEditOutcome, LiveEditError> {
     let formula_space_id =
         active_formula_space_id(state).ok_or(LiveEditError::NoActiveFormulaSpace)?;
     let input_kind = input_event.input_kind;
     let changed = apply_editor_input_to_active_formula_space(state, input_event);
     if !changed {
+        return Ok(LiveEditOutcome::default());
+    }
+    // Two reasons to skip the runtime pass on this event:
+    //   1. Caret-only events never re-evaluate (text didn't change).
+    //   2. Auto-debounce: the previous runtime pass was expensive,
+    //      so we defer until the typing burst settles.
+    let mutates_text = input_kind.mutates_text();
+    let auto_debounced = mutates_text && should_auto_debounce_runtime(state, &formula_space_id);
+    let skip_runtime = !mutates_text || auto_debounced;
+    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, skip_runtime)?;
+    if auto_debounced {
+        if let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) {
+            formula_space.pending_runtime_recalc = true;
+        }
+    }
+    Ok(LiveEditOutcome {
+        changed: true,
+        runtime_recalc_pending: auto_debounced,
+    })
+}
+
+/// Returns `true` when the auto-debounce policy says this
+/// formula's runtime pass should be deferred. Driven solely by
+/// the most recent runtime-included bridge round-trip duration —
+/// no heuristic on formula shape, no hard-coded function lists,
+/// no per-formula opt-in. The user gets live behaviour by default
+/// and adaptive debouncing only after a slow round-trip is
+/// observed. A subsequent fast pass (e.g. they shortened the
+/// formula) clears the flag automatically since
+/// `last_bridge_pass_elapsed_ms` is overwritten every time.
+fn should_auto_debounce_runtime(
+    state: &OneCalcHostState,
+    formula_space_id: &FormulaSpaceId,
+) -> bool {
+    state
+        .formula_spaces
+        .get(formula_space_id)
+        .and_then(|formula_space| formula_space.last_bridge_pass_elapsed_ms)
+        .is_some_and(|elapsed| elapsed > AUTO_DEBOUNCE_THRESHOLD_MS)
+}
+
+/// Clear the auto-debounce decision for a formula. Called when
+/// the user explicitly resets state — e.g. opening a different
+/// formula, after a long idle, or via a "Recalc all now" action.
+/// Currently invoked only from
+/// `flush_pending_runtime_recalc`'s slow path; surfaces as a
+/// public helper so future callers can reset adaptively without
+/// editing the field directly.
+pub fn reset_auto_debounce_observation(
+    state: &mut OneCalcHostState,
+    formula_space_id: &FormulaSpaceId,
+) {
+    if let Some(formula_space) = state.formula_spaces.get_mut(formula_space_id) {
+        formula_space.last_bridge_pass_elapsed_ms = None;
+        formula_space.pending_runtime_recalc = false;
+    }
+}
+
+/// Run the runtime pass for the active formula now, even if the
+/// auto-debounce policy would otherwise have skipped it. Called
+/// by the UI's idle-window timer after a typing burst settles.
+/// Returns `Ok(true)` when the bridge ran (and the
+/// `pending_runtime_recalc` flag is now cleared), `Ok(false)`
+/// when there is nothing to flush, `Err` on bridge failure.
+pub fn flush_pending_runtime_recalc(
+    bridge: &dyn OxfmlEditorBridge,
+    state: &mut OneCalcHostState,
+) -> Result<bool, LiveEditError> {
+    let Some(formula_space_id) = active_formula_space_id(state) else {
+        return Ok(false);
+    };
+    let pending = state
+        .formula_spaces
+        .get(&formula_space_id)
+        .map(|formula_space| formula_space.pending_runtime_recalc)
+        .unwrap_or(false);
+    if !pending {
         return Ok(false);
     }
-    let skip_runtime = !input_kind.mutates_text();
-    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, skip_runtime)?;
+    refresh_active_formula_space_from_bridge_with_overrides(
+        bridge,
+        state,
+        &formula_space_id,
+        false,
+        false,
+    )?;
+    // editor_session writes `pending_runtime_recalc = false` on
+    // any non-skip pass; defensively re-clear here too in case a
+    // future code path stops doing that.
+    if let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) {
+        formula_space.pending_runtime_recalc = false;
+    }
     Ok(true)
 }
 
@@ -48,12 +172,12 @@ pub fn apply_live_editor_command(
     bridge: &dyn OxfmlEditorBridge,
     state: &mut OneCalcHostState,
     command: EditorCommand,
-) -> Result<bool, LiveEditError> {
+) -> Result<LiveEditOutcome, LiveEditError> {
     let formula_space_id =
         active_formula_space_id(state).ok_or(LiveEditError::NoActiveFormulaSpace)?;
     let changed = apply_editor_command_to_active_formula_space(state, command.clone());
     if !changed {
-        return Ok(false);
+        return Ok(LiveEditOutcome::default());
     }
     if matches!(
         command,
@@ -70,10 +194,25 @@ pub fn apply_live_editor_command(
             | EditorCommand::UpdateEditorSetting(_)
             | EditorCommand::ToggleConfigureDrawer
     ) {
-        return Ok(true);
+        return Ok(LiveEditOutcome {
+            changed: true,
+            runtime_recalc_pending: false,
+        });
     }
-    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, false)?;
-    Ok(true)
+    // Editor commands that *do* mutate text (e.g. IndentWithSpaces,
+    // OutdentWithSpaces, AcceptSelectedCompletion, CycleReferenceForm)
+    // honour the same auto-debounce decision as text-input events.
+    let auto_debounced = should_auto_debounce_runtime(state, &formula_space_id);
+    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, auto_debounced)?;
+    if auto_debounced {
+        if let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) {
+            formula_space.pending_runtime_recalc = true;
+        }
+    }
+    Ok(LiveEditOutcome {
+        changed: true,
+        runtime_recalc_pending: auto_debounced,
+    })
 }
 
 /// Re-run the live bridge for the active formula space without
@@ -596,7 +735,7 @@ mod tests {
             document: sample_editor_document("=SUM(1,2,3)"),
         };
 
-        let changed = apply_live_editor_input(
+        let outcome = apply_live_editor_input(
             &bridge,
             &mut state,
             EditorInputEvent {
@@ -609,7 +748,8 @@ mod tests {
         )
         .expect("live edit should refresh active formula space");
 
-        assert!(changed);
+        assert!(outcome.changed);
+        assert!(!outcome.runtime_recalc_pending);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -633,10 +773,10 @@ mod tests {
             document: sample_editor_document("=UM(1,2)"),
         };
 
-        let changed = apply_live_editor_command(&bridge, &mut state, EditorCommand::Delete)
+        let outcome = apply_live_editor_command(&bridge, &mut state, EditorCommand::Delete)
             .expect("live command should refresh active formula space");
 
-        assert!(changed);
+        assert!(outcome.changed);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -659,11 +799,11 @@ mod tests {
             document: sample_editor_document("=SUM(1,2)"),
         };
 
-        let changed =
+        let outcome =
             apply_live_editor_command(&bridge, &mut state, EditorCommand::SelectNextCompletion)
                 .expect("completion navigation should stay local");
 
-        assert!(changed);
+        assert!(outcome.changed);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -741,10 +881,10 @@ mod tests {
         }
         let bridge = FakeBridge { document };
 
-        let changed = apply_live_editor_command(&bridge, &mut state, EditorCommand::MoveCaretRight)
+        let outcome = apply_live_editor_command(&bridge, &mut state, EditorCommand::MoveCaretRight)
             .expect("caret move should refresh live signature help");
 
-        assert!(changed);
+        assert!(outcome.changed);
         let active = state
             .formula_spaces
             .get(&formula_space_id)
@@ -757,5 +897,166 @@ mod tests {
                 .map(|help| help.active_argument_index),
             Some(1)
         );
+    }
+
+    /// Auto-debounce: when the most recent runtime-included bridge
+    /// pass exceeded the threshold, the next text-input event runs
+    /// with `skip_runtime_evaluation = true`, marks
+    /// `pending_runtime_recalc = true`, and the outcome reports the
+    /// pending state so the UI can arm its idle-window timer.
+    #[test]
+    fn auto_debounce_kicks_in_after_a_slow_runtime_pass() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)");
+        // Pretend the previous runtime pass was expensive.
+        formula_space.last_bridge_pass_elapsed_ms = Some(AUTO_DEBOUNCE_THRESHOLD_MS + 100.0);
+        state.formula_spaces.insert(formula_space);
+
+        // SkipObservingBridge fails the test if it ever runs WITHOUT
+        // skip_runtime_evaluation set — the auto-debounce contract is
+        // that the runtime pass is deferred under these conditions.
+        struct SkipObservingBridge {
+            document: crate::adapters::oxfml::EditorDocument,
+        }
+        impl OxfmlEditorBridge for SkipObservingBridge {
+            fn apply_formula_edit(
+                &self,
+                request: FormulaEditRequest,
+            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+                assert!(
+                    request.skip_runtime_evaluation,
+                    "auto-debounce should skip runtime when last pass was slow",
+                );
+                Ok(FormulaEditResult {
+                    document: self.document.clone(),
+                })
+            }
+        }
+        let bridge = SkipObservingBridge {
+            document: sample_editor_document("=SUM(1,2,3)"),
+        };
+
+        let outcome = apply_live_editor_input(
+            &bridge,
+            &mut state,
+            EditorInputEvent {
+                text: "=SUM(1,2,3)".to_string(),
+                selection_start: Some(11),
+                selection_end: Some(11),
+                input_kind: EditorInputKind::InsertText,
+                inserted_text: Some("3".to_string()),
+            },
+        )
+        .expect("auto-debounced edit should still update host state");
+
+        assert!(outcome.changed);
+        assert!(
+            outcome.runtime_recalc_pending,
+            "outcome should signal a pending runtime recalc so the UI arms a flush timer",
+        );
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
+        assert!(active.pending_runtime_recalc);
+        // The skip path doesn't refresh `last_bridge_pass_elapsed_ms`,
+        // so the auto-debounce stays armed until a flush pass runs.
+        assert_eq!(
+            active.last_bridge_pass_elapsed_ms,
+            Some(AUTO_DEBOUNCE_THRESHOLD_MS + 100.0)
+        );
+    }
+
+    /// Flush: the UI's idle-window timer calls
+    /// `flush_pending_runtime_recalc`, which runs the deferred
+    /// runtime pass once and clears `pending_runtime_recalc`. A
+    /// fast pass (no slow observation in the new round-trip)
+    /// clears `last_bridge_pass_elapsed_ms` to a fast value, so
+    /// subsequent edits return to live behaviour.
+    #[test]
+    fn flush_pending_runtime_recalc_runs_runtime_and_clears_pending() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        let mut formula_space = FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2,3)");
+        formula_space.last_bridge_pass_elapsed_ms = Some(AUTO_DEBOUNCE_THRESHOLD_MS + 100.0);
+        formula_space.pending_runtime_recalc = true;
+        state.formula_spaces.insert(formula_space);
+
+        let bridge = FakeBridge {
+            document: sample_editor_document("=SUM(1,2,3)"),
+        };
+
+        let ran = flush_pending_runtime_recalc(&bridge, &mut state)
+            .expect("flush should succeed against the fake bridge");
+        assert!(ran);
+        let active = state
+            .formula_spaces
+            .get(&formula_space_id)
+            .expect("space exists");
+        assert!(!active.pending_runtime_recalc);
+        // Wall-clock recorded the flush pass elapsed time.
+        assert!(active.last_bridge_pass_elapsed_ms.is_some());
+    }
+
+    /// When nothing is pending, flush is a no-op and reports `false`.
+    /// The bridge must not be invoked.
+    #[test]
+    fn flush_pending_runtime_recalc_is_a_noop_when_nothing_pending() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=1"));
+
+        struct PanicBridge;
+        impl OxfmlEditorBridge for PanicBridge {
+            fn apply_formula_edit(
+                &self,
+                _request: FormulaEditRequest,
+            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+                panic!("flush should be a no-op when no recalc is pending");
+            }
+        }
+
+        let ran = flush_pending_runtime_recalc(&PanicBridge, &mut state)
+            .expect("flush should succeed even when nothing is pending");
+        assert!(!ran);
+    }
+
+    /// A fresh formula (no observed elapsed time) runs every event
+    /// live — the auto-debounce only kicks in after a slow round-trip
+    /// has been observed.
+    #[test]
+    fn auto_debounce_does_not_kick_in_before_first_slow_pass() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=1"));
+
+        let bridge = FakeBridge {
+            document: sample_editor_document("=1"),
+        };
+
+        let outcome = apply_live_editor_input(
+            &bridge,
+            &mut state,
+            EditorInputEvent {
+                text: "=1".to_string(),
+                selection_start: Some(2),
+                selection_end: Some(2),
+                input_kind: EditorInputKind::InsertText,
+                inserted_text: Some("1".to_string()),
+            },
+        )
+        .expect("first edit should run live");
+
+        assert!(outcome.changed);
+        assert!(!outcome.runtime_recalc_pending);
     }
 }

@@ -48,6 +48,8 @@ use crate::services::home_shell_view_model::{
     ScenarioPolicyView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
+#[cfg(target_arch = "wasm32")]
+use crate::services::live_edit::{flush_pending_runtime_recalc, AUTO_DEBOUNCE_IDLE_WINDOW_MS};
 use crate::state::OneCalcHostState;
 use crate::state::ViewMode;
 use crate::ui::design_tokens::theme::ThemeStyleTag;
@@ -174,16 +176,90 @@ pub fn HomeShell(
     // touching the projector or component data flow.
     let hover_target: RwSignal<Option<FunctionHelpHoverTarget>> = RwSignal::new(None);
 
+    // Auto-debounce timer handle. When `apply_live_editor_input`
+    // signals `runtime_recalc_pending`, we (re-)arm a `setTimeout`
+    // for `AUTO_DEBOUNCE_IDLE_WINDOW_MS` ms; on fire, the timer
+    // calls `flush_pending_runtime_recalc` which runs the deferred
+    // runtime pass once. Subsequent input events cancel the
+    // outstanding timer (if any) before reading the new outcome,
+    // so a fast typing burst stays responsive — only the trailing
+    // idle window triggers the runtime pass.
+    //
+    // The handle lives in a `RwSignal<Option<i32>>` so it survives
+    // across event-handler closures without an `Rc<RefCell<_>>`.
+    let pending_recalc_timer_handle: RwSignal<Option<i32>> = RwSignal::new(None);
+
+    // Helper: arm the idle-window timer that flushes a pending
+    // runtime recalc after `AUTO_DEBOUNCE_IDLE_WINDOW_MS` of input
+    // silence. Cancels any outstanding timer first so the window
+    // is reset by every subsequent keystroke (debounce semantics).
+    // No-op on non-wasm targets — host tests drive the flush
+    // directly via `flush_pending_runtime_recalc`.
+    let editor_bridge_for_flush = editor_bridge.clone();
+    let arm_runtime_recalc_flush = move || {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::closure::Closure;
+            use wasm_bindgen::JsCast;
+
+            let Some(window) = web_sys::window() else {
+                return;
+            };
+            // Cancel any in-flight timer so the idle window restarts.
+            if let Some(handle) = pending_recalc_timer_handle.get_untracked() {
+                window.clear_timeout_with_handle(handle);
+            }
+            let bridge_for_timer = editor_bridge_for_flush.clone();
+            let cb = Closure::once_into_js(move || {
+                pending_recalc_timer_handle.set(None);
+                state.update(|s| {
+                    if let Some(bridge) = bridge_for_timer.as_ref() {
+                        if let Err(error) = flush_pending_runtime_recalc(bridge.as_ref(), s) {
+                            web_sys::console::warn_1(
+                                &format!("[onecalc] runtime flush failed: {error:?}").into(),
+                            );
+                        }
+                    }
+                });
+            });
+            match window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                AUTO_DEBOUNCE_IDLE_WINDOW_MS as i32,
+            ) {
+                Ok(handle) => {
+                    pending_recalc_timer_handle.set(Some(handle));
+                }
+                Err(error) => {
+                    web_sys::console::warn_1(
+                        &format!("[onecalc] arming runtime flush timer failed: {error:?}").into(),
+                    );
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = editor_bridge_for_flush.clone();
+            let _ = pending_recalc_timer_handle;
+        }
+    };
+
     // Bridge dispatcher closure shared with the textarea's on:input.
     let editor_bridge_for_input = editor_bridge.clone();
+    let arm_flush_for_input = arm_runtime_recalc_flush.clone();
     let on_editor_input = Callback::new(move |event: EditorInputEvent| {
+        let mut runtime_recalc_pending = false;
         state.update(|state| {
             if let Some(bridge) = editor_bridge_for_input.as_ref() {
-                let _ = apply_live_editor_input(bridge.as_ref(), state, event);
+                if let Ok(outcome) = apply_live_editor_input(bridge.as_ref(), state, event) {
+                    runtime_recalc_pending = outcome.runtime_recalc_pending;
+                }
             } else {
                 let _ = apply_editor_input_to_active_formula_space(state, event);
             }
         });
+        if runtime_recalc_pending {
+            arm_flush_for_input();
+        }
     });
 
     // Helper: apply a CompletionAcceptance — splice the textarea
@@ -676,6 +752,31 @@ pub fn HomeShell(
             let _ = crate::app::case_lifecycle::new_formula_space(state);
         });
     });
+    // Inline-rename callbacks. The user double-clicks a tab name
+    // to start; types into the input; presses Enter (or blurs) to
+    // commit, or Esc to cancel. Both the active formula and any
+    // pinned formula can be renamed this way — there's no separate
+    // "rename pinned" path.
+    let on_begin_rename_formula_tab = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::begin_formula_rename(state, &formula_space_id);
+        });
+    });
+    let on_update_rename_text = Callback::new(move |next_text: String| {
+        state.update(|state| {
+            crate::app::case_lifecycle::update_pending_rename_text(state, next_text);
+        });
+    });
+    let on_commit_rename = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::commit_formula_rename(state);
+        });
+    });
+    let on_cancel_rename = Callback::new(move |()| {
+        state.update(|state| {
+            crate::app::case_lifecycle::cancel_formula_rename(state);
+        });
+    });
     // Command-palette callbacks. Type-to-filter, arrow keys to
     // move selection, Enter to dispatch. Esc / outside-click /
     // a second Ctrl+K closes the overlay.
@@ -705,6 +806,16 @@ pub fn HomeShell(
                             let _ = crate::app::case_lifecycle::clone_active_formula_space(
                                 state,
                             );
+                        }
+                        ScenarioBreadcrumbActionId::RenameActive => {
+                            if let Some(active_id) =
+                                state.workspace_shell.active_formula_space_id.clone()
+                            {
+                                let _ = crate::app::case_lifecycle::begin_formula_rename(
+                                    state,
+                                    active_id.as_str(),
+                                );
+                            }
                         }
                         ScenarioBreadcrumbActionId::PinActive => {
                             let _ = crate::app::case_lifecycle::pin_active_formula_space(state);
@@ -786,6 +897,17 @@ pub fn HomeShell(
             ScenarioBreadcrumbActionId::Duplicate => {
                 state.update(|state| {
                     let _ = crate::app::case_lifecycle::clone_active_formula_space(state);
+                });
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::RenameActive => {
+                state.update(|state| {
+                    if let Some(active_id) = state.workspace_shell.active_formula_space_id.clone() {
+                        let _ = crate::app::case_lifecycle::begin_formula_rename(
+                            state,
+                            active_id.as_str(),
+                        );
+                    }
                 });
                 close_dropdown();
             }
@@ -880,10 +1002,20 @@ pub fn HomeShell(
                 close_dropdown();
             }
             ScenarioBreadcrumbActionId::ManageScenarios => {
-                // SEAM-ONECALC-SCENARIO-PERSIST — full-screen
-                // management page lands in a later slice; for now
-                // just close the dropdown so the user sees the click
-                // was received.
+                // "Manage formulas…" — pending. The intent (per WS-14
+                // plan §6.2) is a full-screen / modal management
+                // surface for the saved-formula workspace:
+                //   • list every saved formula (name, last-edited
+                //     timestamp, pinned-flag, attached compare bundle)
+                //   • bulk operations: pin / unpin, rename, duplicate,
+                //     delete, export to .dnafml
+                //   • search / filter by name or text content
+                //   • drag-reorder for the recent / pinned list
+                // Today the inline tab strip + breadcrumb dropdown
+                // covers single-formula switching; this menu item is
+                // the entry point for the harder "I have 30 saved
+                // formulas, find the one with `=XLOOKUP` in it" case.
+                // Tracked under `SEAM-ONECALC-SCENARIO-PERSIST`.
                 web_sys::console::log_1(&"[onecalc] manage formulas: pending UI slice".into());
                 close_dropdown();
             }
@@ -1085,6 +1217,10 @@ pub fn HomeShell(
                 on_scenario_entry_select,
                 on_close_formula_tab,
                 on_new_formula_from_tab_strip,
+                on_begin_rename_formula_tab,
+                on_update_rename_text,
+                on_commit_rename,
+                on_cancel_rename,
             )}
 
             <main class="onecalc-home-shell__body">
@@ -1509,6 +1645,10 @@ fn render_formula_tab_strip(
     on_select: Callback<String>,
     on_close: Callback<String>,
     on_new_formula: Callback<()>,
+    on_begin_rename: Callback<String>,
+    on_update_rename_text: Callback<String>,
+    on_commit_rename: Callback<()>,
+    on_cancel_rename: Callback<()>,
 ) -> AnyView {
     let Some(strip) = strip else {
         return view! { <></> }.into_any();
@@ -1519,7 +1659,17 @@ fn render_formula_tab_strip(
     let chips: Vec<_> = strip
         .chips
         .into_iter()
-        .map(|chip| render_formula_tab_chip(chip, on_select, on_close))
+        .map(|chip| {
+            render_formula_tab_chip(
+                chip,
+                on_select,
+                on_close,
+                on_begin_rename,
+                on_update_rename_text,
+                on_commit_rename,
+                on_cancel_rename,
+            )
+        })
         .collect();
     view! {
         <nav class="onecalc-home-shell__tab-strip" role="tablist" aria-label="open formulas">
@@ -1542,12 +1692,18 @@ fn render_formula_tab_chip(
     chip: FormulaTabChip,
     on_select: Callback<String>,
     on_close: Callback<String>,
+    on_begin_rename: Callback<String>,
+    on_update_rename_text: Callback<String>,
+    on_commit_rename: Callback<()>,
+    on_cancel_rename: Callback<()>,
 ) -> AnyView {
     let active_attr = if chip.is_active { "true" } else { "false" };
     let dirty_attr = if chip.is_dirty { "true" } else { "false" };
     let pinned_attr = if chip.is_pinned { "true" } else { "false" };
+    let renaming_attr = if chip.is_renaming { "true" } else { "false" };
     let id_for_select = chip.formula_space_id.clone();
     let id_for_close = chip.formula_space_id.clone();
+    let id_for_begin_rename = chip.formula_space_id.clone();
     let id_attr = chip.formula_space_id.clone();
     let display_name = chip.display_name.clone();
     let pinned_marker = chip.is_pinned.then(|| {
@@ -1558,6 +1714,69 @@ fn render_formula_tab_chip(
         view! { <span class="onecalc-home-shell__tab-strip-dirty" aria-hidden="true">"●"</span> }
             .into_any()
     });
+    let label_body: AnyView = if chip.is_renaming {
+        // Inline rename: render a text input bound to the buffered
+        // text. The label-button wrapper is replaced with a form-
+        // looking <span> so the input doesn't accidentally toggle
+        // tab selection. Enter / Esc are handled in on:keydown;
+        // the on:input event keeps the buffer in sync; on:blur
+        // commits the rename.
+        let rename_buffer_attr = chip.rename_buffer.clone();
+        view! {
+            <span class="onecalc-home-shell__tab-strip-chip-label" data-mode="rename">
+                {pinned_marker}
+                <input
+                    type="text"
+                    class="onecalc-home-shell__tab-strip-rename-input"
+                    aria-label="rename formula"
+                    prop:value=rename_buffer_attr
+                    autofocus
+                    on:input=move |ev| {
+                        let target = ev
+                            .target()
+                            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
+                        if let Some(input) = target {
+                            on_update_rename_text.run(input.value());
+                        }
+                    }
+                    on:keydown=move |ev: WebKeyboardEvent| {
+                        match ev.key().as_str() {
+                            "Enter" => {
+                                ev.prevent_default();
+                                on_commit_rename.run(());
+                            }
+                            "Escape" => {
+                                ev.prevent_default();
+                                on_cancel_rename.run(());
+                            }
+                            _ => {}
+                        }
+                    }
+                    on:blur=move |_| on_commit_rename.run(())
+                />
+                {dirty_marker}
+            </span>
+        }
+        .into_any()
+    } else {
+        view! {
+            <button
+                type="button"
+                class="onecalc-home-shell__tab-strip-chip-label"
+                title="Click to switch · double-click to rename"
+                on:click=move |_| on_select.run(id_for_select.clone())
+                on:dblclick=move |ev| {
+                    ev.stop_propagation();
+                    on_begin_rename.run(id_for_begin_rename.clone());
+                }
+            >
+                {pinned_marker}
+                <span class="onecalc-home-shell__tab-strip-chip-name">{display_name}</span>
+                {dirty_marker}
+            </button>
+        }
+        .into_any()
+    };
     view! {
         <div
             class="onecalc-home-shell__tab-strip-chip"
@@ -1566,17 +1785,10 @@ fn render_formula_tab_chip(
             data-is-active=active_attr
             data-is-dirty=dirty_attr
             data-is-pinned=pinned_attr
+            data-is-renaming=renaming_attr
             aria-selected=active_attr
         >
-            <button
-                type="button"
-                class="onecalc-home-shell__tab-strip-chip-label"
-                on:click=move |_| on_select.run(id_for_select.clone())
-            >
-                {pinned_marker}
-                <span class="onecalc-home-shell__tab-strip-chip-name">{display_name}</span>
-                {dirty_marker}
-            </button>
+            {label_body}
             <button
                 type="button"
                 class="onecalc-home-shell__tab-strip-chip-close"
@@ -3470,8 +3682,16 @@ fn render_array_browser(
     });
     // Build the per-column track template from `column_widths`,
     // falling back to `minmax(4rem, max-content)` for any column
-    // the user hasn't resized.
-    let mut tracks = String::from("2.4rem ");
+    // the user hasn't resized. The leading `2.4rem` slot is the
+    // row-number column — only present when headers are visible,
+    // otherwise the first data column would still render at the
+    // narrow row-number width.
+    let show_headers = display.show_row_column_headers;
+    let mut tracks = if show_headers {
+        String::from("2.4rem ")
+    } else {
+        String::new()
+    };
     for col in 0..preview_cols.max(1) {
         if let Some(width) = column_widths.get(&col) {
             tracks.push_str(&format!("{width:.2}rem "));
@@ -3480,63 +3700,116 @@ fn render_array_browser(
         }
     }
     let grid_template = format!("grid-template-columns: {tracks};");
-    let mut header_cells: Vec<AnyView> = Vec::with_capacity(preview_cols + 1);
-    header_cells.push(
-        view! {
-            <div class="onecalc-array-browser__header onecalc-array-browser__corner" aria-hidden="true"></div>
-        }
-        .into_any(),
-    );
-    for col in 0..preview_cols {
-        let label = column_index_to_a1_label(col);
-        let col_for_resize = col;
-        let initial_width = column_widths.get(&col).copied().unwrap_or(4.0); // matches the `4rem` minmax minimum.
+    let mut header_cells: Vec<AnyView> = if show_headers {
+        Vec::with_capacity(preview_cols + 1)
+    } else {
+        Vec::new()
+    };
+    if show_headers {
+        // Top-left "select-all" corner: clicking selects every
+        // visible cell in the preview window. Excel uses this same
+        // corner the same way.
+        let select_all_rows = preview_rows;
+        let select_all_cols = preview_cols;
         header_cells.push(
             view! {
                 <div
-                    class="onecalc-array-browser__header onecalc-array-browser__column-header"
-                    data-col=col.to_string()
-                >
-                    <span class="onecalc-array-browser__header-label">{label}</span>
-                    <span
-                        class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--col"
-                        title="Drag to resize column"
-                        on:mousedown=move |ev: WebMouseEvent| {
-                            ev.prevent_default();
-                            ev.stop_propagation();
-                            start_column_resize(state, col_for_resize, initial_width, ev.client_x());
-                        }
-                    ></span>
-                </div>
+                    class="onecalc-array-browser__header onecalc-array-browser__corner"
+                    title="Click to select all visible cells"
+                    aria-label="select all"
+                    on:click=move |ev: WebMouseEvent| {
+                        ev.prevent_default();
+                        ev.stop_propagation();
+                        select_all_visible_cells(state, select_all_rows, select_all_cols);
+                    }
+                ></div>
             }
             .into_any(),
         );
+        for col in 0..preview_cols {
+            let label = column_index_to_a1_label(col);
+            let col_for_resize = col;
+            let col_for_select = col;
+            let select_rows_for_col = preview_rows;
+            let initial_width = column_widths.get(&col).copied().unwrap_or(4.0); // matches the `4rem` minmax minimum.
+            header_cells.push(
+                view! {
+                    <div
+                        class="onecalc-array-browser__header onecalc-array-browser__column-header"
+                        data-col=col.to_string()
+                        title="Click to select column · Shift+click to extend"
+                        on:click=move |ev: WebMouseEvent| {
+                            ev.prevent_default();
+                            ev.stop_propagation();
+                            select_column(
+                                state,
+                                col_for_select,
+                                select_rows_for_col,
+                                ev.shift_key(),
+                            );
+                        }
+                    >
+                        <span class="onecalc-array-browser__header-label">{label}</span>
+                        <span
+                            class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--col"
+                            title="Drag to resize column"
+                            on:mousedown=move |ev: WebMouseEvent| {
+                                ev.prevent_default();
+                                ev.stop_propagation();
+                                start_column_resize(state, col_for_resize, initial_width, ev.client_x());
+                            }
+                        ></span>
+                    </div>
+                }
+                .into_any(),
+            );
+        }
     }
-    let mut body_cells: Vec<AnyView> = Vec::with_capacity(preview_rows * (preview_cols + 1));
+    let body_cell_capacity = if show_headers {
+        preview_rows * (preview_cols + 1)
+    } else {
+        preview_rows * preview_cols
+    };
+    let mut body_cells: Vec<AnyView> = Vec::with_capacity(body_cell_capacity);
     for (row_index, row) in cells.into_iter().enumerate() {
-        let row_label = (row_index + 1).to_string();
-        let row_for_resize = row_index;
-        let initial_height = row_heights.get(&row_index).copied().unwrap_or(1.6);
-        body_cells.push(
-            view! {
-                <div
-                    class="onecalc-array-browser__header onecalc-array-browser__row-header"
-                    data-row=row_index.to_string()
-                >
-                    <span class="onecalc-array-browser__header-label">{row_label}</span>
-                    <span
-                        class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--row"
-                        title="Drag to resize row"
-                        on:mousedown=move |ev: WebMouseEvent| {
+        if show_headers {
+            let row_label = (row_index + 1).to_string();
+            let row_for_resize = row_index;
+            let row_for_select = row_index;
+            let select_cols_for_row = preview_cols;
+            let initial_height = row_heights.get(&row_index).copied().unwrap_or(1.6);
+            body_cells.push(
+                view! {
+                    <div
+                        class="onecalc-array-browser__header onecalc-array-browser__row-header"
+                        data-row=row_index.to_string()
+                        title="Click to select row · Shift+click to extend"
+                        on:click=move |ev: WebMouseEvent| {
                             ev.prevent_default();
                             ev.stop_propagation();
-                            start_row_resize(state, row_for_resize, initial_height, ev.client_y());
+                            select_row(
+                                state,
+                                row_for_select,
+                                select_cols_for_row,
+                                ev.shift_key(),
+                            );
                         }
-                    ></span>
-                </div>
-            }
-            .into_any(),
-        );
+                    >
+                        <span class="onecalc-array-browser__header-label">{row_label}</span>
+                        <span
+                            class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--row"
+                            title="Drag to resize row"
+                            on:mousedown=move |ev: WebMouseEvent| {
+                                ev.prevent_default();
+                                ev.stop_propagation();
+                                start_row_resize(state, row_for_resize, initial_height, ev.client_y());
+                            }
+                        ></span>
+                    </div>
+                }
+                .into_any(),
+            );
+        }
         let row_len = row.len();
         for (col_index, cell_value) in row.into_iter().enumerate() {
             let format_for_cell = cell_format
@@ -3650,6 +3923,12 @@ fn render_array_browser(
                 if ev.ctrl_key() && (ev.key() == "c" || ev.key() == "C") {
                     ev.prevent_default();
                     copy_array_browser_selection_to_clipboard(state);
+                }
+                // Ctrl+A: select every cell in the visible preview
+                // window. Mirrors the corner-cell click affordance.
+                if ev.ctrl_key() && (ev.key() == "a" || ev.key() == "A") {
+                    ev.prevent_default();
+                    select_all_visible_cells(state, preview_rows, preview_cols);
                 }
                 // Ctrl + +/-/0: zoom keyboard shortcuts.
                 if ev.ctrl_key() && (ev.key() == "=" || ev.key() == "+") {
@@ -4117,6 +4396,70 @@ fn extend_block_selection_drag(
         };
         let next = ArrayBlockSelection::from_corners(prior.anchor_row, prior.anchor_col, row, col);
         let _ = crate::app::reducer::set_active_array_browser_selection(state, Some(next));
+    });
+}
+
+/// Select an entire column in the active array browser. Thin
+/// wrapper that reads the prior selection out of host state, calls
+/// the pure helper [`crate::app::reducer::compute_column_header_selection`],
+/// and stores the result. Plain click replaces the selection;
+/// Shift+click extends from the prior anchor.
+fn select_column(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    col: usize,
+    preview_rows: usize,
+    extend: bool,
+) {
+    state.update(|state| {
+        let prior = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection);
+        let next =
+            crate::app::reducer::compute_column_header_selection(prior, col, preview_rows, extend);
+        let _ = crate::app::reducer::set_active_array_browser_selection(state, next);
+    });
+}
+
+/// Select an entire row in the active array browser. Mirror of
+/// [`select_column`] — see
+/// [`crate::app::reducer::compute_row_header_selection`] for the
+/// computation rule.
+fn select_row(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    row: usize,
+    preview_cols: usize,
+    extend: bool,
+) {
+    state.update(|state| {
+        let prior = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection);
+        let next =
+            crate::app::reducer::compute_row_header_selection(prior, row, preview_cols, extend);
+        let _ = crate::app::reducer::set_active_array_browser_selection(state, next);
+    });
+}
+
+/// Select every cell in the visible preview window. Hooked up to
+/// the corner-cell click handler and the `Ctrl+A` keyboard
+/// shortcut. The selection covers exactly the rendered preview
+/// rectangle — if the bridge truncated the array, hidden cells
+/// remain unselected.
+fn select_all_visible_cells(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    preview_rows: usize,
+    preview_cols: usize,
+) {
+    let next =
+        crate::app::reducer::compute_select_all_visible_selection(preview_rows, preview_cols);
+    state.update(|state| {
+        let _ = crate::app::reducer::set_active_array_browser_selection(state, next);
     });
 }
 

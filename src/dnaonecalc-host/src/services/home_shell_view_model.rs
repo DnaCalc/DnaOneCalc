@@ -554,6 +554,15 @@ pub struct FormulaTabChip {
     /// dirty marker in the chip; close-with-dirty uses the same
     /// signal to decide whether to confirm.
     pub is_dirty: bool,
+    /// `true` when the user has begun an inline rename on this
+    /// chip. The renderer swaps the chip-name `<span>` for a
+    /// text input bound to `pending_rename_text`. Driven by
+    /// `WorkspaceShellState.renaming_formula_space_id`.
+    pub is_renaming: bool,
+    /// Buffered rename text — the value shown in the inline
+    /// input while `is_renaming == true`. Empty when the chip
+    /// is not being renamed.
+    pub rename_buffer: String,
 }
 
 /// View-model shape for the titlebar scenario breadcrumb + its
@@ -623,6 +632,12 @@ pub enum ScenarioBreadcrumbActionId {
     /// save-as" decision. The action id keeps the legacy name for
     /// stability in tests and persisted shells.
     Duplicate,
+    /// Begin an inline rename of the active formula's display
+    /// label. Surfaces the same input the tab-strip's
+    /// double-click-to-rename path uses; the breadcrumb is the
+    /// keyboard-discoverable entry point. Available for any
+    /// active formula — pinned, unpinned, or unsaved.
+    RenameActive,
     /// Pin the active formula. Only surfaced when the active
     /// formula is *not* already pinned.
     PinActive,
@@ -639,6 +654,7 @@ impl ScenarioBreadcrumbActionId {
             Self::SaveAs => "save-as",
             Self::Open => "open",
             Self::Duplicate => "duplicate",
+            Self::RenameActive => "rename-active",
             Self::PinActive => "pin-active",
             Self::UnpinActive => "unpin-active",
             Self::ManageScenarios => "manage-scenarios",
@@ -1431,6 +1447,11 @@ fn project_command_palette(state: &OneCalcHostState) -> CommandPaletteView {
             "Clone active formula",
             "",
         ),
+        (
+            ScenarioBreadcrumbActionId::RenameActive,
+            "Rename active formula…",
+            "",
+        ),
         (pin_action.0, pin_action.1, ""),
         (
             ScenarioBreadcrumbActionId::ManageScenarios,
@@ -1513,6 +1534,8 @@ fn project_command_palette(state: &OneCalcHostState) -> CommandPaletteView {
 /// it; an extra row of chrome would just take vertical space.
 fn project_formula_tab_strip(state: &OneCalcHostState) -> FormulaTabStripView {
     let active_id = state.workspace_shell.active_formula_space_id.as_ref();
+    let renaming_id = state.workspace_shell.renaming_formula_space_id.as_ref();
+    let pending_rename_text = state.workspace_shell.pending_rename_text.clone();
     let chips: Vec<FormulaTabChip> = state
         .workspace_shell
         .open_formula_space_order
@@ -1521,6 +1544,7 @@ fn project_formula_tab_strip(state: &OneCalcHostState) -> FormulaTabStripView {
             let space = state.formula_spaces.get(id)?;
             let is_active = active_id.is_some_and(|active| active == id);
             let is_pinned = state.workspace_shell.pinned_formula_space_ids.contains(id);
+            let is_renaming = renaming_id.is_some_and(|target| target == id);
             // The chip's display name follows the same rule as the
             // breadcrumb: prefer the user's `scenario_label`,
             // falling back to the synthetic id when the label is
@@ -1541,16 +1565,25 @@ fn project_formula_tab_strip(state: &OneCalcHostState) -> FormulaTabStripView {
                 Some(committed) => committed != space.raw_entered_cell_text.as_str(),
                 None => !space.raw_entered_cell_text.is_empty(),
             };
+            let rename_buffer = if is_renaming {
+                pending_rename_text.clone()
+            } else {
+                String::new()
+            };
             Some(FormulaTabChip {
                 formula_space_id: id.as_str().to_string(),
                 display_name,
                 is_active,
                 is_pinned,
                 is_dirty,
+                is_renaming,
+                rename_buffer,
             })
         })
         .collect();
-    let is_visible = chips.len() > 1;
+    // Strip stays visible when a rename is in progress even if
+    // there's only one tab — the user needs to see the input.
+    let is_visible = chips.len() > 1 || renaming_id.is_some();
     FormulaTabStripView { is_visible, chips }
 }
 
@@ -2480,6 +2513,12 @@ fn project_scenario_breadcrumb(
             // User-visible label per WS-14 §1; the action id keeps
             // the legacy `Duplicate` for stability.
             label: "Clone",
+            chord_label: "",
+            seam_id: None,
+        },
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::RenameActive,
+            label: "Rename…",
             chord_label: "",
             seam_id: None,
         },
@@ -3850,6 +3889,7 @@ mod tests {
                 ScenarioBreadcrumbActionId::SaveAs,
                 ScenarioBreadcrumbActionId::Open,
                 ScenarioBreadcrumbActionId::Duplicate,
+                ScenarioBreadcrumbActionId::RenameActive,
                 ScenarioBreadcrumbActionId::PinActive,
                 ScenarioBreadcrumbActionId::ManageScenarios,
             ],

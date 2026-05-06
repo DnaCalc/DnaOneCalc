@@ -250,6 +250,87 @@ pub fn set_active_array_browser_selection(
     true
 }
 
+/// Compute the next block selection for a column-header click. With
+/// `extend = false` (plain click), the result is a strip covering
+/// rows `0..=last_row` in the chosen column. With `extend = true`
+/// (Shift+click), the prior selection's anchor is preserved and
+/// the focus moves to `(last_row, col)`, growing the selection
+/// across multiple columns. Returns `None` when `preview_rows == 0`.
+pub fn compute_column_header_selection(
+    prior: Option<crate::state::ArrayBlockSelection>,
+    col: usize,
+    preview_rows: usize,
+    extend: bool,
+) -> Option<crate::state::ArrayBlockSelection> {
+    if preview_rows == 0 {
+        return None;
+    }
+    let last_row = preview_rows.saturating_sub(1);
+    let next = if extend {
+        match prior {
+            Some(prior) => crate::state::ArrayBlockSelection::from_corners(
+                prior.anchor_row,
+                prior.anchor_col,
+                last_row,
+                col,
+            ),
+            None => crate::state::ArrayBlockSelection::from_corners(0, col, last_row, col),
+        }
+    } else {
+        crate::state::ArrayBlockSelection::from_corners(0, col, last_row, col)
+    };
+    Some(next)
+}
+
+/// Compute the next block selection for a row-header click. Mirror
+/// of `compute_column_header_selection`: plain click claims row
+/// `row` columns `0..=last_col`; Shift+click preserves the anchor
+/// and extends the focus right to `(row, last_col)`. Returns
+/// `None` when `preview_cols == 0`.
+pub fn compute_row_header_selection(
+    prior: Option<crate::state::ArrayBlockSelection>,
+    row: usize,
+    preview_cols: usize,
+    extend: bool,
+) -> Option<crate::state::ArrayBlockSelection> {
+    if preview_cols == 0 {
+        return None;
+    }
+    let last_col = preview_cols.saturating_sub(1);
+    let next = if extend {
+        match prior {
+            Some(prior) => crate::state::ArrayBlockSelection::from_corners(
+                prior.anchor_row,
+                prior.anchor_col,
+                row,
+                last_col,
+            ),
+            None => crate::state::ArrayBlockSelection::from_corners(row, 0, row, last_col),
+        }
+    } else {
+        crate::state::ArrayBlockSelection::from_corners(row, 0, row, last_col)
+    };
+    Some(next)
+}
+
+/// Compute the "select all visible cells" block — the rectangle
+/// covering rows `0..=preview_rows-1` and columns
+/// `0..=preview_cols-1`. Returns `None` for an empty preview window.
+pub fn compute_select_all_visible_selection(
+    preview_rows: usize,
+    preview_cols: usize,
+) -> Option<crate::state::ArrayBlockSelection> {
+    if preview_rows == 0 || preview_cols == 0 {
+        return None;
+    }
+    Some(crate::state::ArrayBlockSelection::from_corners(
+        0,
+        0,
+        preview_rows.saturating_sub(1),
+        preview_cols.saturating_sub(1),
+    ))
+}
+
 /// Override the displayed width (in rem) for a single column in
 /// the active formula's array browser. Clamped so the column
 /// stays useful.
@@ -978,6 +1059,69 @@ mod tests {
         assert!(!set_active_array_browser_selection(&mut state, Some(sel)));
         // Clearing returns true.
         assert!(set_active_array_browser_selection(&mut state, None));
+    }
+
+    #[test]
+    fn compute_column_header_selection_replaces_when_not_extending() {
+        // Plain click on column 2 with a 5-row preview should claim
+        // exactly column 2, all 5 rows, with the anchor at (0, 2).
+        let next = compute_column_header_selection(None, 2, 5, false).expect("selection");
+        assert_eq!(next.normalized(), (0, 4, 2, 2));
+        assert_eq!(next.anchor_row, 0);
+        assert_eq!(next.anchor_col, 2);
+        // A prior selection has no influence on a non-extending click.
+        let prior = crate::state::ArrayBlockSelection::from_corners(1, 0, 3, 1);
+        let next = compute_column_header_selection(Some(prior), 2, 5, false).expect("selection");
+        assert_eq!(next.normalized(), (0, 4, 2, 2));
+    }
+
+    #[test]
+    fn compute_column_header_selection_extends_from_prior_anchor() {
+        let prior = crate::state::ArrayBlockSelection::from_corners(0, 1, 2, 1);
+        let next = compute_column_header_selection(Some(prior), 4, 5, true).expect("selection");
+        // Anchor stays at (0, 1) from the prior; focus moves to (4, 4).
+        assert_eq!(next.anchor_row, 0);
+        assert_eq!(next.anchor_col, 1);
+        assert_eq!(next.focus_row, 4);
+        assert_eq!(next.focus_col, 4);
+    }
+
+    #[test]
+    fn compute_column_header_selection_extend_without_prior_acts_as_replace() {
+        let next = compute_column_header_selection(None, 3, 5, true).expect("selection");
+        assert_eq!(next.normalized(), (0, 4, 3, 3));
+    }
+
+    #[test]
+    fn compute_row_header_selection_replaces_when_not_extending() {
+        let next = compute_row_header_selection(None, 2, 4, false).expect("selection");
+        assert_eq!(next.normalized(), (2, 2, 0, 3));
+        assert_eq!(next.anchor_row, 2);
+        assert_eq!(next.anchor_col, 0);
+    }
+
+    #[test]
+    fn compute_row_header_selection_extends_from_prior_anchor() {
+        let prior = crate::state::ArrayBlockSelection::from_corners(1, 0, 1, 2);
+        let next = compute_row_header_selection(Some(prior), 4, 4, true).expect("selection");
+        assert_eq!(next.anchor_row, 1);
+        assert_eq!(next.anchor_col, 0);
+        assert_eq!(next.focus_row, 4);
+        assert_eq!(next.focus_col, 3);
+    }
+
+    #[test]
+    fn compute_select_all_visible_selection_covers_whole_preview() {
+        let next = compute_select_all_visible_selection(3, 4).expect("selection");
+        assert_eq!(next.normalized(), (0, 2, 0, 3));
+    }
+
+    #[test]
+    fn compute_helpers_return_none_for_empty_preview() {
+        assert!(compute_column_header_selection(None, 0, 0, false).is_none());
+        assert!(compute_row_header_selection(None, 0, 0, false).is_none());
+        assert!(compute_select_all_visible_selection(0, 5).is_none());
+        assert!(compute_select_all_visible_selection(5, 0).is_none());
     }
 
     #[test]

@@ -155,6 +155,16 @@ pub struct WorkspaceShellState {
     pub recent_formula_spaces: BTreeMap<FormulaSpaceId, ClosedFormulaSpaceRecord>,
     pub formula_space_modes: BTreeMap<FormulaSpaceId, AppMode>,
     pub navigation_selection: WorkspaceNavigationSelection,
+    /// In-progress inline rename of a formula's display label.
+    /// `Some(id)` means the tab strip should render the chip with
+    /// `id` as a text input instead of static text; `None` means
+    /// no rename is currently active. Driven by
+    /// `reducer::begin_formula_rename` / `commit_formula_rename` /
+    /// `cancel_formula_rename`. Transient — never persisted.
+    pub renaming_formula_space_id: Option<FormulaSpaceId>,
+    /// Buffered text the user is typing into the rename input.
+    /// Empty when no rename is active.
+    pub pending_rename_text: String,
 }
 
 impl Default for WorkspaceShellState {
@@ -167,6 +177,8 @@ impl Default for WorkspaceShellState {
             recent_formula_spaces: BTreeMap::new(),
             formula_space_modes: BTreeMap::new(),
             navigation_selection: WorkspaceNavigationSelection::Overview,
+            renaming_formula_space_id: None,
+            pending_rename_text: String::new(),
         }
     }
 }
@@ -270,6 +282,25 @@ pub struct FormulaSpaceState {
     /// switching back keeps the user's visual context. WS-14
     /// array-browser slice: zoom + selection + resize.
     pub array_browser: ArrayBrowserSessionState,
+    /// Wall-clock duration (in milliseconds) of the most recent
+    /// runtime-included bridge round-trip for this formula. `None`
+    /// before the first runtime pass, `Some(_)` once we have a
+    /// data point. Drives the auto-debounce decision: if the last
+    /// pass took longer than `AUTO_DEBOUNCE_THRESHOLD_MS`, the
+    /// next text-input events are run with
+    /// `skip_runtime_evaluation = true` and a flush is scheduled
+    /// instead of running runtime per-keystroke. Cleared back to
+    /// `None` only on a deliberate reset (formula reload, etc.).
+    pub last_bridge_pass_elapsed_ms: Option<f64>,
+    /// Runtime-pass-pending flag. Set when an input event runs
+    /// with `skip_runtime_evaluation = true` due to the
+    /// auto-debounce policy (i.e. the last runtime pass was
+    /// expensive). The UI's idle-window timer calls
+    /// `flush_pending_runtime_recalc` to clear it; the result
+    /// hero renders a "computing…" badge while it's true.
+    /// Manual recalc mode also sets this when text changes
+    /// without a runtime pass — same surface, different driver.
+    pub pending_runtime_recalc: bool,
 }
 
 /// Transient per-formula state for the array-result browser.
@@ -560,6 +591,8 @@ impl FormulaSpaceState {
             load_diagnostics: Vec::new(),
             formatting: FormulaFormattingState::default(),
             array_browser: ArrayBrowserSessionState::default(),
+            last_bridge_pass_elapsed_ms: None,
+            pending_runtime_recalc: false,
         }
     }
 

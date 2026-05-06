@@ -3028,14 +3028,24 @@ pub const ONECALC_THEME_CSS: &str = r#"
   background: var(--oc-color-surface);
   font-family: var(--oc-font-ui);
   font-size: 0.78rem;
+  font-weight: 500;
   max-width: 240px;
   min-width: 72px;
+  /* Fixed height across active and inactive states. The strip's
+     parent uses `align-items: stretch`, so any chip whose
+     intrinsic content height differs from its peers (e.g. when
+     `font-weight` shifts glyph metrics, when the dirty / pinned
+     markers appear, or when the close button line-height drags
+     the cross-axis up) would otherwise pull the whole strip
+     to that taller height when activated. Locking height here
+     keeps the strip visually stable across tab switches. */
+  min-height: 28px;
+  box-sizing: border-box;
 }
 
 .onecalc-home-shell__tab-strip-chip[data-is-active="true"] {
   background: var(--oc-color-accent-soft);
   border-color: var(--oc-color-accent);
-  font-weight: 500;
 }
 
 .onecalc-home-shell__tab-strip-chip-label {
@@ -3057,6 +3067,23 @@ pub const ONECALC_THEME_CSS: &str = r#"
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__tab-strip-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: var(--oc-color-bg);
+  font: inherit;
+  color: inherit;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.onecalc-home-shell__tab-strip-rename-input:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: -2px;
 }
 
 .onecalc-home-shell__tab-strip-pin {
@@ -4850,12 +4877,14 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-array-browser__column-header {
   top: 0;
+  cursor: pointer;
 }
 
 .onecalc-array-browser__row-header {
   left: 0;
   border-right: 1px solid var(--oc-color-card-edge);
   border-bottom: 1px solid var(--oc-color-border);
+  cursor: pointer;
 }
 
 .onecalc-array-browser__corner {
@@ -4863,6 +4892,13 @@ pub const ONECALC_THEME_CSS: &str = r#"
   left: 0;
   z-index: 2;
   border-right: 1px solid var(--oc-color-card-edge);
+  cursor: pointer;
+}
+
+.onecalc-array-browser__column-header:hover,
+.onecalc-array-browser__row-header:hover,
+.onecalc-array-browser__corner:hover {
+  background: var(--oc-color-accent-soft);
 }
 
 .onecalc-array-browser__cell {

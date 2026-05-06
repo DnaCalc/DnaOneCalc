@@ -69,6 +69,65 @@ pub fn rename_formula_space(
     }
 }
 
+/// Open the inline-rename input on the tab strip for the given
+/// formula. Seeds `pending_rename_text` with the current label so
+/// the input shows the existing name on focus. No-op (returns
+/// `false`) when the formula doesn't exist or when a rename is
+/// already in progress for a different formula — caller is expected
+/// to commit / cancel any in-flight rename first.
+pub fn begin_formula_rename(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
+    let id = FormulaSpaceId::new(formula_space_id.to_string());
+    let Some(formula_space) = state.formula_spaces.get(&id) else {
+        return false;
+    };
+    let current_label = formula_space.context.scenario_label.clone();
+    state.workspace_shell.renaming_formula_space_id = Some(id);
+    state.workspace_shell.pending_rename_text = current_label;
+    true
+}
+
+/// Update the buffered rename text as the user types into the
+/// inline rename input. The input event uses this; commit only
+/// happens on Enter / blur via `commit_formula_rename`.
+pub fn update_pending_rename_text(state: &mut OneCalcHostState, next_text: impl Into<String>) {
+    state.workspace_shell.pending_rename_text = next_text.into();
+}
+
+/// Commit the in-flight rename. Trims whitespace; refuses to commit
+/// an empty label (the rename UI keeps the input open and the
+/// formula keeps its previous label). Returns `true` when the
+/// formula's `scenario_label` actually changed.
+pub fn commit_formula_rename(state: &mut OneCalcHostState) -> bool {
+    let Some(id) = state.workspace_shell.renaming_formula_space_id.clone() else {
+        return false;
+    };
+    let next_label = state.workspace_shell.pending_rename_text.trim().to_string();
+    if next_label.is_empty() {
+        // Don't commit a blank rename — leave the input open so
+        // the user can either type a real label or hit Esc to
+        // cancel back to the previous one.
+        return false;
+    }
+    let changed = match state.formula_spaces.get_mut(&id) {
+        Some(formula_space) => {
+            let prior = formula_space.context.scenario_label.clone();
+            formula_space.context.scenario_label = next_label;
+            formula_space.context.scenario_label != prior
+        }
+        None => false,
+    };
+    state.workspace_shell.renaming_formula_space_id = None;
+    state.workspace_shell.pending_rename_text.clear();
+    changed
+}
+
+/// Cancel an in-flight rename, discarding the buffered text. The
+/// formula's `scenario_label` is left unchanged.
+pub fn cancel_formula_rename(state: &mut OneCalcHostState) {
+    state.workspace_shell.renaming_formula_space_id = None;
+    state.workspace_shell.pending_rename_text.clear();
+}
+
 pub fn duplicate_formula_space(
     state: &mut OneCalcHostState,
     formula_space_id: &str,
@@ -439,6 +498,90 @@ mod tests {
     fn rename_rejects_empty_label() {
         let mut state = fresh_state_with_space("space-1");
         assert!(!rename_formula_space(&mut state, "space-1", "   "));
+    }
+
+    #[test]
+    fn begin_rename_seeds_buffer_with_existing_label_and_marks_target() {
+        let mut state = fresh_state_with_space("space-1");
+        let id = FormulaSpaceId::new("space-1".to_string());
+        state
+            .formula_spaces
+            .get_mut(&id)
+            .unwrap()
+            .context
+            .scenario_label = "My formula".to_string();
+
+        assert!(begin_formula_rename(&mut state, "space-1"));
+        assert_eq!(
+            state.workspace_shell.renaming_formula_space_id.as_ref(),
+            Some(&id),
+        );
+        assert_eq!(state.workspace_shell.pending_rename_text, "My formula");
+    }
+
+    #[test]
+    fn begin_rename_returns_false_for_unknown_id() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(!begin_formula_rename(&mut state, "does-not-exist"));
+        assert!(state.workspace_shell.renaming_formula_space_id.is_none());
+    }
+
+    #[test]
+    fn commit_rename_writes_buffer_and_clears_state() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(begin_formula_rename(&mut state, "space-1"));
+        update_pending_rename_text(&mut state, "Renamed live");
+        assert!(commit_formula_rename(&mut state));
+        let id = FormulaSpaceId::new("space-1".to_string());
+        assert_eq!(
+            state
+                .formula_spaces
+                .get(&id)
+                .unwrap()
+                .context
+                .scenario_label,
+            "Renamed live",
+        );
+        assert!(state.workspace_shell.renaming_formula_space_id.is_none());
+        assert!(state.workspace_shell.pending_rename_text.is_empty());
+    }
+
+    #[test]
+    fn commit_rename_with_empty_buffer_keeps_input_open() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(begin_formula_rename(&mut state, "space-1"));
+        update_pending_rename_text(&mut state, "   ");
+        assert!(!commit_formula_rename(&mut state));
+        // The rename remains in progress so the user can type a real
+        // label or hit Esc to cancel.
+        assert!(state.workspace_shell.renaming_formula_space_id.is_some());
+    }
+
+    #[test]
+    fn cancel_rename_discards_buffer_and_leaves_label() {
+        let mut state = fresh_state_with_space("space-1");
+        let id = FormulaSpaceId::new("space-1".to_string());
+        state
+            .formula_spaces
+            .get_mut(&id)
+            .unwrap()
+            .context
+            .scenario_label = "Original".to_string();
+
+        assert!(begin_formula_rename(&mut state, "space-1"));
+        update_pending_rename_text(&mut state, "Discarded");
+        cancel_formula_rename(&mut state);
+        assert_eq!(
+            state
+                .formula_spaces
+                .get(&id)
+                .unwrap()
+                .context
+                .scenario_label,
+            "Original"
+        );
+        assert!(state.workspace_shell.renaming_formula_space_id.is_none());
+        assert!(state.workspace_shell.pending_rename_text.is_empty());
     }
 
     #[test]

@@ -4,6 +4,7 @@ use crate::adapters::oxfml::{
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
+use crate::services::wall_clock::wall_clock_now_ms;
 use crate::state::{
     CompletionHelpState, FormulaArrayPreviewState, FormulaSpaceCollectionState, FormulaSpaceState,
     ProjectionTruthSource,
@@ -24,6 +25,20 @@ impl EditorSessionService {
             .ok_or_else(|| {
                 EditorSessionError::UnknownFormulaSpace(intent.formula_space_id.clone())
             })?;
+        let skip_runtime_evaluation = intent.skip_runtime_evaluation;
+        // Snapshot the runtime-derived fields of the prior document
+        // before the bridge call. When the bridge runs without a
+        // runtime pass (caret-only navigation, ManualRecalc, or
+        // auto-debounce), it reports `value_presentation = None`
+        // and a single-node fallback `formula_walk`. The visible
+        // result hero would blank out unless we restore these
+        // fields from the previous document. The text and
+        // syntax-overlay fields always come from the new document
+        // (they reflect the new caret position / latest parse).
+        let previous_runtime_snapshot = formula_space
+            .editor_document
+            .as_ref()
+            .map(SkippedRuntimeFields::capture);
         let request = FormulaEditRequest {
             formula_stable_id: intent.formula_stable_id,
             entered_text: intent.entered_text,
@@ -35,14 +50,37 @@ impl EditorSessionService {
             analysis_stage: intent.analysis_stage,
             formatting_request: intent.formatting_request,
             scenario_policy: intent.scenario_policy,
-            skip_runtime_evaluation: intent.skip_runtime_evaluation,
+            skip_runtime_evaluation,
             recalc_mode: intent.recalc_mode,
             language_tag: intent.language_tag,
         };
+        // Wall-clock the bridge round-trip so the host can detect
+        // "expensive runtime pass" and flip into auto-debounced
+        // typing. We only record the elapsed time when the runtime
+        // pass actually ran; caret-only events (skip_runtime=true)
+        // would skew the timing low. The bridge's input-equality
+        // short-circuit can also return in microseconds; that's a
+        // legitimate cheap-pass observation we want to capture so
+        // a fast cached round-trip clears the auto-debounce flag.
+        let start_ms = wall_clock_now_ms();
         let result = bridge
             .apply_formula_edit(request)
             .map_err(EditorSessionError::Bridge)?;
-        Self::apply_editor_document(formula_spaces, &intent.formula_space_id, result.document)
+        let elapsed_ms = wall_clock_now_ms() - start_ms;
+        let mut document = result.document;
+        if skip_runtime_evaluation {
+            if let Some(snapshot) = previous_runtime_snapshot.as_ref() {
+                snapshot.restore_into(&mut document);
+            }
+        }
+        Self::apply_editor_document(formula_spaces, &intent.formula_space_id, document)?;
+        if !skip_runtime_evaluation {
+            if let Some(formula_space) = formula_spaces.get_mut(&intent.formula_space_id) {
+                formula_space.last_bridge_pass_elapsed_ms = Some(elapsed_ms);
+                formula_space.pending_runtime_recalc = false;
+            }
+        }
+        Ok(())
     }
 
     pub fn apply_editor_document(
@@ -55,6 +93,89 @@ impl EditorSessionService {
             .ok_or_else(|| EditorSessionError::UnknownFormulaSpace(formula_space_id.clone()))?;
         update_formula_space_from_editor_document(formula_space, document);
         Ok(())
+    }
+}
+
+/// Snapshot of the runtime-derived fields on an `EditorDocument`
+/// taken before a skip-runtime bridge round-trip. Restored into
+/// the bridge's response so caret-only navigation (mouse click,
+/// arrow keys) and auto-debounced typing don't blank out the
+/// result hero.
+///
+/// The bridge's skip-runtime path produces a single-node
+/// fallback `formula_walk` and clears `value_presentation` /
+/// `eval_summary` / `provenance_summary` to "edit-only" defaults
+/// (see `live_bridge::build_editor_document`). For the user, the
+/// invariant we want to preserve is "the result they were just
+/// looking at stays on screen until the next runtime pass either
+/// confirms or replaces it". This struct is the ferry that holds
+/// that data.
+#[derive(Debug, Clone, PartialEq)]
+struct SkippedRuntimeFields {
+    value_presentation: Option<FormulaValuePresentation>,
+    formula_walk: Vec<crate::adapters::oxfml::FormulaWalkNode>,
+    eval_summary: Option<crate::adapters::oxfml::EvalSummary>,
+    bind_summary: Option<crate::adapters::oxfml::BindSummary>,
+    provenance_summary: Option<crate::adapters::oxfml::ProvenanceSummary>,
+}
+
+impl SkippedRuntimeFields {
+    fn capture(previous: &EditorDocument) -> Self {
+        Self {
+            value_presentation: previous.value_presentation.clone(),
+            formula_walk: previous.formula_walk.clone(),
+            eval_summary: previous.eval_summary.clone(),
+            bind_summary: previous.bind_summary.clone(),
+            provenance_summary: previous.provenance_summary.clone(),
+        }
+    }
+
+    /// Restore the snapshot only when the new document carries
+    /// the bridge's edit-only defaults. If the new document
+    /// already has runtime data (e.g. the bridge ran runtime
+    /// despite our `skip_runtime_evaluation = true` request, or
+    /// the bridge implementation grew a path that preserves
+    /// runtime fields itself), we leave it alone — the new
+    /// document is by definition the freshest truth.
+    fn restore_into(&self, document: &mut EditorDocument) {
+        if document.value_presentation.is_none() && self.value_presentation.is_some() {
+            document.value_presentation = self.value_presentation.clone();
+        }
+        // The bridge's edit-only fallback `formula_walk` is a
+        // single CellEntry node. Recognise that shape and replace
+        // it with the previous walk; otherwise keep the new walk
+        // (it might carry richer parse data the previous didn't).
+        if document.formula_walk.len() <= 1
+            && document
+                .formula_walk
+                .first()
+                .map(|node| node.label == "CellEntry")
+                .unwrap_or(true)
+            && !self.formula_walk.is_empty()
+        {
+            document.formula_walk = self.formula_walk.clone();
+        }
+        if let Some(eval_summary) = document.eval_summary.as_ref() {
+            if eval_summary.duration_text == "edit-only" {
+                document.eval_summary = self.eval_summary.clone();
+            }
+        }
+        if let Some(bind_summary) = document.bind_summary.as_ref() {
+            if bind_summary.reference_count == 0 {
+                if let Some(prev_bind) = self.bind_summary.as_ref() {
+                    if prev_bind.reference_count > 0 {
+                        document.bind_summary = self.bind_summary.clone();
+                    }
+                }
+            }
+        }
+        if let Some(provenance_summary) = document.provenance_summary.as_ref() {
+            if provenance_summary.profile_summary == "OxFml editor"
+                && self.provenance_summary.is_some()
+            {
+                document.provenance_summary = self.provenance_summary.clone();
+            }
+        }
     }
 }
 
