@@ -2882,7 +2882,13 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-home-shell {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* Four rows: titlebar (auto), tab strip (auto), body (1fr —
+     the 1fr lives on the body so the tab strip stays its
+     natural height even when the strip's `align-items: stretch`
+     would otherwise inflate it), status foot (auto). When the
+     tab strip is hidden the renderer emits an empty fragment
+     and the grid collapses that row to 0px automatically. */
+  grid-template-rows: auto auto 1fr auto;
   min-height: 100vh;
   font-family: var(--oc-font-ui);
   color: var(--oc-color-ink);
@@ -2910,6 +2916,36 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: rgba(230, 239, 239, 0.6);
   font-family: var(--oc-font-mono);
   font-size: 12px;
+}
+
+.onecalc-home-shell__titlebar-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6efef;
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.onecalc-home-shell__titlebar-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.onecalc-home-shell__titlebar-action:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 1px;
+}
+
+.onecalc-home-shell__titlebar-action-glyph {
+  font-size: 0.95rem;
+  line-height: 1;
 }
 
 /* Command palette — Ctrl+K overlay surface. Modal centered on
@@ -5219,31 +5255,20 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 /* Display options — reactive to the toolbar toggles. The grid
-   lines toggle simply hides cell borders; alternating rows
-   pulses every other row's background; headers can be hidden
-   for a compact reading mode. */
+   lines toggle hides cell borders; alternating rows tints odd
+   rows (every cell on a row carries `data-row-parity="even|odd"`
+   so the rule scopes per-row regardless of how many columns the
+   array has). Headers-off is handled by the renderer skipping
+   the header DOM + the leading row-number track entirely — no
+   CSS shim needed. */
 .onecalc-array-browser[data-show-grid-lines="false"] .onecalc-array-browser__cell {
   border-bottom: none;
   border-right: none;
 }
 
 .onecalc-array-browser[data-show-alternating-rows="true"]
-  .onecalc-array-browser__cell:not(.onecalc-array-browser__cell--selected) {
-  background-image: linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0) 50%,
-    rgba(36, 93, 90, 0.04) 50%
-  );
-  background-size: 100% 200%;
-}
-
-.onecalc-array-browser[data-show-headers="false"]
-  .onecalc-array-browser__column-header,
-.onecalc-array-browser[data-show-headers="false"]
-  .onecalc-array-browser__row-header,
-.onecalc-array-browser[data-show-headers="false"]
-  .onecalc-array-browser__corner {
-  display: none;
+  .onecalc-array-browser__cell[data-row-parity="odd"]:not(.onecalc-array-browser__cell--selected) {
+  background-color: rgba(36, 93, 90, 0.05);
 }
 
 /* Per-cell CF carrier (W071 + W072): cells become positioned

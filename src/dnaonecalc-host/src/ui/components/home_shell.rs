@@ -1270,9 +1270,26 @@ pub fn HomeShell(
                     on_scenario_entry_select,
                     on_scenario_entry_pin_toggle,
                 )}
-                <span class="onecalc-home-shell__titlebar-hint" aria-hidden="true">
-                    "Ctrl+P · command palette"
-                </span>
+                // Command-palette button. Ctrl+P / Ctrl+K collide
+                // with browser-reserved chords (print / search), so
+                // a click target in the chrome is the reliable
+                // entry point. The keyboard chord still works as a
+                // best-effort accelerator on Tauri / dev tools but
+                // is no longer the primary surface.
+                <button
+                    type="button"
+                    class="onecalc-home-shell__titlebar-action"
+                    title="Command palette"
+                    aria-label="open command palette"
+                    on:click=move |_| {
+                        state.update(|state| {
+                            let _ = crate::app::reducer::toggle_command_palette(state);
+                        });
+                    }
+                >
+                    <span class="onecalc-home-shell__titlebar-action-glyph" aria-hidden="true">"⌘"</span>
+                    <span class="onecalc-home-shell__titlebar-action-label">"Command palette"</span>
+                </button>
             </header>
 
             {move || render_formula_tab_strip(
@@ -4177,6 +4194,7 @@ fn render_array_browser(
         // Pad the final row if it's shorter than the column count
         // (defensive — the bridge already pads, but the cell count
         // attribute only counts cells it emitted).
+        let row_parity_attr = if row_index % 2 == 0 { "even" } else { "odd" };
         for col_pad in row_len..preview_cols {
             body_cells.push(
                 view! {
@@ -4184,6 +4202,7 @@ fn render_array_browser(
                         class="onecalc-array-browser__cell onecalc-array-browser__cell--empty"
                         data-row=row_index.to_string()
                         data-col=col_pad.to_string()
+                        data-row-parity=row_parity_attr
                     ></div>
                 }
                 .into_any(),
@@ -4213,7 +4232,15 @@ fn render_array_browser(
         view! { <></> }.into_any()
     };
     let zoom_attr = format!("{:.2}", zoom);
-    let zoom_style = format!("font-size: {:.2}rem;", zoom);
+    // Use the `zoom` CSS property so the whole grid scales — cell
+    // padding, column widths (in rem), row heights, fonts, gaps,
+    // borders. `font-size` alone only scales glyphs but leaves
+    // rem-based column widths fixed (rem is root-relative), which
+    // is what produced the "only fonts grow" complaint. `zoom` is
+    // supported in Chrome/Edge/Safari and shipped in Firefox
+    // since 126; on the few engines that still ignore it, the
+    // grid simply renders at 1× — degraded but not broken.
+    let zoom_style = format!("zoom: {:.2};", zoom);
     let grid_lines_attr = if display.show_grid_lines {
         "true"
     } else {
@@ -4644,11 +4671,13 @@ fn render_array_browser_cell(
     });
 
     let selected_attr = if is_selected { "true" } else { "false" };
+    let row_parity_attr = if row_index % 2 == 0 { "even" } else { "odd" };
     view! {
         <div
             class=cell_classes
             data-row=row_index.to_string()
             data-col=col_index.to_string()
+            data-row-parity=row_parity_attr
             data-cf-applied=if cell_format.is_some() { "true" } else { "false" }
             data-icon-set=icon_attr
             data-is-selected=selected_attr
@@ -4811,10 +4840,11 @@ fn select_all_visible_cells(
 
 /// Begin a column-resize gesture. Installs document-level
 /// mousemove + mouseup handlers that translate horizontal cursor
-/// motion into width adjustments on the dragged column. The
-/// initial width is captured up-front (rather than re-read every
-/// move) so the dragging math reduces to `delta = px_to_rem
-/// (cursor_x - mousedown_x)`.
+/// motion into width adjustments on the dragged column. When the
+/// dragged column is part of a multi-column selection, every
+/// column in that selection resizes together — each column moves
+/// to its own initial width plus the same delta, so the user's
+/// proportional layout survives the drag.
 #[cfg(target_arch = "wasm32")]
 fn start_column_resize(
     state: RwSignal<crate::state::OneCalcHostState>,
@@ -4822,7 +4852,8 @@ fn start_column_resize(
     initial_rem: f32,
     initial_x: i32,
 ) {
-    install_resize_drag(state, ResizeAxis::Column(column), initial_rem, initial_x);
+    let targets = resolve_column_resize_targets(state, column, initial_rem);
+    install_resize_drag(state, ResizeAxis::Columns(targets), initial_x);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4841,7 +4872,8 @@ fn start_row_resize(
     initial_rem: f32,
     initial_y: i32,
 ) {
-    install_resize_drag(state, ResizeAxis::Row(row), initial_rem, initial_y);
+    let targets = resolve_row_resize_targets(state, row, initial_rem);
+    install_resize_drag(state, ResizeAxis::Rows(targets), initial_y);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4853,18 +4885,129 @@ fn start_row_resize(
 ) {
 }
 
+/// One axis-target captured at drag start. Holds the (index,
+/// initial-rem) pair so the drag closure can compute every
+/// target's final size from `initial + delta` independently —
+/// preserving any pre-existing per-column / per-row width
+/// differences across a multi-track resize.
 #[cfg(target_arch = "wasm32")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+struct ResizeTarget {
+    index: usize,
+    initial_rem: f32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
 enum ResizeAxis {
-    Column(usize),
-    Row(usize),
+    Columns(Vec<ResizeTarget>),
+    Rows(Vec<ResizeTarget>),
+}
+
+/// Build the list of columns to resize together when the user
+/// drags column `column`'s resize handle. When the column is
+/// part of a multi-column selection, the whole selection range
+/// resizes; each column captures its own pre-drag width so the
+/// drag preserves any existing relative widths.
+#[cfg(target_arch = "wasm32")]
+fn resolve_column_resize_targets(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    column: usize,
+    initial_rem: f32,
+) -> Vec<ResizeTarget> {
+    state.with_untracked(|state| {
+        let space = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id));
+        let multi_column_selection = space
+            .and_then(|space| space.array_browser.selection)
+            .filter(|selection| {
+                let (_, _, c0, c1) = selection.normalized();
+                c0 <= column && column <= c1 && c1 > c0
+            });
+        match multi_column_selection {
+            Some(selection) => {
+                let (_, _, c0, c1) = selection.normalized();
+                let widths = space
+                    .map(|space| &space.array_browser.column_widths_rem)
+                    .cloned()
+                    .unwrap_or_default();
+                (c0..=c1)
+                    .map(|index| {
+                        let captured = if index == column {
+                            initial_rem
+                        } else {
+                            widths.get(&index).copied().unwrap_or(4.0)
+                        };
+                        ResizeTarget {
+                            index,
+                            initial_rem: captured,
+                        }
+                    })
+                    .collect()
+            }
+            None => vec![ResizeTarget {
+                index: column,
+                initial_rem,
+            }],
+        }
+    })
+}
+
+/// Mirror of [`resolve_column_resize_targets`] for rows.
+#[cfg(target_arch = "wasm32")]
+fn resolve_row_resize_targets(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    row: usize,
+    initial_rem: f32,
+) -> Vec<ResizeTarget> {
+    state.with_untracked(|state| {
+        let space = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id));
+        let multi_row_selection = space
+            .and_then(|space| space.array_browser.selection)
+            .filter(|selection| {
+                let (r0, r1, _, _) = selection.normalized();
+                r0 <= row && row <= r1 && r1 > r0
+            });
+        match multi_row_selection {
+            Some(selection) => {
+                let (r0, r1, _, _) = selection.normalized();
+                let heights = space
+                    .map(|space| &space.array_browser.row_heights_rem)
+                    .cloned()
+                    .unwrap_or_default();
+                (r0..=r1)
+                    .map(|index| {
+                        let captured = if index == row {
+                            initial_rem
+                        } else {
+                            heights.get(&index).copied().unwrap_or(1.6)
+                        };
+                        ResizeTarget {
+                            index,
+                            initial_rem: captured,
+                        }
+                    })
+                    .collect()
+            }
+            None => vec![ResizeTarget {
+                index: row,
+                initial_rem,
+            }],
+        }
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
 fn install_resize_drag(
     state: RwSignal<crate::state::OneCalcHostState>,
     axis: ResizeAxis,
-    initial_rem: f32,
     initial_pos: i32,
 ) {
     use std::cell::RefCell;
@@ -4890,21 +5033,31 @@ fn install_resize_drag(
 
     let move_handle_for_move = move_handle.clone();
     let move_closure = Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
-        let delta_px = match axis {
-            ResizeAxis::Column(_) => ev.client_x() - initial_pos,
-            ResizeAxis::Row(_) => ev.client_y() - initial_pos,
+        let delta_px = match &axis {
+            ResizeAxis::Columns(_) => ev.client_x() - initial_pos,
+            ResizeAxis::Rows(_) => ev.client_y() - initial_pos,
         };
         let delta_rem = delta_px as f32 * rem_per_px;
-        let next_rem = (initial_rem + delta_rem).max(0.5);
-        state.update(|state| match axis {
-            ResizeAxis::Column(column) => {
-                let _ = crate::app::reducer::set_active_array_browser_column_width(
-                    state, column, next_rem,
-                );
+        state.update(|state| match &axis {
+            ResizeAxis::Columns(targets) => {
+                for target in targets {
+                    let next_rem = (target.initial_rem + delta_rem).max(0.5);
+                    let _ = crate::app::reducer::set_active_array_browser_column_width(
+                        state,
+                        target.index,
+                        next_rem,
+                    );
+                }
             }
-            ResizeAxis::Row(row) => {
-                let _ =
-                    crate::app::reducer::set_active_array_browser_row_height(state, row, next_rem);
+            ResizeAxis::Rows(targets) => {
+                for target in targets {
+                    let next_rem = (target.initial_rem + delta_rem).max(0.5);
+                    let _ = crate::app::reducer::set_active_array_browser_row_height(
+                        state,
+                        target.index,
+                        next_rem,
+                    );
+                }
             }
         });
         // Keep ourselves alive — the borrow is just a refcount
