@@ -1,5 +1,6 @@
 use crate::adapters::oxfml::{
     EditorAnalysisStage, FormulaFormattingRequest, RecalcModeRequest, ScenarioPolicyRequest,
+    TraceModeRequest,
 };
 use crate::domain::ids::FormulaSpaceId;
 
@@ -46,4 +47,9 @@ pub struct ApplyFormulaEditIntent {
     /// matching `LocaleProfileId` for month / weekday / separator /
     /// currency rendering. An empty string falls back to en-US.
     pub language_tag: String,
+    /// Trace-mode request — `ValueOnly` for the cheap default, or
+    /// `PreparedCalls` when the formula-drill panel is open and the
+    /// rich walk tree needs the per-step trace. The host flips this
+    /// on per-formula based on `formula_drill_open`.
+    pub trace_mode: TraceModeRequest,
 }

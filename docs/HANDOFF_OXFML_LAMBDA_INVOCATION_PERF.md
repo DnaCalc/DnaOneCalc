@@ -2,12 +2,13 @@
 
 # OxFml Handoff: Lambda invocation hot-loop overhead in `OxFmlCallableInvoker`
 
-Status: **partial — `invoke_many` with cached binding lookup
-landed; per-iter `evaluate_expr_value` cost still dominates**.
+Status: **partial — invoke_many + cached binding lookup +
+compiled call-site planning + opt-in trace mode landed; per-iter
+`evaluate_expr_value` cost still dominates the residual band**.
 Direction: DnaOneCalc → OxFml
 Source repo / workset: DnaOneCalc / Performance investigation
 Filed date: 2026-05-05
-Landing-progress check: 2026-05-06
+Landing-progress checks: 2026-05-06, 2026-05-07
 
 ## Landing-progress check (2026-05-06)
 
@@ -43,8 +44,60 @@ covered by the OxFunc-side small-row pool ask (sibling handoff)
 and any further OxFml-side `evaluate_expr_value` interpreter
 work.
 
-Filed status updated to "partial" until the per-iter cost drops
-below the original observed band.
+## Landing-progress check (2026-05-07)
+
+OxFml W075 landed compiled formula call-site planning
+(commit `47960d9`). The optimizer retains resolved
+`SurfaceCallSite` handles for ordinary calls, operators, special
+operator lanes, reference operators, implicit intersection, and
+built-in callable slots. Built-in callable `invoke_many` uses
+reusable `SurfaceCallScratch` for repeated call-site invocation.
+Most importantly for the typing UX, value-only versus
+prepared-call tracing is now an explicit `EvaluationTraceMode`,
+defaulting to `ValueOnly`.
+
+Host-side companion (`5343282`+):
+- `FormulaEditRequest.trace_mode` ferries the host's per-formula
+  decision (`ValueOnly` | `PreparedCalls`) to the bridge.
+- `live_edit::build_live_edit_intent` flips to `PreparedCalls`
+  iff `formula_space.formula_drill_open == true`. Closed drill
+  → cheap trace by default.
+- The bridge cache key includes `trace_mode` so a `ValueOnly`
+  cached pass cannot satisfy a subsequent `PreparedCalls`
+  request.
+
+Re-measured Mandelbrot probe (closed drill, `ValueOnly` trace):
+
+```
+rows= 5 cols= 5 maxIter= 5  per_inner_iter=400.50 µs
+rows=10 cols=10 maxIter=10  per_inner_iter=143.84 µs
+rows=10 cols=10 maxIter=30  per_inner_iter= 63.70 µs
+rows=20 cols=20 maxIter=30  per_inner_iter= 51.84 µs
+rows=40 cols=40 maxIter=30  per_inner_iter= 52.32 µs
+rows=50 cols=30 maxIter=30  per_inner_iter= 48.54 µs
+rows=100×60   maxIter=30  per_inner_iter= 48.85 µs  (wall=8.79 s)
+```
+
+Cumulative per-iter cost on the 100×60×30 case across all
+landings on the same hardware:
+
+| State | per-iter | wall |
+| --- | --- | --- |
+| Filing (2026-05-05) | 26–35 µs | ~6.4 s |
+| After W094/W095 (2026-05-06) | ~60 µs | 10.80 s |
+| After W075/W096 upstream (2026-05-07) | ~52 µs | 9.28 s |
+| After host trace-mode opt-in (2026-05-07) | ~49 µs | 8.79 s |
+
+Filing band still not reattained; the W075 lanes that remain
+open (slot-frame execution for lambda + LET locals, generic
+expression-node lowering, reusable trace templates,
+metadata-driven hoisting) are the obvious next levers, plus the
+sibling OxFunc small-row `EvalArray` pool ask.
+
+Filed status updated to "partial" — three lanes have landed
+(invoke_many + binding cache, compiled call-site planning,
+opt-in trace mode); two lanes still open (slot-frame frame
+lowering, small-row `EvalArray` pool).
 Related:
   `OxFml/crates/oxfml_core/src/eval/mod.rs::OxFmlCallableInvoker`,
   `OxFml/crates/oxfml_core/src/eval/mod.rs::evaluate_expr_value`,

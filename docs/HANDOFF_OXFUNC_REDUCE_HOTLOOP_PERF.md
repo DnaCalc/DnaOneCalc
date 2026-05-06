@@ -55,6 +55,35 @@ explanations:
 Either way ASKS B and C (numeric-scalar specialisation; small-row
 `EvalArray` inline-storage pool) remain open and are the next
 likely wins. Filed status updated to "partial" on this basis.
+
+## Landing-progress check (2026-05-07)
+
+OxFunc W096 landed an architectural seam for compiled semantic
+kernel dispatch (`SurfaceCallSite`, `SurfaceCallRuntime`,
+`SurfaceCallScratch`); OxFml W075 consumed the same seam for
+compiled formula call-site planning. Together they replace the
+string-based broad dispatch on the hot path with resolved
+call-site handles + reusable scratch buffers.
+
+Re-measured Mandelbrot probe with the new upstream + the
+host-side trace-mode opt-in:
+
+| rows × cols × maxIter | per-inner-iter | wall |
+| --- | --- | --- |
+|   5 ×  5 ×  5 |  400.50 µs |   50 ms |
+|  10 × 10 × 10 |  143.84 µs |  144 ms |
+|  10 × 10 × 30 |   63.70 µs |  191 ms |
+|  20 × 20 × 30 |   51.84 µs |  622 ms |
+|  40 × 40 × 30 |   52.32 µs |  2.51 s |
+|  50 × 30 × 30 |   48.54 µs |  2.18 s |
+| 100 × 60 × 30 |   48.85 µs |  8.79 s |
+
+Steady-state per-iter dropped to ~49 µs (from ~60 µs at the W094/
+W095 floor). Asks B and C remain open and remain the most likely
+next wins — the small-row `EvalArray` allocator pressure
+inside `HSTACK` and the `prepared_from_array_cell` clone for
+numeric `SEQUENCE`-shape iterables are still the dominant
+allocation events on the trace.
 Related:
   `OxFunc/crates/oxfunc_core/src/functions/callable_helpers.rs::eval_reduce_prepared`,
   `OxFunc/crates/oxfunc_core/src/functions/callable_helpers.rs::materialize_iterable`,

@@ -1642,6 +1642,9 @@ fn run_oxfml_case(
             // bridge's interactive response (parse / bind / popup),
             // not the runtime locale used for the verification report.
             language_tag: String::new(),
+            // Verification surfaces a per-prepared-call walk in the
+            // workbench artifacts, so it needs the rich trace.
+            trace_mode: crate::adapters::oxfml::TraceModeRequest::PreparedCalls,
         })
         .map_err(|error| {
             format!(

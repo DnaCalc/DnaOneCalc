@@ -9,7 +9,7 @@ pub use bridge::{
     FormulaFormattingCfIconSetRuleOptions, FormulaFormattingCfRank,
     FormulaFormattingCfRankRuleOptions, FormulaFormattingCfRule, FormulaFormattingCfThreshold,
     FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
+    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
 };
 pub use live_bridge::LiveOxfmlBridge;
 pub use types::{

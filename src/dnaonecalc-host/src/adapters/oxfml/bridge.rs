@@ -47,6 +47,33 @@ pub struct FormulaEditRequest {
     /// names, decimal / thousands separators, currency symbol, and
     /// the `General` rendering for the active formula.
     pub language_tag: String,
+    /// Trace-mode request that drives whether the runtime emits
+    /// per-prepared-call detail (rich walk tree, evaluation
+    /// timeline, argument summaries) or only the final value. The
+    /// rich mode is the input the formula-drill panel needs; the
+    /// value-only mode is the cheap default OxFml landed with W075
+    /// / OxFunc W096 — it skips per-step bookkeeping the user
+    /// doesn't see when the drill panel is closed. The host flips
+    /// this on per-formula based on `formula_drill_open`, so
+    /// keystrokes on a formula whose drill is closed pay the
+    /// cheap-trace cost and opening the drill gets the rich tree
+    /// on the next round-trip.
+    pub trace_mode: TraceModeRequest,
+}
+
+/// Mirror of `oxfml_core::eval::EvaluationTraceMode` at the
+/// bridge boundary. `ValueOnly` is the cheap default the runtime
+/// shipped in W075 — no per-call trace bookkeeping; the drill
+/// panel falls back to a single `Formula` node. `PreparedCalls`
+/// emits the per-step trace the rich walk-tree projection needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TraceModeRequest {
+    /// Default: no per-call trace. Cheapest runtime path.
+    #[default]
+    ValueOnly,
+    /// Rich per-call trace. Required for the formula-drill walk
+    /// tree to surface the prepared-call breakdown.
+    PreparedCalls,
 }
 
 /// Mirror of `crate::persistence::ScenarioRecalcMode` at the bridge

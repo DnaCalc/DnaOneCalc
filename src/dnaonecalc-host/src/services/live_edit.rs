@@ -5,7 +5,7 @@ use crate::adapters::oxfml::{
     FormulaFormattingCfIconSetRuleOptions, FormulaFormattingCfRank,
     FormulaFormattingCfRankRuleOptions, FormulaFormattingCfRule, FormulaFormattingCfThreshold,
     FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
+    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::app::reducer::{
@@ -530,6 +530,17 @@ fn build_live_edit_intent(
     } else {
         recalc_mode_request_for(formula_space)
     };
+    // Trace mode: `PreparedCalls` only when the formula-drill panel
+    // is open (the rich walk tree consumes the per-step trace);
+    // otherwise `ValueOnly`. After OxFml W075 / OxFunc W096 the
+    // value-only path is the cheap default — we pay the prepared-
+    // call bookkeeping only when the user is actually looking at
+    // the walk tree.
+    let trace_mode = if formula_space.formula_drill_open {
+        TraceModeRequest::PreparedCalls
+    } else {
+        TraceModeRequest::ValueOnly
+    };
     ApplyFormulaEditIntent {
         formula_space_id: formula_space.formula_space_id.clone(),
         formula_stable_id,
@@ -541,6 +552,7 @@ fn build_live_edit_intent(
         skip_runtime_evaluation,
         recalc_mode,
         language_tag: language_tag.to_string(),
+        trace_mode,
     }
 }
 

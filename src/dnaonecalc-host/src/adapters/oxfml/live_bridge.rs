@@ -68,6 +68,11 @@ struct FormulaEditFingerprint {
     scenario_policy: ScenarioPolicyRequest,
     skip_runtime_evaluation: bool,
     recalc_mode: RecalcModeRequest,
+    // Trace mode is part of the cache key — a `ValueOnly` cached
+    // pass cannot satisfy a subsequent `PreparedCalls` request
+    // (the rich walk tree requires the per-step trace, which the
+    // cheap pass didn't produce).
+    trace_mode: super::bridge::TraceModeRequest,
 }
 
 impl FormulaEditFingerprint {
@@ -80,6 +85,7 @@ impl FormulaEditFingerprint {
             scenario_policy: request.scenario_policy,
             skip_runtime_evaluation: request.skip_runtime_evaluation,
             recalc_mode: request.recalc_mode,
+            trace_mode: request.trace_mode,
         }
     }
 
@@ -209,6 +215,20 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                         runtime_request.with_verification_publication_context(context);
                 }
             }
+            // Trace mode: opt into per-prepared-call tracing only
+            // when the caller asks (the formula-drill panel needs
+            // it to render the walk tree). The cheap default (the
+            // upstream's `EvaluationTraceMode::ValueOnly` since
+            // OxFml W075) skips per-step bookkeeping.
+            let upstream_trace_mode = match request.trace_mode {
+                super::bridge::TraceModeRequest::ValueOnly => {
+                    oxfml_core::EvaluationTraceMode::ValueOnly
+                }
+                super::bridge::TraceModeRequest::PreparedCalls => {
+                    oxfml_core::EvaluationTraceMode::PreparedCalls
+                }
+            };
+            runtime_request = runtime_request.with_trace_mode(upstream_trace_mode);
             RuntimeEnvironment::new().execute(runtime_request).ok()
         } else {
             None

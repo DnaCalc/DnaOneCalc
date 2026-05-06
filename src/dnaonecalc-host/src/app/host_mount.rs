@@ -51,6 +51,7 @@ mod tests {
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
                 language_tag: "en-US".to_string(),
+                trace_mode: crate::adapters::oxfml::TraceModeRequest::ValueOnly,
             })
             .is_ok());
         assert!(web
@@ -65,6 +66,7 @@ mod tests {
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
                 language_tag: "en-US".to_string(),
+                trace_mode: crate::adapters::oxfml::TraceModeRequest::ValueOnly,
             })
             .is_ok());
     }

@@ -53,6 +53,7 @@ impl EditorSessionService {
             skip_runtime_evaluation,
             recalc_mode: intent.recalc_mode,
             language_tag: intent.language_tag,
+            trace_mode: intent.trace_mode,
         };
         // Wall-clock the bridge round-trip so the host can detect
         // "expensive runtime pass" and flip into auto-debounced
@@ -475,6 +476,7 @@ mod tests {
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
                 language_tag: "en-US".to_string(),
+                trace_mode: crate::adapters::oxfml::TraceModeRequest::ValueOnly,
             },
         )
         .expect("edit intent should update via bridge");
