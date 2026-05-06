@@ -112,6 +112,23 @@ pub struct HomeShellViewModel {
     /// formula space; the dropdown's `is_open` flag drives
     /// visibility of the menu body.
     pub scenario_breadcrumb: ScenarioBreadcrumbView,
+    /// Tab strip surfacing every formula in
+    /// `workspace_shell.open_formula_space_order`. WS-14 §1's
+    /// minimum-viable surface: one chip per open formula with a
+    /// click-to-switch + close affordance. The active chip is
+    /// styled distinctly. Empty `chips` vec hides the strip
+    /// entirely (no need to render chrome when only one formula
+    /// is open and the breadcrumb already names it).
+    pub formula_tab_strip: FormulaTabStripView,
+    /// Command-palette overlay projection. `is_open == false`
+    /// means the palette is hidden and the renderer skips it
+    /// entirely; `true` carries the filter query + filtered
+    /// command list + selected index for the active match. Per
+    /// `SEAM-ONECALC-COMMAND-PALETTE`, the palette aggregates
+    /// scenario actions, recent / pinned formulas, workspace
+    /// settings, and a future function-reference lookup into one
+    /// keyboard-driven launcher.
+    pub command_palette: CommandPaletteView,
     /// Slice 5 — formatting controls row rendered under the
     /// result section. Mirrors the active formula's
     /// `FormulaFormattingState`; the renderer's `on:input` handlers
@@ -455,6 +472,83 @@ fn build_formatting_summary(
         ));
     }
     parts.join(" · ")
+}
+
+/// Command-palette overlay projection. Closed by default; opens
+/// via Ctrl+K / Ctrl+Shift+P. Each command has a stable
+/// identifier the renderer dispatches on click / Enter. The
+/// palette is a single ranked list (sections are flattened) so
+/// keyboard navigation stays linear; section labels render as
+/// non-selectable separators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteView {
+    pub is_open: bool,
+    pub query: String,
+    /// Filtered + ranked command list. Empty when nothing
+    /// matches the query.
+    pub commands: Vec<CommandPaletteEntry>,
+    /// Index into `commands` that is currently highlighted. `0`
+    /// when the command list is empty (no-op on Enter).
+    pub selected_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteEntry {
+    pub kind: CommandPaletteEntryKind,
+    /// Human-readable label rendered as the row's main text.
+    pub label: String,
+    /// Section label (`"Formulas"`, `"Actions"`, …) for the
+    /// renderer to group rows visually. The view-model already
+    /// flattens commands into a single list — section is just
+    /// metadata.
+    pub section: &'static str,
+    /// Optional secondary line rendered below the label
+    /// (formula path, scenario name, etc.).
+    pub detail: Option<String>,
+    /// Optional keyboard chord rendered to the right of the row.
+    pub chord: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandPaletteEntryKind {
+    /// Run a scenario action by id (e.g. `NewScenario`,
+    /// `Duplicate`, `PinActive`). Maps onto the same dispatcher
+    /// the breadcrumb dropdown uses.
+    ScenarioAction(ScenarioBreadcrumbActionId),
+    /// Switch to an open / pinned / recent formula by id.
+    SwitchFormula(String),
+    /// Toggle the formatting-panel collapse state on the active
+    /// formula.
+    ToggleFormattingPanel,
+    /// Toggle the formula drill-down on the active formula.
+    ToggleFormulaDrill,
+    /// Force a runtime recalc on the active formula (F9 alias).
+    ForceRecalc,
+}
+
+/// Tab strip projection for the open-formulas surface (WS-14 §1).
+/// Every entry in `workspace_shell.open_formula_space_order` becomes
+/// a chip; the active formula's chip is highlighted via
+/// `is_active`. The strip itself collapses (`is_visible == false`)
+/// when only one formula is open — the breadcrumb already names it,
+/// and the extra row of chrome would be visual noise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaTabStripView {
+    pub is_visible: bool,
+    pub chips: Vec<FormulaTabChip>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaTabChip {
+    pub formula_space_id: String,
+    pub display_name: String,
+    pub is_active: bool,
+    pub is_pinned: bool,
+    /// `true` when the formula has uncommitted changes (raw text
+    /// differs from `committed_cell_text`). Surfaced as a small
+    /// dirty marker in the chip; close-with-dirty uses the same
+    /// signal to decide whether to confirm.
+    pub is_dirty: bool,
 }
 
 /// View-model shape for the titlebar scenario breadcrumb + its
@@ -1161,6 +1255,8 @@ fn project_formula_space(
         formula_space.formatting_panel_open,
         &state.ambient_app_context,
     );
+    let formula_tab_strip = project_formula_tab_strip(state);
+    let command_palette = project_command_palette(state);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -1178,8 +1274,279 @@ fn project_formula_space(
         result_view,
         status: project_status_view(formula_space),
         scenario_breadcrumb,
+        formula_tab_strip,
+        command_palette,
         formatting_controls,
     }
+}
+
+/// Convenience for the renderer's keyboard `Enter` handler:
+/// resolve the currently-selected command's kind by re-running
+/// the palette projection. Returns `None` when the palette is
+/// closed or the filtered list is empty.
+pub fn project_command_palette_entry_for_dispatch(
+    state: &OneCalcHostState,
+) -> Option<CommandPaletteEntryKind> {
+    let palette = project_command_palette(state);
+    if !palette.is_open {
+        return None;
+    }
+    palette
+        .commands
+        .into_iter()
+        .nth(palette.selected_index)
+        .map(|entry| entry.kind)
+}
+
+/// Project the command-palette overlay state. When closed,
+/// returns an empty `CommandPaletteView` with `is_open: false`;
+/// the renderer skips rendering entirely. When open, builds the
+/// full command set, filters by the user's query (case-
+/// insensitive substring match against `label`/`detail`), and
+/// clamps the selected index into range.
+fn project_command_palette(state: &OneCalcHostState) -> CommandPaletteView {
+    let chrome = &state.global_ui_chrome;
+    if !chrome.command_palette_open {
+        return CommandPaletteView {
+            is_open: false,
+            query: String::new(),
+            commands: Vec::new(),
+            selected_index: 0,
+        };
+    }
+    let query = chrome.command_palette_query.clone();
+    let needle = query.to_lowercase();
+    let mut commands: Vec<CommandPaletteEntry> = Vec::new();
+
+    // Section: open formulas (so Ctrl+K → type → Enter is a fast
+    // switcher even when the tab strip is hidden because only one
+    // formula is open).
+    let active_id = state.workspace_shell.active_formula_space_id.as_ref();
+    for id in &state.workspace_shell.open_formula_space_order {
+        let Some(space) = state.formula_spaces.get(id) else {
+            continue;
+        };
+        let label = if space.context.scenario_label.is_empty()
+            || space.context.scenario_label == id.as_str()
+        {
+            id.as_str().to_string()
+        } else {
+            space.context.scenario_label.clone()
+        };
+        let is_active = active_id.is_some_and(|active| active == id);
+        let detail = Some(if is_active {
+            "Open · active".to_string()
+        } else {
+            "Open".to_string()
+        });
+        commands.push(CommandPaletteEntry {
+            kind: CommandPaletteEntryKind::SwitchFormula(id.as_str().to_string()),
+            label,
+            section: "Formulas",
+            detail,
+            chord: "",
+        });
+    }
+    // Section: pinned (excluding any already in the open list).
+    for id in &state.workspace_shell.pinned_formula_space_ids {
+        if state
+            .workspace_shell
+            .open_formula_space_order
+            .iter()
+            .any(|open| open == id)
+        {
+            continue;
+        }
+        let label = state
+            .workspace_shell
+            .recent_formula_spaces
+            .get(id)
+            .map(|record| record.formula_space.context.scenario_label.clone())
+            .unwrap_or_else(|| id.as_str().to_string());
+        commands.push(CommandPaletteEntry {
+            kind: CommandPaletteEntryKind::SwitchFormula(id.as_str().to_string()),
+            label,
+            section: "Pinned",
+            detail: Some("Pinned".to_string()),
+            chord: "",
+        });
+    }
+    // Section: recent (closed) formulas.
+    for id in &state.workspace_shell.recent_formula_space_order {
+        if state
+            .workspace_shell
+            .open_formula_space_order
+            .iter()
+            .any(|open| open == id)
+        {
+            continue;
+        }
+        let Some(record) = state.workspace_shell.recent_formula_spaces.get(id) else {
+            continue;
+        };
+        let label = if record.formula_space.context.scenario_label.is_empty() {
+            id.as_str().to_string()
+        } else {
+            record.formula_space.context.scenario_label.clone()
+        };
+        commands.push(CommandPaletteEntry {
+            kind: CommandPaletteEntryKind::SwitchFormula(id.as_str().to_string()),
+            label,
+            section: "Recent",
+            detail: Some("Closed".to_string()),
+            chord: "",
+        });
+    }
+    // Section: actions. Mirror the breadcrumb dropdown so the
+    // palette is a complete keyboard alternative.
+    let active_is_pinned =
+        active_id.is_some_and(|id| state.workspace_shell.pinned_formula_space_ids.contains(id));
+    let pin_action = if active_is_pinned {
+        (
+            ScenarioBreadcrumbActionId::UnpinActive,
+            "Unpin active formula",
+        )
+    } else {
+        (ScenarioBreadcrumbActionId::PinActive, "Pin active formula")
+    };
+    let scenario_actions: &[(ScenarioBreadcrumbActionId, &'static str, &'static str)] = &[
+        (
+            ScenarioBreadcrumbActionId::NewScenario,
+            "New formula",
+            "Ctrl+N",
+        ),
+        (
+            ScenarioBreadcrumbActionId::SaveAs,
+            "Save formula…",
+            "Ctrl+Shift+S",
+        ),
+        (ScenarioBreadcrumbActionId::Open, "Open formula…", "Ctrl+O"),
+        (
+            ScenarioBreadcrumbActionId::Duplicate,
+            "Clone active formula",
+            "",
+        ),
+        (pin_action.0, pin_action.1, ""),
+        (
+            ScenarioBreadcrumbActionId::ManageScenarios,
+            "Manage formulas…",
+            "",
+        ),
+    ];
+    for (action_id, label, chord) in scenario_actions {
+        commands.push(CommandPaletteEntry {
+            kind: CommandPaletteEntryKind::ScenarioAction(*action_id),
+            label: label.to_string(),
+            section: "Actions",
+            detail: None,
+            chord,
+        });
+    }
+    // Section: workspace settings (toggles + force-recalc).
+    commands.push(CommandPaletteEntry {
+        kind: CommandPaletteEntryKind::ToggleFormattingPanel,
+        label: "Toggle formatting panel".to_string(),
+        section: "Settings",
+        detail: None,
+        chord: "",
+    });
+    commands.push(CommandPaletteEntry {
+        kind: CommandPaletteEntryKind::ToggleFormulaDrill,
+        label: "Toggle formula drill-down".to_string(),
+        section: "Settings",
+        detail: None,
+        chord: "Ctrl+D",
+    });
+    commands.push(CommandPaletteEntry {
+        kind: CommandPaletteEntryKind::ForceRecalc,
+        label: "Force recalc".to_string(),
+        section: "Settings",
+        detail: None,
+        chord: "F9",
+    });
+
+    // Filter by query. Empty query passes everything through;
+    // non-empty does a case-insensitive substring match against
+    // both label and detail.
+    let filtered: Vec<CommandPaletteEntry> = if needle.trim().is_empty() {
+        commands
+    } else {
+        commands
+            .into_iter()
+            .filter(|cmd| {
+                let label_match = cmd.label.to_lowercase().contains(&needle);
+                let detail_match = cmd
+                    .detail
+                    .as_deref()
+                    .map(|d| d.to_lowercase().contains(&needle))
+                    .unwrap_or(false);
+                label_match || detail_match
+            })
+            .collect()
+    };
+
+    let selected_index = if filtered.is_empty() {
+        0
+    } else {
+        chrome
+            .command_palette_selected_index
+            .min(filtered.len().saturating_sub(1))
+    };
+
+    CommandPaletteView {
+        is_open: true,
+        query,
+        commands: filtered,
+        selected_index,
+    }
+}
+
+/// Project the open-formula list into the tab-strip view-model.
+/// One chip per `workspace_shell.open_formula_space_order` entry,
+/// in stable order. The strip hides itself (`is_visible == false`)
+/// when only one formula is open — the breadcrumb already names
+/// it; an extra row of chrome would just take vertical space.
+fn project_formula_tab_strip(state: &OneCalcHostState) -> FormulaTabStripView {
+    let active_id = state.workspace_shell.active_formula_space_id.as_ref();
+    let chips: Vec<FormulaTabChip> = state
+        .workspace_shell
+        .open_formula_space_order
+        .iter()
+        .filter_map(|id| {
+            let space = state.formula_spaces.get(id)?;
+            let is_active = active_id.is_some_and(|active| active == id);
+            let is_pinned = state.workspace_shell.pinned_formula_space_ids.contains(id);
+            // The chip's display name follows the same rule as the
+            // breadcrumb: prefer the user's `scenario_label`,
+            // falling back to the synthetic id when the label is
+            // empty or matches the id verbatim.
+            let display_name = if space.context.scenario_label.is_empty()
+                || space.context.scenario_label == id.as_str()
+            {
+                id.as_str().to_string()
+            } else {
+                space.context.scenario_label.clone()
+            };
+            // Dirty marker: raw text differs from the last
+            // committed text. `committed_cell_text == None`
+            // counts as clean only when the raw text is also
+            // empty (the fresh-formula case); a non-empty raw
+            // text with no commit is dirty.
+            let is_dirty = match space.committed_cell_text.as_deref() {
+                Some(committed) => committed != space.raw_entered_cell_text.as_str(),
+                None => !space.raw_entered_cell_text.is_empty(),
+            };
+            Some(FormulaTabChip {
+                formula_space_id: id.as_str().to_string(),
+                display_name,
+                is_active,
+                is_pinned,
+                is_dirty,
+            })
+        })
+        .collect();
+    let is_visible = chips.len() > 1;
+    FormulaTabStripView { is_visible, chips }
 }
 
 /// Project the formula walk tree + phase summaries into the

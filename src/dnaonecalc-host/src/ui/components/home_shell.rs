@@ -37,14 +37,15 @@ use crate::app::reducer::{
 };
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
-    build_home_shell_view_model, ArrayCellFormatView, BridgeHealth, CompletionPopupItemView,
-    CompletionPopupView, ConditionalFormattingRuleView, ContextChipField, DataBarDirectionView,
-    DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormattingControlsView,
-    FormulaDrillDiagnosticRow, FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState,
-    FormulaDrillView, FunctionHelpCardView, NumberFormatPreset, ResultClassPill, ResultContextChip,
-    ResultKind, ResultView, ScenarioBreadcrumbAction, ScenarioBreadcrumbActionId,
-    ScenarioBreadcrumbEntry, ScenarioBreadcrumbView, ScenarioPolicyView, SignatureHelpView,
-    StatusView,
+    build_home_shell_view_model, ArrayCellFormatView, BridgeHealth, CommandPaletteEntry,
+    CommandPaletteEntryKind, CommandPaletteView, CompletionPopupItemView, CompletionPopupView,
+    ConditionalFormattingRuleView, ContextChipField, DataBarDirectionView, DiagnosticSquiggle,
+    EditorMetricsChip, EntryModePill, FormattingControlsView, FormulaDrillDiagnosticRow,
+    FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView,
+    FormulaTabChip, FormulaTabStripView, FunctionHelpCardView, NumberFormatPreset, ResultClassPill,
+    ResultContextChip, ResultKind, ResultView, ScenarioBreadcrumbAction,
+    ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry, ScenarioBreadcrumbView,
+    ScenarioPolicyView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 use crate::state::OneCalcHostState;
@@ -417,6 +418,8 @@ pub fn HomeShell(
     // renderer's `Option<ResultContextChip>` parameter has a single
     // None for "no active formula" or "default formula".
     let result_context = move || view_model.get().and_then(|vm| vm.result_context);
+    let formula_tab_strip = move || view_model.get().map(|vm| vm.formula_tab_strip);
+    let command_palette = move || view_model.get().map(|vm| vm.command_palette);
     let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
     let signature_help = move || view_model.get().and_then(|vm| vm.signature_help);
     let function_help_card = move || view_model.get().and_then(|vm| vm.function_help_card);
@@ -649,6 +652,107 @@ pub fn HomeShell(
     let on_scenario_entry_pin_toggle = Callback::new(move |formula_space_id: String| {
         state.update(|state| {
             let _ = crate::app::case_lifecycle::toggle_pin_formula_space(state, &formula_space_id);
+        });
+    });
+    // Tab-strip close button (per WS-14 §1 minimum-viable surface).
+    // Closing a tab routes through `close_formula_space`, which also
+    // handles the "last formula closed" case by spinning a fresh
+    // `untitled-N` so the editor never has nothing to mount against.
+    let on_close_formula_tab = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::close_formula_space(state, &formula_space_id);
+        });
+    });
+    // Tab-strip `+ new formula` button — alias for Ctrl+N. The
+    // breadcrumb dropdown's `New formula` action does the same
+    // thing; the tab-strip surface puts it in click reach without
+    // having to open the dropdown.
+    let on_new_formula_from_tab_strip = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::new_formula_space(state);
+        });
+    });
+    // Command-palette callbacks. Type-to-filter, arrow keys to
+    // move selection, Enter to dispatch. Esc / outside-click /
+    // a second Ctrl+K closes the overlay.
+    let on_command_palette_query = Callback::new(move |query: String| {
+        state.update(|state| {
+            let _ = crate::app::reducer::set_command_palette_query(state, query);
+        });
+    });
+    let editor_bridge_for_palette = editor_bridge.clone();
+    let on_command_palette_dispatch = Callback::new(move |kind: CommandPaletteEntryKind| {
+        let bridge = editor_bridge_for_palette.clone();
+        state.update(|state| {
+            // Always close the palette after dispatch — the user
+            // got the command they came for.
+            let _ = crate::app::reducer::close_command_palette(state);
+            match kind {
+                CommandPaletteEntryKind::SwitchFormula(id) => {
+                    let _ = crate::app::case_lifecycle::reopen_formula_space(state, &id);
+                }
+                CommandPaletteEntryKind::ScenarioAction(action_id) => {
+                    use crate::services::home_shell_view_model::ScenarioBreadcrumbActionId;
+                    match action_id {
+                        ScenarioBreadcrumbActionId::NewScenario => {
+                            let _ = crate::app::case_lifecycle::new_formula_space(state);
+                        }
+                        ScenarioBreadcrumbActionId::Duplicate => {
+                            let _ = crate::app::case_lifecycle::clone_active_formula_space(
+                                state,
+                            );
+                        }
+                        ScenarioBreadcrumbActionId::PinActive => {
+                            let _ = crate::app::case_lifecycle::pin_active_formula_space(state);
+                        }
+                        ScenarioBreadcrumbActionId::UnpinActive => {
+                            if let Some(active_id) =
+                                state.workspace_shell.active_formula_space_id.clone()
+                            {
+                                let _ = crate::app::case_lifecycle::unpin_formula_space(
+                                    state,
+                                    active_id.as_str(),
+                                );
+                            }
+                        }
+                        // SaveAs / Open / ManageScenarios are
+                        // surfaced for discoverability today but
+                        // dispatch through the breadcrumb's own
+                        // async paths — invoke from here is a
+                        // follow-up. Console-log so the user sees
+                        // the click was received.
+                        ScenarioBreadcrumbActionId::SaveAs
+                        | ScenarioBreadcrumbActionId::Open
+                        | ScenarioBreadcrumbActionId::ManageScenarios => {
+                            #[cfg(target_arch = "wasm32")]
+                            web_sys::console::log_1(
+                                &format!(
+                                    "[onecalc] palette dispatch {action_id:?}: pending palette-side wiring",
+                                )
+                                .into(),
+                            );
+                        }
+                    }
+                }
+                CommandPaletteEntryKind::ToggleFormattingPanel => {
+                    let _ = crate::app::reducer::toggle_formatting_panel_on_active_formula_space(
+                        state,
+                    );
+                }
+                CommandPaletteEntryKind::ToggleFormulaDrill => {
+                    let _ =
+                        crate::app::reducer::toggle_formula_drill_on_active_formula_space(state);
+                }
+                CommandPaletteEntryKind::ForceRecalc => {
+                    if let Some(bridge) = bridge.as_ref() {
+                        let _ =
+                            crate::services::live_edit::force_runtime_recalc_on_active_formula_space(
+                                bridge.as_ref(),
+                                state,
+                            );
+                    }
+                }
+            }
         });
     });
     // Scenario action dispatcher (slice 1b). NewScenario / Duplicate
@@ -934,10 +1038,12 @@ pub fn HomeShell(
                         || (ev.shift_key() && (ev.key() == "p" || ev.key() == "P")))
                 {
                     ev.prevent_default();
-                    // SEAM-ONECALC-COMMAND-PALETTE — palette wiring
-                    // pending. Today this is a no-op; the chord is
-                    // claimed so the user can rely on muscle memory
-                    // when the palette ships.
+                    // Ctrl+K toggles the command palette. The chord
+                    // also closes it on a second press, mirroring
+                    // VS Code / Linear / GitHub.
+                    state.update(|state| {
+                        let _ = crate::app::reducer::toggle_command_palette(state);
+                    });
                     return;
                 }
             }
@@ -969,6 +1075,13 @@ pub fn HomeShell(
                     "Ctrl+P · command palette"
                 </span>
             </header>
+
+            {move || render_formula_tab_strip(
+                formula_tab_strip(),
+                on_scenario_entry_select,
+                on_close_formula_tab,
+                on_new_formula_from_tab_strip,
+            )}
 
             <main class="onecalc-home-shell__body">
                 <Show
@@ -1156,7 +1269,7 @@ pub fn HomeShell(
                             class="onecalc-home-shell__result-block"
                             data-kind=move || result_view().map(result_kind_attr).unwrap_or("none")
                         >
-                            {move || render_result_view(result_view())}
+                            {move || render_result_view(result_view(), state)}
                         </div>
                         <div class="onecalc-home-shell__foot-row">
                             {move || render_result_context_chip(result_context(), view_mode())}
@@ -1168,6 +1281,13 @@ pub fn HomeShell(
             <footer class="onecalc-home-shell__statusfoot">
                 {move || render_status_foot(status_view())}
             </footer>
+
+            {move || render_command_palette(
+                command_palette(),
+                on_command_palette_query,
+                on_command_palette_dispatch,
+                state,
+            )}
         </div>
     }
 }
@@ -1192,6 +1312,284 @@ pub fn HomeShell(
 /// menu is keyboard-focusable; Esc inside it closes via the
 /// `on_close` callback. Outside-click is handled by the document
 /// listener wired in the parent component.
+/// Render the command-palette overlay. Shown when the view-model
+/// reports `is_open == true`; hidden otherwise. The palette is a
+/// modal centered over the home shell with:
+///
+/// * a single-line filter input (autofocused on open),
+/// * a scrollable list of commands grouped by section, each row
+///   showing the command label, optional detail line, optional
+///   keyboard chord; the row at `selected_index` is highlighted,
+/// * keyboard handling: ArrowUp/Down moves selection, Enter
+///   dispatches the selected command, Esc closes.
+///
+/// Outside-click on the backdrop closes the palette without
+/// dispatching anything (the backdrop swallows the click and
+/// fires `close_command_palette`).
+fn render_command_palette(
+    palette: Option<CommandPaletteView>,
+    on_query: Callback<String>,
+    on_dispatch: Callback<CommandPaletteEntryKind>,
+    state: RwSignal<crate::state::OneCalcHostState>,
+) -> AnyView {
+    let Some(palette) = palette else {
+        return view! { <></> }.into_any();
+    };
+    if !palette.is_open {
+        return view! { <></> }.into_any();
+    }
+    let total = palette.commands.len();
+    let selected_index = palette.selected_index;
+    let query_for_input = palette.query.clone();
+    let close_palette = move || {
+        state.update(|state| {
+            let _ = crate::app::reducer::close_command_palette(state);
+        });
+    };
+    let on_backdrop_click = {
+        let close = close_palette;
+        move |_: WebMouseEvent| close()
+    };
+    let on_keydown = {
+        let on_dispatch = on_dispatch;
+        let close = close_palette;
+        move |ev: WebKeyboardEvent| {
+            match ev.key().as_str() {
+                "Escape" => {
+                    ev.prevent_default();
+                    close();
+                }
+                "ArrowDown" => {
+                    ev.prevent_default();
+                    state.update(|state| {
+                        let _ =
+                            crate::app::reducer::move_command_palette_selection(state, 1, total);
+                    });
+                }
+                "ArrowUp" => {
+                    ev.prevent_default();
+                    state.update(|state| {
+                        let _ =
+                            crate::app::reducer::move_command_palette_selection(state, -1, total);
+                    });
+                }
+                "Enter" => {
+                    ev.prevent_default();
+                    // Read the selected command directly off the
+                    // current palette projection so we always
+                    // dispatch the live row, not a stale clone.
+                    let selected_kind = state.with_untracked(|state| {
+                        crate::services::home_shell_view_model::project_command_palette_entry_for_dispatch(
+                            state,
+                        )
+                    });
+                    if let Some(kind) = selected_kind {
+                        on_dispatch.run(kind);
+                    }
+                }
+                _ => {}
+            }
+        }
+    };
+    let rows: Vec<_> = palette
+        .commands
+        .into_iter()
+        .enumerate()
+        .map(|(index, entry)| render_command_palette_row(index, entry, selected_index, on_dispatch))
+        .collect();
+    let empty_marker = if total == 0 {
+        view! {
+            <div class="onecalc-home-shell__palette-empty">
+                "No commands match your filter."
+            </div>
+        }
+        .into_any()
+    } else {
+        view! { <></> }.into_any()
+    };
+    view! {
+        <div
+            class="onecalc-home-shell__palette-backdrop"
+            data-component="command-palette"
+            on:click=on_backdrop_click
+            on:keydown=on_keydown
+        >
+            <div
+                class="onecalc-home-shell__palette"
+                role="dialog"
+                aria-modal="true"
+                aria-label="command palette"
+                on:click=move |ev: WebMouseEvent| ev.stop_propagation()
+            >
+                <input
+                    type="text"
+                    class="onecalc-home-shell__palette-input"
+                    placeholder="Type a command, formula, or setting…"
+                    autofocus="autofocus"
+                    aria-label="command palette filter"
+                    prop:value=query_for_input
+                    on:input=move |ev| {
+                        let target = event_target::<web_sys::HtmlInputElement>(&ev);
+                        on_query.run(target.value());
+                    }
+                />
+                <div class="onecalc-home-shell__palette-list" role="listbox">
+                    {rows}
+                    {empty_marker}
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_command_palette_row(
+    index: usize,
+    entry: CommandPaletteEntry,
+    selected_index: usize,
+    on_dispatch: Callback<CommandPaletteEntryKind>,
+) -> AnyView {
+    let is_selected = index == selected_index;
+    let selected_attr = if is_selected { "true" } else { "false" };
+    let kind = entry.kind.clone();
+    let label = entry.label.clone();
+    let section = entry.section;
+    let detail = entry.detail.clone();
+    let chord = entry.chord;
+    let detail_view = detail.map(|d| {
+        view! {
+            <span class="onecalc-home-shell__palette-row-detail">{d}</span>
+        }
+        .into_any()
+    });
+    let chord_view = if chord.is_empty() {
+        view! { <></> }.into_any()
+    } else {
+        view! {
+            <span class="onecalc-home-shell__palette-row-chord">{chord}</span>
+        }
+        .into_any()
+    };
+    view! {
+        <button
+            type="button"
+            class="onecalc-home-shell__palette-row"
+            role="option"
+            data-section=section
+            data-is-selected=selected_attr
+            aria-selected=selected_attr
+            on:click=move |_| on_dispatch.run(kind.clone())
+        >
+            <span class="onecalc-home-shell__palette-row-section">{section}</span>
+            <span class="onecalc-home-shell__palette-row-label">{label}</span>
+            {detail_view}
+            {chord_view}
+        </button>
+    }
+    .into_any()
+}
+
+/// Render the tab strip between the titlebar and the editor
+/// caption (WS-14 §1 minimum-viable surface). One chip per
+/// `workspace_shell.open_formula_space_order` entry, in stable
+/// order. The active chip is styled distinctly; each chip has a
+/// small `✕` close button and a dirty-marker dot when the
+/// formula has uncommitted changes. A trailing `+` button calls
+/// `on_new_formula` (alias for Ctrl+N).
+///
+/// Hidden when only one formula is open (the breadcrumb already
+/// names it; another row of chrome would just take vertical
+/// space).
+fn render_formula_tab_strip(
+    strip: Option<FormulaTabStripView>,
+    on_select: Callback<String>,
+    on_close: Callback<String>,
+    on_new_formula: Callback<()>,
+) -> AnyView {
+    let Some(strip) = strip else {
+        return view! { <></> }.into_any();
+    };
+    if !strip.is_visible {
+        return view! { <></> }.into_any();
+    }
+    let chips: Vec<_> = strip
+        .chips
+        .into_iter()
+        .map(|chip| render_formula_tab_chip(chip, on_select, on_close))
+        .collect();
+    view! {
+        <nav class="onecalc-home-shell__tab-strip" role="tablist" aria-label="open formulas">
+            {chips}
+            <button
+                type="button"
+                class="onecalc-home-shell__tab-strip-new"
+                title="New formula (Ctrl+N)"
+                aria-label="new formula"
+                on:click=move |_| on_new_formula.run(())
+            >
+                "+"
+            </button>
+        </nav>
+    }
+    .into_any()
+}
+
+fn render_formula_tab_chip(
+    chip: FormulaTabChip,
+    on_select: Callback<String>,
+    on_close: Callback<String>,
+) -> AnyView {
+    let active_attr = if chip.is_active { "true" } else { "false" };
+    let dirty_attr = if chip.is_dirty { "true" } else { "false" };
+    let pinned_attr = if chip.is_pinned { "true" } else { "false" };
+    let id_for_select = chip.formula_space_id.clone();
+    let id_for_close = chip.formula_space_id.clone();
+    let id_attr = chip.formula_space_id.clone();
+    let display_name = chip.display_name.clone();
+    let pinned_marker = chip.is_pinned.then(|| {
+        view! { <span class="onecalc-home-shell__tab-strip-pin" aria-hidden="true">"★"</span> }
+            .into_any()
+    });
+    let dirty_marker = chip.is_dirty.then(|| {
+        view! { <span class="onecalc-home-shell__tab-strip-dirty" aria-hidden="true">"●"</span> }
+            .into_any()
+    });
+    view! {
+        <div
+            class="onecalc-home-shell__tab-strip-chip"
+            role="tab"
+            data-formula-space-id=id_attr
+            data-is-active=active_attr
+            data-is-dirty=dirty_attr
+            data-is-pinned=pinned_attr
+            aria-selected=active_attr
+        >
+            <button
+                type="button"
+                class="onecalc-home-shell__tab-strip-chip-label"
+                on:click=move |_| on_select.run(id_for_select.clone())
+            >
+                {pinned_marker}
+                <span class="onecalc-home-shell__tab-strip-chip-name">{display_name}</span>
+                {dirty_marker}
+            </button>
+            <button
+                type="button"
+                class="onecalc-home-shell__tab-strip-chip-close"
+                title="Close formula"
+                aria-label="close formula"
+                on:click=move |ev| {
+                    ev.stop_propagation();
+                    on_close.run(id_for_close.clone());
+                }
+            >
+                "✕"
+            </button>
+        </div>
+    }
+    .into_any()
+}
+
 fn render_scenario_breadcrumb(
     breadcrumb: Option<ScenarioBreadcrumbView>,
     on_toggle: Callback<()>,
@@ -2955,7 +3353,10 @@ mod tests {
 /// Render the appropriate result-block content per `ResultView` variant.
 /// All variants reach into the result-block container and supply class +
 /// content; the container's CSS supplies the layout (centered, large).
-fn render_result_view(view: Option<ResultView>) -> AnyView {
+fn render_result_view(
+    view: Option<ResultView>,
+    state: RwSignal<crate::state::OneCalcHostState>,
+) -> AnyView {
     match view {
         None => view! { <em class="muted">"awaiting input"</em> }.into_any(),
         Some(ResultView::Empty) => view! { <em class="muted">"awaiting input"</em> }.into_any(),
@@ -3009,7 +3410,7 @@ fn render_result_view(view: Option<ResultView>) -> AnyView {
             cells,
             cell_format,
             truncated,
-        }) => render_array_browser(total_rows, total_cols, cells, cell_format, truncated),
+        }) => render_array_browser(total_rows, total_cols, cells, cell_format, truncated, state),
     }
 }
 
@@ -3031,19 +3432,52 @@ fn render_array_browser(
     cells: Vec<Vec<String>>,
     cell_format: Option<Vec<Vec<ArrayCellFormatView>>>,
     truncated: bool,
+    state: RwSignal<crate::state::OneCalcHostState>,
 ) -> AnyView {
     let preview_rows = cells.len();
     let preview_cols = cells.first().map(|row| row.len()).unwrap_or(0);
     let hidden_rows = total_rows.saturating_sub(preview_rows);
     let hidden_cols = total_cols.saturating_sub(preview_cols);
-    // CSS-grid template: 1 header column + N data columns. Each data
-    // column is `minmax(4rem, max-content)` so short numbers stay
-    // narrow but long strings widen the column up to their natural
-    // width, then horizontal scrolling kicks in.
-    let grid_template = format!(
-        "grid-template-columns: 2.4rem repeat({}, minmax(4rem, max-content));",
-        preview_cols.max(1)
-    );
+    // Read transient session state + workspace display options
+    // up-front so the renderer doesn't reactively re-subscribe
+    // for every cell we render. Each closure-captured state
+    // mutation re-runs the parent reactive context, which
+    // re-runs `render_array_browser` from scratch with the new
+    // values.
+    let (zoom, selection, column_widths, row_heights, display) = state.with(|s| {
+        let space = s
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| s.formula_spaces.get(id));
+        let zoom = space.map(|space| space.array_browser.zoom).unwrap_or(1.0);
+        let selection = space.and_then(|space| space.array_browser.selection);
+        let column_widths = space
+            .map(|space| space.array_browser.column_widths_rem.clone())
+            .unwrap_or_default();
+        let row_heights = space
+            .map(|space| space.array_browser.row_heights_rem.clone())
+            .unwrap_or_default();
+        (
+            zoom,
+            selection,
+            column_widths,
+            row_heights,
+            s.global_ui_chrome.array_browser_display,
+        )
+    });
+    // Build the per-column track template from `column_widths`,
+    // falling back to `minmax(4rem, max-content)` for any column
+    // the user hasn't resized.
+    let mut tracks = String::from("2.4rem ");
+    for col in 0..preview_cols.max(1) {
+        if let Some(width) = column_widths.get(&col) {
+            tracks.push_str(&format!("{width:.2}rem "));
+        } else {
+            tracks.push_str("minmax(4rem, max-content) ");
+        }
+    }
+    let grid_template = format!("grid-template-columns: {tracks};");
     let mut header_cells: Vec<AnyView> = Vec::with_capacity(preview_cols + 1);
     header_cells.push(
         view! {
@@ -3053,10 +3487,24 @@ fn render_array_browser(
     );
     for col in 0..preview_cols {
         let label = column_index_to_a1_label(col);
+        let col_for_resize = col;
+        let initial_width = column_widths.get(&col).copied().unwrap_or(4.0); // matches the `4rem` minmax minimum.
         header_cells.push(
             view! {
-                <div class="onecalc-array-browser__header onecalc-array-browser__column-header">
-                    {label}
+                <div
+                    class="onecalc-array-browser__header onecalc-array-browser__column-header"
+                    data-col=col.to_string()
+                >
+                    <span class="onecalc-array-browser__header-label">{label}</span>
+                    <span
+                        class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--col"
+                        title="Drag to resize column"
+                        on:mousedown=move |ev: WebMouseEvent| {
+                            ev.prevent_default();
+                            ev.stop_propagation();
+                            start_column_resize(state, col_for_resize, initial_width, ev.client_x());
+                        }
+                    ></span>
                 </div>
             }
             .into_any(),
@@ -3065,10 +3513,24 @@ fn render_array_browser(
     let mut body_cells: Vec<AnyView> = Vec::with_capacity(preview_rows * (preview_cols + 1));
     for (row_index, row) in cells.into_iter().enumerate() {
         let row_label = (row_index + 1).to_string();
+        let row_for_resize = row_index;
+        let initial_height = row_heights.get(&row_index).copied().unwrap_or(1.6);
         body_cells.push(
             view! {
-                <div class="onecalc-array-browser__header onecalc-array-browser__row-header">
-                    {row_label}
+                <div
+                    class="onecalc-array-browser__header onecalc-array-browser__row-header"
+                    data-row=row_index.to_string()
+                >
+                    <span class="onecalc-array-browser__header-label">{row_label}</span>
+                    <span
+                        class="onecalc-array-browser__resize-handle onecalc-array-browser__resize-handle--row"
+                        title="Drag to resize row"
+                        on:mousedown=move |ev: WebMouseEvent| {
+                            ev.prevent_default();
+                            ev.stop_propagation();
+                            start_row_resize(state, row_for_resize, initial_height, ev.client_y());
+                        }
+                    ></span>
                 </div>
             }
             .into_any(),
@@ -3079,11 +3541,16 @@ fn render_array_browser(
                 .as_ref()
                 .and_then(|grid| grid.get(row_index))
                 .and_then(|row| row.get(col_index));
+            let is_selected = selection
+                .map(|sel| sel.contains(row_index, col_index))
+                .unwrap_or(false);
             body_cells.push(render_array_browser_cell(
                 row_index,
                 col_index,
                 cell_value,
                 format_for_cell,
+                is_selected,
+                state,
             ));
         }
         // Pad the final row if it's shorter than the column count
@@ -3124,6 +3591,41 @@ fn render_array_browser(
     } else {
         view! { <></> }.into_any()
     };
+    let zoom_attr = format!("{:.2}", zoom);
+    let zoom_style = format!("font-size: {:.2}rem;", zoom);
+    let grid_lines_attr = if display.show_grid_lines {
+        "true"
+    } else {
+        "false"
+    };
+    let alt_rows_attr = if display.show_alternating_rows {
+        "true"
+    } else {
+        "false"
+    };
+    let headers_attr = if display.show_row_column_headers {
+        "true"
+    } else {
+        "false"
+    };
+    let cells_for_copy = state.with(|s| {
+        s.workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| s.formula_spaces.get(id))
+            .and_then(|space| space.array_preview.as_ref())
+            .map(|preview| preview.rows.clone())
+            .unwrap_or_default()
+    });
+    let toolbar = render_array_browser_toolbar(
+        state,
+        zoom,
+        selection,
+        display,
+        total_rows,
+        total_cols,
+        cells_for_copy,
+    );
     view! {
         <div
             class="onecalc-array-browser"
@@ -3132,15 +3634,62 @@ fn render_array_browser(
             data-preview-rows=preview_rows.to_string()
             data-preview-cols=preview_cols.to_string()
             data-truncated=if truncated { "true" } else { "false" }
+            data-zoom=zoom_attr
+            data-show-grid-lines=grid_lines_attr
+            data-show-alternating-rows=alt_rows_attr
+            data-show-headers=headers_attr
             role="region"
             aria-label="array result browser"
+            tabindex="0"
+            on:keydown=move |ev: WebKeyboardEvent| {
+                // Ctrl+C: copy the current rectangular block
+                // selection (or the whole preview when nothing is
+                // selected) as tab-separated text.
+                if ev.ctrl_key() && (ev.key() == "c" || ev.key() == "C") {
+                    ev.prevent_default();
+                    copy_array_browser_selection_to_clipboard(state);
+                }
+                // Ctrl + +/-/0: zoom keyboard shortcuts.
+                if ev.ctrl_key() && (ev.key() == "=" || ev.key() == "+") {
+                    ev.prevent_default();
+                    state.update(|state| {
+                        let _ = crate::app::reducer::zoom_in_active_array_browser(state);
+                    });
+                } else if ev.ctrl_key() && ev.key() == "-" {
+                    ev.prevent_default();
+                    state.update(|state| {
+                        let _ = crate::app::reducer::zoom_out_active_array_browser(state);
+                    });
+                } else if ev.ctrl_key() && ev.key() == "0" {
+                    ev.prevent_default();
+                    state.update(|state| {
+                        let _ = crate::app::reducer::reset_active_array_browser_zoom(state);
+                    });
+                }
+            }
+            on:wheel=move |ev: web_sys::WheelEvent| {
+                // Ctrl+wheel zoom mirrors Excel / browser convention.
+                if !ev.ctrl_key() {
+                    return;
+                }
+                ev.prevent_default();
+                let delta_y = ev.delta_y();
+                state.update(|state| {
+                    if delta_y < 0.0 {
+                        let _ = crate::app::reducer::zoom_in_active_array_browser(state);
+                    } else if delta_y > 0.0 {
+                        let _ = crate::app::reducer::zoom_out_active_array_browser(state);
+                    }
+                });
+            }
         >
+            {toolbar}
             <div class="onecalc-array-browser__caption">
                 {format!("Array[{} × {}]", total_rows, total_cols)}
             </div>
             <div
                 class="onecalc-array-browser__scroll"
-                style=grid_template
+                style=format!("{} {}", grid_template, zoom_style)
                 role="grid"
                 aria-rowcount=total_rows.to_string()
                 aria-colcount=total_cols.to_string()
@@ -3152,6 +3701,232 @@ fn render_array_browser(
         </div>
     }
     .into_any()
+}
+
+/// Render the array-browser toolbar above the grid: zoom buttons,
+/// display-option toggles, current-selection summary, and a Copy
+/// button for the rectangular block selection.
+fn render_array_browser_toolbar(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    zoom: f32,
+    selection: Option<crate::state::ArrayBlockSelection>,
+    display: crate::state::ArrayBrowserDisplaySettings,
+    total_rows: usize,
+    total_cols: usize,
+    cells: Vec<Vec<String>>,
+) -> AnyView {
+    use crate::app::reducer::ArrayBrowserDisplayToggle;
+    let zoom_label = format!("{:.0}%", zoom * 100.0);
+    let selection_summary = match selection {
+        Some(sel) => {
+            let (r0, r1, c0, c1) = sel.normalized();
+            let rows = r1 - r0 + 1;
+            let cols = c1 - c0 + 1;
+            format!(
+                "{}×{} selected · {}",
+                rows,
+                cols,
+                cell_range_label(r0, c0, r1, c1)
+            )
+        }
+        None => format!("{}×{} preview", total_rows, total_cols),
+    };
+    let cells_for_copy_btn = cells;
+    view! {
+        <div class="onecalc-array-browser__toolbar" role="toolbar" aria-label="array browser toolbar">
+            <div class="onecalc-array-browser__toolbar-group">
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    title="Zoom out (Ctrl+-)"
+                    aria-label="zoom out"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::zoom_out_active_array_browser(s);
+                    })
+                >
+                    "−"
+                </button>
+                <span class="onecalc-array-browser__toolbar-zoom-label" data-zoom=format!("{:.2}", zoom)>
+                    {zoom_label}
+                </span>
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    title="Zoom in (Ctrl++)"
+                    aria-label="zoom in"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::zoom_in_active_array_browser(s);
+                    })
+                >
+                    "+"
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    title="Reset zoom (Ctrl+0)"
+                    aria-label="reset zoom"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::reset_active_array_browser_zoom(s);
+                    })
+                >
+                    "100%"
+                </button>
+            </div>
+            <div class="onecalc-array-browser__toolbar-group">
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    data-active=if display.show_grid_lines { "true" } else { "false" }
+                    aria-pressed=if display.show_grid_lines { "true" } else { "false" }
+                    title="Toggle grid lines"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::toggle_array_browser_display_option(
+                            s, ArrayBrowserDisplayToggle::GridLines,
+                        );
+                    })
+                >
+                    "Grid"
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    data-active=if display.show_alternating_rows { "true" } else { "false" }
+                    aria-pressed=if display.show_alternating_rows { "true" } else { "false" }
+                    title="Toggle alternating row stripes"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::toggle_array_browser_display_option(
+                            s, ArrayBrowserDisplayToggle::AlternatingRows,
+                        );
+                    })
+                >
+                    "Stripes"
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    data-active=if display.show_row_column_headers { "true" } else { "false" }
+                    aria-pressed=if display.show_row_column_headers { "true" } else { "false" }
+                    title="Toggle row / column headers"
+                    on:click=move |_| state.update(|s| {
+                        let _ = crate::app::reducer::toggle_array_browser_display_option(
+                            s, ArrayBrowserDisplayToggle::RowColumnHeaders,
+                        );
+                    })
+                >
+                    "Headers"
+                </button>
+            </div>
+            <div class="onecalc-array-browser__toolbar-group onecalc-array-browser__toolbar-group--info">
+                <span class="onecalc-array-browser__toolbar-info" aria-live="polite">
+                    {selection_summary}
+                </span>
+                <button
+                    type="button"
+                    class="onecalc-array-browser__toolbar-button"
+                    title="Copy selection (Ctrl+C)"
+                    aria-label="copy selection"
+                    on:click=move |_| {
+                        copy_cells_to_clipboard(state, &cells_for_copy_btn);
+                    }
+                >
+                    "Copy"
+                </button>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// Format an inclusive cell range into Excel-style A1 notation
+/// (`A1:C5` etc.). Used by the toolbar's selection-summary text.
+fn cell_range_label(r0: usize, c0: usize, r1: usize, c1: usize) -> String {
+    let start = format!("{}{}", column_index_to_a1_label(c0), r0 + 1);
+    if r0 == r1 && c0 == c1 {
+        start
+    } else {
+        format!("{}:{}{}", start, column_index_to_a1_label(c1), r1 + 1)
+    }
+}
+
+/// Copy the current rectangular block selection (or the entire
+/// preview when nothing is selected) as tab-separated text. On
+/// wasm this writes to the system clipboard via the async
+/// Clipboard API; on non-wasm this is a no-op (tests don't have
+/// a clipboard).
+fn copy_array_browser_selection_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>) {
+    let cells = state.with(|s| {
+        s.workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| s.formula_spaces.get(id))
+            .and_then(|space| space.array_preview.as_ref())
+            .map(|preview| preview.rows.clone())
+            .unwrap_or_default()
+    });
+    copy_cells_to_clipboard(state, &cells);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cells: &[Vec<String>]) {
+    let selection = state.with(|s| {
+        s.workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| s.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection)
+    });
+    let payload = build_clipboard_tsv(cells, selection);
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let nav = window.navigator();
+    let clipboard = nav.clipboard();
+    let _ = clipboard.write_text(&payload);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_cells_to_clipboard(
+    _state: RwSignal<crate::state::OneCalcHostState>,
+    _cells: &[Vec<String>],
+) {
+    // No clipboard access on the SSR / test path. The
+    // serialisation logic lives in `build_clipboard_tsv` and is
+    // unit-tested independently.
+}
+
+/// Build the tab-separated payload for clipboard copy. Without a
+/// selection: the whole preview, row-by-row, tab between cells,
+/// `\n` between rows. With a selection: the rectangular sub-grid
+/// inside the selection's normalised bounds.
+pub(crate) fn build_clipboard_tsv(
+    cells: &[Vec<String>],
+    selection: Option<crate::state::ArrayBlockSelection>,
+) -> String {
+    let (r0, r1, c0, c1) = match selection {
+        Some(sel) => sel.normalized(),
+        None => {
+            let rows = cells.len();
+            let cols = cells.first().map(|row| row.len()).unwrap_or(0);
+            if rows == 0 || cols == 0 {
+                return String::new();
+            }
+            (0, rows - 1, 0, cols - 1)
+        }
+    };
+    let mut out = String::new();
+    for r in r0..=r1 {
+        let Some(row) = cells.get(r) else {
+            continue;
+        };
+        let row_part: Vec<&str> = (c0..=c1)
+            .map(|c| row.get(c).map(|s| s.as_str()).unwrap_or(""))
+            .collect();
+        out.push_str(&row_part.join("\t"));
+        if r < r1 {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Render one cell of the array browser, applying CF formatting
@@ -3171,6 +3946,8 @@ fn render_array_browser_cell(
     col_index: usize,
     cell_value: String,
     cell_format: Option<&ArrayCellFormatView>,
+    is_selected: bool,
+    state: RwSignal<crate::state::OneCalcHostState>,
 ) -> AnyView {
     let cell_for_attr = cell_value.clone();
     let mut style = String::new();
@@ -3227,6 +4004,9 @@ fn render_array_browser_cell(
     if cell_format.is_some() {
         cell_classes.push_str(" onecalc-array-browser__cell--cf");
     }
+    if is_selected {
+        cell_classes.push_str(" onecalc-array-browser__cell--selected");
+    }
 
     let icon_attr = icon_glyph
         .as_ref()
@@ -3236,6 +4016,7 @@ fn render_array_browser_cell(
         view! { <span class="onecalc-array-browser__icon">{glyph}</span> }.into_any()
     });
 
+    let selected_attr = if is_selected { "true" } else { "false" };
     view! {
         <div
             class=cell_classes
@@ -3243,8 +4024,25 @@ fn render_array_browser_cell(
             data-col=col_index.to_string()
             data-cf-applied=if cell_format.is_some() { "true" } else { "false" }
             data-icon-set=icon_attr
+            data-is-selected=selected_attr
             title=cell_for_attr
             style=style
+            on:mousedown=move |ev: WebMouseEvent| {
+                // Mouse-down begins a rectangular block selection.
+                // Anchor + focus both at this cell; drag extends
+                // focus via the document-level mousemove handler
+                // installed by `start_block_selection_drag`.
+                ev.prevent_default();
+                let extend = ev.shift_key();
+                start_block_selection_drag(state, row_index, col_index, extend);
+            }
+            on:mouseenter=move |ev: WebMouseEvent| {
+                // While the drag is active (button held), update
+                // the focus corner to wherever the cursor is now.
+                if (ev.buttons() & 1) == 1 {
+                    extend_block_selection_drag(state, row_index, col_index);
+                }
+            }
         >
             {data_bar_overlay}
             {icon_view}
@@ -3260,6 +4058,246 @@ fn render_array_browser_cell(
         </div>
     }
     .into_any()
+}
+
+/// Begin a rectangular block selection at `(row, col)`. When
+/// `extend == true` (shift-click), keeps the existing anchor and
+/// just moves the focus to this cell — Excel's "extend the
+/// selection to here" behaviour. Otherwise both corners snap to
+/// the new cell. The continuing-drag-extends behaviour is wired
+/// at the cell level via `on:mouseenter` while the mouse button
+/// is held.
+fn start_block_selection_drag(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    row: usize,
+    col: usize,
+    extend: bool,
+) {
+    use crate::state::ArrayBlockSelection;
+    state.update(|state| {
+        let next = if extend {
+            // Extend: keep the current anchor (or fall back to
+            // the same cell when no selection exists yet).
+            let prior = state
+                .workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .and_then(|id| state.formula_spaces.get(id))
+                .and_then(|space| space.array_browser.selection);
+            match prior {
+                Some(prior) => {
+                    ArrayBlockSelection::from_corners(prior.anchor_row, prior.anchor_col, row, col)
+                }
+                None => ArrayBlockSelection::from_corners(row, col, row, col),
+            }
+        } else {
+            ArrayBlockSelection::from_corners(row, col, row, col)
+        };
+        let _ = crate::app::reducer::set_active_array_browser_selection(state, Some(next));
+    });
+}
+
+fn extend_block_selection_drag(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    row: usize,
+    col: usize,
+) {
+    use crate::state::ArrayBlockSelection;
+    state.update(|state| {
+        let prior = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection);
+        let Some(prior) = prior else {
+            return;
+        };
+        let next = ArrayBlockSelection::from_corners(prior.anchor_row, prior.anchor_col, row, col);
+        let _ = crate::app::reducer::set_active_array_browser_selection(state, Some(next));
+    });
+}
+
+/// Begin a column-resize gesture. Installs document-level
+/// mousemove + mouseup handlers that translate horizontal cursor
+/// motion into width adjustments on the dragged column. The
+/// initial width is captured up-front (rather than re-read every
+/// move) so the dragging math reduces to `delta = px_to_rem
+/// (cursor_x - mousedown_x)`.
+#[cfg(target_arch = "wasm32")]
+fn start_column_resize(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    column: usize,
+    initial_rem: f32,
+    initial_x: i32,
+) {
+    install_resize_drag(state, ResizeAxis::Column(column), initial_rem, initial_x);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_column_resize(
+    _state: RwSignal<crate::state::OneCalcHostState>,
+    _column: usize,
+    _initial_rem: f32,
+    _initial_x: i32,
+) {
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_row_resize(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    row: usize,
+    initial_rem: f32,
+    initial_y: i32,
+) {
+    install_resize_drag(state, ResizeAxis::Row(row), initial_rem, initial_y);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_row_resize(
+    _state: RwSignal<crate::state::OneCalcHostState>,
+    _row: usize,
+    _initial_rem: f32,
+    _initial_y: i32,
+) {
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+enum ResizeAxis {
+    Column(usize),
+    Row(usize),
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_resize_drag(
+    state: RwSignal<crate::state::OneCalcHostState>,
+    axis: ResizeAxis,
+    initial_rem: f32,
+    initial_pos: i32,
+) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(document) = window.document() else {
+        return;
+    };
+    // Approximate 1rem ≈ 16px (the host's base font-size). A
+    // future polish slice can read the actual computed font-size
+    // off the array-browser root so user font-size overrides
+    // round-trip into the drag math.
+    let rem_per_px = 1.0 / 16.0;
+    // Hold a strong reference to the closures across both events
+    // so they don't get GC'd before mouseup fires.
+    let move_handle: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::MouseEvent)>>>> =
+        Rc::new(RefCell::new(None));
+    let up_handle: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::MouseEvent)>>>> =
+        Rc::new(RefCell::new(None));
+
+    let move_handle_for_move = move_handle.clone();
+    let move_closure = Closure::wrap(Box::new(move |ev: web_sys::MouseEvent| {
+        let delta_px = match axis {
+            ResizeAxis::Column(_) => ev.client_x() - initial_pos,
+            ResizeAxis::Row(_) => ev.client_y() - initial_pos,
+        };
+        let delta_rem = delta_px as f32 * rem_per_px;
+        let next_rem = (initial_rem + delta_rem).max(0.5);
+        state.update(|state| match axis {
+            ResizeAxis::Column(column) => {
+                let _ = crate::app::reducer::set_active_array_browser_column_width(
+                    state, column, next_rem,
+                );
+            }
+            ResizeAxis::Row(row) => {
+                let _ =
+                    crate::app::reducer::set_active_array_browser_row_height(state, row, next_rem);
+            }
+        });
+        // Keep ourselves alive — the borrow is just a refcount
+        // bump. Without this the closure could be dropped
+        // mid-drag if Rust's lifetime accounting decided so.
+        let _ = move_handle_for_move.borrow();
+    }) as Box<dyn FnMut(_)>);
+
+    let document_for_up = document.clone();
+    let move_closure_handle_for_up = move_handle.clone();
+    let up_closure_handle_for_up = up_handle.clone();
+    let up_closure = Closure::wrap(Box::new(move |_: web_sys::MouseEvent| {
+        if let Some(closure) = move_closure_handle_for_up.borrow_mut().take() {
+            let _ = document_for_up
+                .remove_event_listener_with_callback("mousemove", closure.as_ref().unchecked_ref());
+        }
+        if let Some(closure) = up_closure_handle_for_up.borrow_mut().take() {
+            let _ = document_for_up
+                .remove_event_listener_with_callback("mouseup", closure.as_ref().unchecked_ref());
+        }
+    }) as Box<dyn FnMut(_)>);
+
+    let _ = document
+        .add_event_listener_with_callback("mousemove", move_closure.as_ref().unchecked_ref());
+    let _ =
+        document.add_event_listener_with_callback("mouseup", up_closure.as_ref().unchecked_ref());
+    *move_handle.borrow_mut() = Some(move_closure);
+    *up_handle.borrow_mut() = Some(up_closure);
+}
+
+#[cfg(test)]
+mod array_browser_tests {
+    use super::build_clipboard_tsv;
+    use crate::state::ArrayBlockSelection;
+
+    fn cells_3x3() -> Vec<Vec<String>> {
+        vec![
+            vec!["1".into(), "2".into(), "3".into()],
+            vec!["4".into(), "5".into(), "6".into()],
+            vec!["7".into(), "8".into(), "9".into()],
+        ]
+    }
+
+    #[test]
+    fn clipboard_tsv_without_selection_emits_full_grid() {
+        let cells = cells_3x3();
+        let tsv = build_clipboard_tsv(&cells, None);
+        assert_eq!(tsv, "1\t2\t3\n4\t5\t6\n7\t8\t9");
+    }
+
+    #[test]
+    fn clipboard_tsv_with_block_selection_emits_subgrid() {
+        let cells = cells_3x3();
+        // Select rows 1..2, cols 0..1 (the 2x2 block in the
+        // bottom-left): rows ["4 5", "7 8"].
+        let sel = ArrayBlockSelection::from_corners(1, 0, 2, 1);
+        let tsv = build_clipboard_tsv(&cells, Some(sel));
+        assert_eq!(tsv, "4\t5\n7\t8");
+    }
+
+    #[test]
+    fn clipboard_tsv_handles_inverted_corners() {
+        // Anchor at bottom-right, focus at top-left — the
+        // selection rectangle is the same.
+        let cells = cells_3x3();
+        let sel = ArrayBlockSelection::from_corners(2, 2, 0, 0);
+        let tsv = build_clipboard_tsv(&cells, Some(sel));
+        assert_eq!(tsv, "1\t2\t3\n4\t5\t6\n7\t8\t9");
+    }
+
+    #[test]
+    fn clipboard_tsv_single_cell_selection_is_just_that_cell() {
+        let cells = cells_3x3();
+        let sel = ArrayBlockSelection::from_corners(1, 1, 1, 1);
+        let tsv = build_clipboard_tsv(&cells, Some(sel));
+        assert_eq!(tsv, "5");
+    }
+
+    #[test]
+    fn clipboard_tsv_empty_grid_emits_empty_string() {
+        let cells: Vec<Vec<String>> = Vec::new();
+        let tsv = build_clipboard_tsv(&cells, None);
+        assert_eq!(tsv, "");
+    }
 }
 
 /// Map an icon-set kind + index to a Unicode glyph. Excel's icon

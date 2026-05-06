@@ -1,7 +1,8 @@
 mod types;
 
 pub use types::{
-    ActiveFormulaSpaceViewState, AmbientAppContext, AppMode, CapabilityAndEnvironmentState,
+    ActiveFormulaSpaceViewState, AmbientAppContext, AppMode, ArrayBlockSelection,
+    ArrayBrowserDisplaySettings, ArrayBrowserSessionState, CapabilityAndEnvironmentState,
     CapabilityDiffTarget, ClosedFormulaSpaceRecord, CompletionHelpState, ExtensionSurfaceState,
     FormulaArrayPreviewState, FormulaAverageRuleOptions, FormulaColorScaleRuleOptions,
     FormulaColorScaleStop, FormulaConditionalFormattingRank, FormulaConditionalFormattingRule,

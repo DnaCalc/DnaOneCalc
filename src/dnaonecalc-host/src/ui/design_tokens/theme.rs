@@ -2912,6 +2912,212 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-size: 12px;
 }
 
+/* Command palette — Ctrl+K overlay surface. Modal centered on
+   the viewport with a dimmed backdrop; closing on Esc / outside-
+   click is wired in the renderer. The list is keyboard-driven
+   (ArrowUp/Down + Enter), the input is autofocused on open. */
+.onecalc-home-shell__palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 60;
+}
+
+.onecalc-home-shell__palette {
+  width: min(640px, 96vw);
+  background: var(--oc-color-surface);
+  border-radius: 12px;
+  border: 1px solid var(--oc-color-border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.onecalc-home-shell__palette-input {
+  border: none;
+  border-bottom: 1px solid var(--oc-color-border);
+  padding: 12px 16px;
+  font-family: var(--oc-font-ui);
+  font-size: 1rem;
+  background: transparent;
+  outline: none;
+}
+
+.onecalc-home-shell__palette-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.onecalc-home-shell__palette-row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.onecalc-home-shell__palette-row:hover,
+.onecalc-home-shell__palette-row[data-is-selected="true"] {
+  background: var(--oc-color-accent-soft);
+}
+
+.onecalc-home-shell__palette-row-section {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__palette-row-label {
+  font-weight: 500;
+}
+
+.onecalc-home-shell__palette-row-detail {
+  color: var(--oc-color-muted);
+  font-size: 0.85rem;
+}
+
+.onecalc-home-shell__palette-row-chord {
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-mono);
+  font-size: 0.78rem;
+  padding: 2px 6px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+}
+
+.onecalc-home-shell__palette-empty {
+  padding: 18px 16px;
+  color: var(--oc-color-muted);
+  font-style: italic;
+  text-align: center;
+}
+
+/* Tab strip — WS-14 §1 minimum-viable surface for switching between
+   open formulas. Sits between the titlebar and the editor caption.
+   Hidden when only one formula is open (the breadcrumb names it). */
+.onecalc-home-shell__tab-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px var(--oc-space-5);
+  background: var(--oc-color-bg);
+  border-bottom: 1px solid var(--oc-color-border);
+  overflow-x: auto;
+}
+
+.onecalc-home-shell__tab-strip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 6px;
+  background: var(--oc-color-surface);
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  max-width: 240px;
+  min-width: 72px;
+}
+
+.onecalc-home-shell__tab-strip-chip[data-is-active="true"] {
+  background: var(--oc-color-accent-soft);
+  border-color: var(--oc-color-accent);
+  font-weight: 500;
+}
+
+.onecalc-home-shell__tab-strip-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  overflow: hidden;
+}
+
+.onecalc-home-shell__tab-strip-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__tab-strip-pin {
+  color: var(--oc-color-warm);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.onecalc-home-shell__tab-strip-dirty {
+  color: var(--oc-color-warm);
+  font-size: 0.55rem;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.onecalc-home-shell__tab-strip-chip-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  border: none;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.onecalc-home-shell__tab-strip-chip-close:hover {
+  color: var(--oc-color-warm);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.onecalc-home-shell__tab-strip-chip-label:focus-visible,
+.onecalc-home-shell__tab-strip-chip-close:focus-visible,
+.onecalc-home-shell__tab-strip-new:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: -2px;
+}
+
+.onecalc-home-shell__tab-strip-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  border: 1px dashed var(--oc-color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.onecalc-home-shell__tab-strip-new:hover {
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-accent);
+  background: var(--oc-color-accent-soft);
+}
+
 /* ----- breadcrumb wrap + button ----------------------------------------- */
 .onecalc-home-shell__breadcrumb-wrap {
   position: relative;
@@ -4674,6 +4880,146 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-array-browser__cell--empty {
   background: rgba(36, 93, 90, 0.02);
+}
+
+/* Block selection (Excel-style rectangular selection). Cells in
+   the selection get a translucent accent fill + a subtle border
+   on the outer edge of the rectangle. The cell's own background
+   (CF fill etc.) shows through via opacity. */
+.onecalc-array-browser__cell--selected {
+  background: rgba(91, 138, 196, 0.18);
+  outline: 1px solid rgba(91, 138, 196, 0.55);
+  outline-offset: -1px;
+}
+
+/* Toolbar above the grid — zoom buttons, display toggles,
+   selection summary, copy. */
+.onecalc-array-browser__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--oc-color-border);
+  background: var(--oc-color-bg);
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+}
+
+.onecalc-array-browser__toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.onecalc-array-browser__toolbar-group--info {
+  margin-left: auto;
+  gap: 8px;
+}
+
+.onecalc-array-browser__toolbar-button {
+  padding: 4px 10px;
+  font: inherit;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: var(--oc-color-surface);
+  color: var(--oc-color-ink);
+  cursor: pointer;
+}
+
+.onecalc-array-browser__toolbar-button:hover {
+  background: var(--oc-color-accent-soft);
+}
+
+.onecalc-array-browser__toolbar-button[data-active="true"] {
+  background: var(--oc-color-accent-soft);
+  border-color: var(--oc-color-accent);
+  color: var(--oc-color-accent);
+}
+
+.onecalc-array-browser__toolbar-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 2px;
+}
+
+.onecalc-array-browser__toolbar-zoom-label {
+  display: inline-block;
+  min-width: 3.5rem;
+  text-align: center;
+  font-family: var(--oc-font-mono);
+  color: var(--oc-color-muted);
+}
+
+.onecalc-array-browser__toolbar-info {
+  font-family: var(--oc-font-mono);
+  color: var(--oc-color-muted);
+  font-size: 0.72rem;
+}
+
+/* Resize handles — small drag affordances on the trailing edge
+   of column / row headers. Excel shows a thin separator that
+   thickens on hover; we mirror with a 4px-wide hit zone that
+   only paints (border-color) on hover. */
+.onecalc-array-browser__resize-handle {
+  position: absolute;
+  background: transparent;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 3;
+}
+
+.onecalc-array-browser__resize-handle--col {
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+}
+
+.onecalc-array-browser__resize-handle--row {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 4px;
+  cursor: row-resize;
+}
+
+.onecalc-array-browser__resize-handle:hover {
+  background: var(--oc-color-accent);
+  opacity: 0.4;
+}
+
+/* Anchor the resize handle inside the header cell. */
+.onecalc-array-browser__column-header,
+.onecalc-array-browser__row-header {
+  position: relative;
+}
+
+/* Display options — reactive to the toolbar toggles. The grid
+   lines toggle simply hides cell borders; alternating rows
+   pulses every other row's background; headers can be hidden
+   for a compact reading mode. */
+.onecalc-array-browser[data-show-grid-lines="false"] .onecalc-array-browser__cell {
+  border-bottom: none;
+  border-right: none;
+}
+
+.onecalc-array-browser[data-show-alternating-rows="true"]
+  .onecalc-array-browser__cell:not(.onecalc-array-browser__cell--selected) {
+  background-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(36, 93, 90, 0.04) 50%
+  );
+  background-size: 100% 200%;
+}
+
+.onecalc-array-browser[data-show-headers="false"]
+  .onecalc-array-browser__column-header,
+.onecalc-array-browser[data-show-headers="false"]
+  .onecalc-array-browser__row-header,
+.onecalc-array-browser[data-show-headers="false"]
+  .onecalc-array-browser__corner {
+  display: none;
 }
 
 /* Per-cell CF carrier (W071 + W072): cells become positioned

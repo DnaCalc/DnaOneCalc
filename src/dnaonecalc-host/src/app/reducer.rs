@@ -186,6 +186,194 @@ pub fn close_scenario_breadcrumb(state: &mut OneCalcHostState) -> bool {
     true
 }
 
+// -----------------------------------------------------------------
+// Array-browser reducers (zoom, selection, resize, display options)
+// -----------------------------------------------------------------
+
+const ARRAY_BROWSER_ZOOM_MIN: f32 = 0.5;
+const ARRAY_BROWSER_ZOOM_MAX: f32 = 3.0;
+const ARRAY_BROWSER_ZOOM_STEP: f32 = 0.1;
+const ARRAY_BROWSER_COL_MIN_REM: f32 = 1.5;
+const ARRAY_BROWSER_COL_MAX_REM: f32 = 32.0;
+const ARRAY_BROWSER_ROW_MIN_REM: f32 = 1.0;
+const ARRAY_BROWSER_ROW_MAX_REM: f32 = 12.0;
+
+/// Set the active formula's array-browser zoom factor. Clamped
+/// to `[0.5, 3.0]`. Returns `true` when the value actually
+/// changed.
+pub fn set_active_array_browser_zoom(state: &mut OneCalcHostState, zoom: f32) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    let next = zoom.clamp(ARRAY_BROWSER_ZOOM_MIN, ARRAY_BROWSER_ZOOM_MAX);
+    if (formula_space.array_browser.zoom - next).abs() < f32::EPSILON {
+        return false;
+    }
+    formula_space.array_browser.zoom = next;
+    true
+}
+
+/// Step the zoom up by one notch (0.1).
+pub fn zoom_in_active_array_browser(state: &mut OneCalcHostState) -> bool {
+    let current = active_formula_space_mut(state)
+        .map(|space| space.array_browser.zoom)
+        .unwrap_or(1.0);
+    set_active_array_browser_zoom(state, current + ARRAY_BROWSER_ZOOM_STEP)
+}
+
+/// Step the zoom down by one notch (0.1).
+pub fn zoom_out_active_array_browser(state: &mut OneCalcHostState) -> bool {
+    let current = active_formula_space_mut(state)
+        .map(|space| space.array_browser.zoom)
+        .unwrap_or(1.0);
+    set_active_array_browser_zoom(state, current - ARRAY_BROWSER_ZOOM_STEP)
+}
+
+/// Reset zoom to 1.0.
+pub fn reset_active_array_browser_zoom(state: &mut OneCalcHostState) -> bool {
+    set_active_array_browser_zoom(state, 1.0)
+}
+
+/// Set the active formula's array-browser block selection. Pass
+/// `None` to clear. Idempotent.
+pub fn set_active_array_browser_selection(
+    state: &mut OneCalcHostState,
+    selection: Option<crate::state::ArrayBlockSelection>,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.array_browser.selection == selection {
+        return false;
+    }
+    formula_space.array_browser.selection = selection;
+    true
+}
+
+/// Override the displayed width (in rem) for a single column in
+/// the active formula's array browser. Clamped so the column
+/// stays useful.
+pub fn set_active_array_browser_column_width(
+    state: &mut OneCalcHostState,
+    column: usize,
+    width_rem: f32,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    let next = width_rem.clamp(ARRAY_BROWSER_COL_MIN_REM, ARRAY_BROWSER_COL_MAX_REM);
+    let prior = formula_space
+        .array_browser
+        .column_widths_rem
+        .insert(column, next);
+    prior.is_none() || (prior.unwrap() - next).abs() >= f32::EPSILON
+}
+
+/// Override the displayed height (in rem) for a single row in
+/// the active formula's array browser. Clamped to stay useful.
+pub fn set_active_array_browser_row_height(
+    state: &mut OneCalcHostState,
+    row: usize,
+    height_rem: f32,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    let next = height_rem.clamp(ARRAY_BROWSER_ROW_MIN_REM, ARRAY_BROWSER_ROW_MAX_REM);
+    let prior = formula_space
+        .array_browser
+        .row_heights_rem
+        .insert(row, next);
+    prior.is_none() || (prior.unwrap() - next).abs() >= f32::EPSILON
+}
+
+/// Toggle a workspace-level array-browser display option. The
+/// `which` enum picks which knob to toggle.
+pub fn toggle_array_browser_display_option(
+    state: &mut OneCalcHostState,
+    which: ArrayBrowserDisplayToggle,
+) -> bool {
+    let target = match which {
+        ArrayBrowserDisplayToggle::GridLines => {
+            &mut state.global_ui_chrome.array_browser_display.show_grid_lines
+        }
+        ArrayBrowserDisplayToggle::AlternatingRows => {
+            &mut state
+                .global_ui_chrome
+                .array_browser_display
+                .show_alternating_rows
+        }
+        ArrayBrowserDisplayToggle::RowColumnHeaders => {
+            &mut state
+                .global_ui_chrome
+                .array_browser_display
+                .show_row_column_headers
+        }
+    };
+    *target = !*target;
+    true
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ArrayBrowserDisplayToggle {
+    GridLines,
+    AlternatingRows,
+    RowColumnHeaders,
+}
+
+/// Toggle the command-palette overlay. Resets the filter query
+/// and selected index to the empty / 0 state on every toggle so
+/// the next open starts fresh.
+pub fn toggle_command_palette(state: &mut OneCalcHostState) -> bool {
+    state.global_ui_chrome.command_palette_open = !state.global_ui_chrome.command_palette_open;
+    state.global_ui_chrome.command_palette_query.clear();
+    state.global_ui_chrome.command_palette_selected_index = 0;
+    true
+}
+
+/// Force the command palette closed (outside-click, Esc). No-op
+/// when already closed.
+pub fn close_command_palette(state: &mut OneCalcHostState) -> bool {
+    if !state.global_ui_chrome.command_palette_open {
+        return false;
+    }
+    state.global_ui_chrome.command_palette_open = false;
+    state.global_ui_chrome.command_palette_query.clear();
+    state.global_ui_chrome.command_palette_selected_index = 0;
+    true
+}
+
+/// Update the command palette's filter input. Resets the selected
+/// index to 0 because the prior selection's position in the
+/// filtered list is no longer meaningful after the query changes.
+pub fn set_command_palette_query(state: &mut OneCalcHostState, query: String) -> bool {
+    if state.global_ui_chrome.command_palette_query == query {
+        return false;
+    }
+    state.global_ui_chrome.command_palette_query = query;
+    state.global_ui_chrome.command_palette_selected_index = 0;
+    true
+}
+
+/// Move the command palette's selected index by `delta` (signed).
+/// Wraps around `total` so Up at index 0 lands on the last entry
+/// and Down at the last entry lands on 0. No-op when `total == 0`.
+pub fn move_command_palette_selection(
+    state: &mut OneCalcHostState,
+    delta: isize,
+    total: usize,
+) -> bool {
+    if total == 0 {
+        return false;
+    }
+    let current = state.global_ui_chrome.command_palette_selected_index as isize;
+    let next = current + delta;
+    let total_signed = total as isize;
+    let wrapped = ((next % total_signed) + total_signed) % total_signed;
+    state.global_ui_chrome.command_palette_selected_index = wrapped as usize;
+    true
+}
+
 /// Slice 5 — formatting-control mutations on the active formula's
 /// FormulaFormattingState. Each setter returns `true` when the value
 /// actually changed (so callers can short-circuit re-renders) and
@@ -704,6 +892,132 @@ mod tests {
             retained_artifacts::RetainedArtifactImportRequest,
         },
     };
+
+    fn fresh_state_with_active_space(id: &str) -> OneCalcHostState {
+        let formula_space_id = FormulaSpaceId::new(id);
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id, ""));
+        state
+    }
+
+    #[test]
+    fn array_browser_zoom_reducers_clamp_to_bounds() {
+        let mut state = fresh_state_with_active_space("space-zoom");
+        // Default zoom is 1.0.
+        let zoom = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .map(|space| space.array_browser.zoom)
+            .unwrap_or(0.0);
+        assert!((zoom - 1.0).abs() < f32::EPSILON);
+
+        // Step up several times — clamped at 3.0.
+        for _ in 0..50 {
+            let _ = zoom_in_active_array_browser(&mut state);
+        }
+        let zoom = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .map(|space| space.array_browser.zoom)
+            .unwrap_or(0.0);
+        assert!(zoom <= 3.0 + f32::EPSILON);
+        assert!(zoom >= 3.0 - f32::EPSILON);
+
+        // Reset returns to 1.0.
+        let _ = reset_active_array_browser_zoom(&mut state);
+        let zoom = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .map(|space| space.array_browser.zoom)
+            .unwrap_or(0.0);
+        assert!((zoom - 1.0).abs() < f32::EPSILON);
+
+        // Step down several times — clamped at 0.5.
+        for _ in 0..50 {
+            let _ = zoom_out_active_array_browser(&mut state);
+        }
+        let zoom = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .map(|space| space.array_browser.zoom)
+            .unwrap_or(0.0);
+        assert!(zoom <= 0.5 + f32::EPSILON);
+        assert!(zoom >= 0.5 - f32::EPSILON);
+    }
+
+    #[test]
+    fn array_browser_selection_reducer_round_trips() {
+        use crate::state::ArrayBlockSelection;
+        let mut state = fresh_state_with_active_space("space-sel");
+        let sel = ArrayBlockSelection::from_corners(0, 0, 2, 3);
+        assert!(set_active_array_browser_selection(&mut state, Some(sel)));
+        let stored = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection)
+            .expect("stored selection");
+        assert_eq!(stored.normalized(), (0, 2, 0, 3));
+        // Idempotent: setting the same selection returns false.
+        assert!(!set_active_array_browser_selection(&mut state, Some(sel)));
+        // Clearing returns true.
+        assert!(set_active_array_browser_selection(&mut state, None));
+    }
+
+    #[test]
+    fn array_browser_column_width_clamps_to_min() {
+        let mut state = fresh_state_with_active_space("space-col");
+        // 0.1rem is below the minimum 1.5rem clamp.
+        let _ = set_active_array_browser_column_width(&mut state, 2, 0.1);
+        let stored = state
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| state.formula_spaces.get(id))
+            .map(|space| space.array_browser.column_widths_rem.get(&2).copied())
+            .flatten()
+            .expect("column width stored");
+        assert!(stored >= 1.5 - f32::EPSILON);
+    }
+
+    #[test]
+    fn array_browser_display_toggles_flip_settings() {
+        let mut state = fresh_state_with_active_space("space-display");
+        let initial = state.global_ui_chrome.array_browser_display;
+        let _ = toggle_array_browser_display_option(
+            &mut state,
+            ArrayBrowserDisplayToggle::AlternatingRows,
+        );
+        assert_ne!(
+            initial.show_alternating_rows,
+            state
+                .global_ui_chrome
+                .array_browser_display
+                .show_alternating_rows
+        );
+        let _ =
+            toggle_array_browser_display_option(&mut state, ArrayBrowserDisplayToggle::GridLines);
+        assert_ne!(
+            initial.show_grid_lines,
+            state.global_ui_chrome.array_browser_display.show_grid_lines
+        );
+    }
 
     #[test]
     fn input_event_updates_raw_text_and_editor_state_for_active_formula_space() {

@@ -30,7 +30,7 @@ use crate::persistence::{
     apply_loaded_scenario_to_formula_space, formula_space_to_scenario, read_formula_xml,
     write_formula_xml, FormulaFileError,
 };
-use crate::state::{FormulaSpaceState, OneCalcHostState};
+use crate::state::{AppMode, ClosedFormulaSpaceRecord, FormulaSpaceState, OneCalcHostState};
 use serde::{Deserialize, Serialize};
 
 /// Stable storage key. Bumped only on incompatible schema changes
@@ -40,34 +40,92 @@ pub const WORKSPACE_STORAGE_KEY: &str = "dnaonecalc.workspace.v1";
 
 /// Top-level workspace.json envelope. Versioned so the loader can
 /// reject futures it doesn't understand and tolerate older shapes.
+///
+/// Schema history:
+/// - v1: pins + single active-formula XML.
+/// - v2 (current): pins + open-formula list (each chip in the tab
+///   strip survives reload) + recent-formula list (closed
+///   formulas survive reload too) + which open formula was
+///   active at save time.
+///
+/// The loader still accepts v1 envelopes — it treats
+/// `active_formula_xml` as a single open-and-active formula.
+/// Writers always emit v2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceJson {
-    /// Schema version. Currently `1`. Bumped on incompatible
-    /// changes; the loader returns `Err` for any value it does not
-    /// recognise.
+    /// Schema version. The loader accepts `1` and `2`; writers
+    /// always emit `2`.
     pub version: u32,
     /// Pinned formula ids in stable user-visible order. Reloading
     /// the workspace re-inserts each id into
-    /// `workspace_shell.pinned_formula_space_ids` — those that are
-    /// still present in `formula_spaces` (i.e. the active formula
-    /// or a snapshot we restored) flip to the pinned section of
-    /// the breadcrumb dropdown; ids without a matching formula are
-    /// silently dropped on the way back in.
+    /// `workspace_shell.pinned_formula_space_ids`. Ids without a
+    /// matching restored formula stay in the pinned set — the
+    /// breadcrumb / tab-strip surfaces them with a placeholder
+    /// label until the user opens them again.
     #[serde(default)]
     pub pinned_formula_space_ids: Vec<String>,
-    /// Optional active-formula snapshot. Stored as `.dnafml` XML
-    /// so we reuse the existing formula-file round-trip rather
-    /// than maintaining a parallel JSON shape. `None` when the
-    /// workspace had no active formula at the time of write.
+    /// Optional active-formula snapshot — v1-only. Carried
+    /// forward in the struct so v1 envelopes still parse; v2
+    /// writers emit `None` here and use `open_formulas` /
+    /// `active_formula_id` instead.
     #[serde(default)]
     pub active_formula_xml: Option<String>,
+    /// All open formulas in `workspace_shell.open_formula_space_order`
+    /// position. Each entry round-trips through the same `.dnafml`
+    /// XML the host emits for `Save as…`, so formatting / CF
+    /// rules / scenario policy / drill-down state all survive.
+    /// Empty in v1 envelopes.
+    #[serde(default)]
+    pub open_formulas: Vec<PersistedFormulaSnapshot>,
+    /// Closed-but-recent formulas. Mirrors
+    /// `workspace_shell.recent_formula_spaces` plus its
+    /// `recent_formula_space_order`. Each carries its own
+    /// `last_active_mode` so reopening lands the user back in the
+    /// same surface.
+    #[serde(default)]
+    pub recent_formulas: Vec<PersistedRecentFormula>,
+    /// Which open-formula id was active at save time. Restored
+    /// after `open_formulas` is rehydrated. `None` falls back to
+    /// the first open formula.
+    #[serde(default)]
+    pub active_formula_id: Option<String>,
+}
+
+/// One open / closed formula snapshot. The `.dnafml` XML carries
+/// everything the host needs to reconstruct the formula's editor
+/// state (raw text, committed text, formatting, CF rules,
+/// scenario policy, drill-down expansion). The id stays alongside
+/// because the XML's `<dna:Identity>` doesn't always carry the
+/// synthetic `untitled-N` id back unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedFormulaSnapshot {
+    pub formula_space_id: String,
+    pub xml: String,
+}
+
+/// Recent (closed) formula. Adds the `last_active_mode` slot so
+/// reopening lands the user in the same shell surface they had
+/// when they closed the formula.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedRecentFormula {
+    pub formula_space_id: String,
+    pub xml: String,
+    /// Stringified `AppMode` (`"Explore"` / `"Inspect"` /
+    /// `"Workbench"`). Round-trips via
+    /// [`AppMode::parse_persisted`]; an unknown string falls back
+    /// to `Explore`.
+    pub last_active_mode: String,
 }
 
 impl WorkspaceJson {
-    /// Project the live host state into a workspace.json envelope.
-    /// Pinned ids round-trip verbatim; the active formula is
-    /// serialised through the existing `Scenario` → XML path so
-    /// formatting / CF rules / scenario policy survive untouched.
+    /// Project the live host state into a workspace.json envelope
+    /// (schema v2). Carries:
+    /// - the pinned id list,
+    /// - every open formula's `.dnafml` XML in stable
+    ///   `open_formula_space_order` position,
+    /// - every recent (closed) formula's XML + last-active mode in
+    ///   `recent_formula_space_order` position,
+    /// - the id of whichever open formula was active at save time.
     pub fn from_state(state: &OneCalcHostState) -> Self {
         let pinned_formula_space_ids = state
             .workspace_shell
@@ -75,36 +133,67 @@ impl WorkspaceJson {
             .iter()
             .map(|id| id.as_str().to_string())
             .collect();
-        let active_formula_xml = state
+        let open_formulas: Vec<PersistedFormulaSnapshot> = state
+            .workspace_shell
+            .open_formula_space_order
+            .iter()
+            .filter_map(|id| {
+                let space = state.formula_spaces.get(id)?;
+                let scenario = formula_space_to_scenario(space, String::new(), String::new());
+                Some(PersistedFormulaSnapshot {
+                    formula_space_id: id.as_str().to_string(),
+                    xml: write_formula_xml(&scenario),
+                })
+            })
+            .collect();
+        let recent_formulas: Vec<PersistedRecentFormula> = state
+            .workspace_shell
+            .recent_formula_space_order
+            .iter()
+            .filter_map(|id| {
+                let record = state.workspace_shell.recent_formula_spaces.get(id)?;
+                let scenario =
+                    formula_space_to_scenario(&record.formula_space, String::new(), String::new());
+                Some(PersistedRecentFormula {
+                    formula_space_id: id.as_str().to_string(),
+                    xml: write_formula_xml(&scenario),
+                    last_active_mode: persist_app_mode(record.last_active_mode),
+                })
+            })
+            .collect();
+        let active_formula_id = state
             .workspace_shell
             .active_formula_space_id
             .as_ref()
-            .and_then(|id| state.formula_spaces.get(id))
-            .map(|formula_space| {
-                let scenario =
-                    formula_space_to_scenario(formula_space, String::new(), String::new());
-                write_formula_xml(&scenario)
-            });
+            .map(|id| id.as_str().to_string());
         Self {
-            version: 1,
+            version: 2,
             pinned_formula_space_ids,
-            active_formula_xml,
+            // v2 always emits `None` here — open / recent /
+            // active_formula_id carry the per-formula state. Kept
+            // in the struct for v1 backward-compat read.
+            active_formula_xml: None,
+            open_formulas,
+            recent_formulas,
+            active_formula_id,
         }
     }
 
-    /// Apply the workspace.json envelope back onto a fresh host
-    /// state. Restores the active formula's text + formatting AND
-    /// re-inserts the pinned id set. Pin entries whose formula
-    /// isn't restored simply remain in the pinned set — the
-    /// breadcrumb dropdown handles missing-target ids gracefully
-    /// by surfacing them in the Pinned list with a placeholder
-    /// label.
+    /// Apply the workspace.json envelope back onto the host
+    /// state. Restores pins, every open formula's content, every
+    /// recent formula's content, and the active-formula id.
+    ///
+    /// The host's mount path always boots with a fresh
+    /// `untitled-1` open. This loader replaces that placeholder
+    /// when v2 envelopes carry a non-empty `open_formulas` list;
+    /// for v1 envelopes the single `active_formula_xml` is
+    /// applied to whichever formula space is currently active
+    /// (the boot placeholder).
     pub fn apply_to_state(self, state: &mut OneCalcHostState) -> Result<(), WorkspaceLoadError> {
-        if self.version != 1 {
+        if self.version != 1 && self.version != 2 {
             return Err(WorkspaceLoadError::UnsupportedVersion(self.version));
         }
-        // Re-insert pins. Use `FormulaSpaceId::new` so the
-        // BTreeSet ordering is identical to a fresh insert.
+        // Re-insert pins.
         state.workspace_shell.pinned_formula_space_ids.clear();
         for id in self.pinned_formula_space_ids {
             state
@@ -112,11 +201,76 @@ impl WorkspaceJson {
                 .pinned_formula_space_ids
                 .insert(crate::domain::ids::FormulaSpaceId::new(id));
         }
-        // Restore the active formula's content + formatting on
-        // top of the workspace's existing first formula space (the
-        // host always boots with a fresh `untitled-1`; we apply
-        // the loaded scenario to that target).
-        if let Some(xml) = self.active_formula_xml {
+
+        // v2 path: rebuild the open-formula list from scratch so
+        // the boot placeholder doesn't leak into the restored
+        // workspace. v1 path: fall through to the legacy
+        // single-active-XML restore below.
+        if self.version == 2 && !self.open_formulas.is_empty() {
+            // Drop the boot placeholder and any other open
+            // formulas — we're going to repopulate from the
+            // envelope.
+            state.formula_spaces.spaces.clear();
+            state.workspace_shell.open_formula_space_order.clear();
+            state.workspace_shell.formula_space_modes.clear();
+            for snapshot in self.open_formulas {
+                let id = crate::domain::ids::FormulaSpaceId::new(snapshot.formula_space_id.clone());
+                let loaded =
+                    read_formula_xml(&snapshot.xml).map_err(WorkspaceLoadError::FormulaFile)?;
+                let mut formula_space = FormulaSpaceState::new(id.clone(), "");
+                apply_loaded_scenario_to_formula_space(&mut formula_space, loaded.scenario);
+                state.formula_spaces.insert(formula_space);
+                state
+                    .workspace_shell
+                    .open_formula_space_order
+                    .push(id.clone());
+                state
+                    .workspace_shell
+                    .formula_space_modes
+                    .insert(id, AppMode::Explore);
+            }
+            // Restore active-id, falling back to the first open
+            // formula when the envelope didn't name one (or the
+            // named id no longer exists in the open set).
+            let active_id = self
+                .active_formula_id
+                .map(crate::domain::ids::FormulaSpaceId::new)
+                .filter(|id| state.workspace_shell.open_formula_space_order.contains(id))
+                .or_else(|| {
+                    state
+                        .workspace_shell
+                        .open_formula_space_order
+                        .first()
+                        .cloned()
+                });
+            state.workspace_shell.active_formula_space_id = active_id.clone();
+            state.active_formula_space_view.selected_formula_space_id = active_id;
+
+            // Recent (closed) formulas: rebuild
+            // `recent_formula_spaces` map + its order vector.
+            state.workspace_shell.recent_formula_spaces.clear();
+            state.workspace_shell.recent_formula_space_order.clear();
+            for recent in self.recent_formulas {
+                let id = crate::domain::ids::FormulaSpaceId::new(recent.formula_space_id.clone());
+                let loaded =
+                    read_formula_xml(&recent.xml).map_err(WorkspaceLoadError::FormulaFile)?;
+                let mut formula_space = FormulaSpaceState::new(id.clone(), "");
+                apply_loaded_scenario_to_formula_space(&mut formula_space, loaded.scenario);
+                let last_active_mode = parse_app_mode(&recent.last_active_mode);
+                state.workspace_shell.recent_formula_spaces.insert(
+                    id.clone(),
+                    ClosedFormulaSpaceRecord {
+                        formula_space,
+                        last_active_mode,
+                    },
+                );
+                state.workspace_shell.recent_formula_space_order.push(id);
+            }
+        } else if let Some(xml) = self.active_formula_xml {
+            // v1 fallback: apply the single active-formula XML to
+            // whatever target the host has open (typically the
+            // boot placeholder). Pre-existing test corpus + any
+            // workspaces saved before the v2 bump still load.
             let loaded = read_formula_xml(&xml).map_err(WorkspaceLoadError::FormulaFile)?;
             let target_id = state
                 .workspace_shell
@@ -136,12 +290,30 @@ impl WorkspaceJson {
                 return Err(WorkspaceLoadError::NoTargetFormulaSpace);
             };
             apply_loaded_scenario_to_formula_space(target, loaded.scenario);
-            // The reload lands the user back where they were — make
-            // the target the active formula in case the workspace's
-            // active id had drifted relative to open order.
             state.workspace_shell.active_formula_space_id = Some(target_id);
         }
         Ok(())
+    }
+}
+
+/// Round-trip helper for `AppMode` → `String` → `AppMode`. Kept
+/// in lock-step with the on-disk shape used by v2 envelopes; an
+/// unknown string falls back to `Explore` so older workspaces
+/// keep loading even when the enum grows.
+fn persist_app_mode(mode: AppMode) -> String {
+    match mode {
+        AppMode::Explore => "Explore",
+        AppMode::Inspect => "Inspect",
+        AppMode::Workbench => "Workbench",
+    }
+    .to_string()
+}
+
+fn parse_app_mode(raw: &str) -> AppMode {
+    match raw {
+        "Inspect" => AppMode::Inspect,
+        "Workbench" => AppMode::Workbench,
+        _ => AppMode::Explore,
     }
 }
 
@@ -158,6 +330,8 @@ pub enum WorkspaceLoadError {
     NoTargetFormulaSpace,
     #[cfg(target_arch = "wasm32")]
     StorageUnavailable,
+    #[cfg(not(target_arch = "wasm32"))]
+    Io(std::io::Error),
 }
 
 impl core::fmt::Display for WorkspaceLoadError {
@@ -171,6 +345,8 @@ impl core::fmt::Display for WorkspaceLoadError {
             }
             #[cfg(target_arch = "wasm32")]
             Self::StorageUnavailable => write!(f, "browser localStorage unavailable"),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Io(e) => write!(f, "workspace.json file IO failure: {e}"),
         }
     }
 }
@@ -264,12 +440,141 @@ pub fn hydrate_state_from_local_storage(state: &mut OneCalcHostState) {
     }
 }
 
-/// Marker so non-wasm callers can branch without `cfg`.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn save_workspace_to_local_storage(_state: &OneCalcHostState) {}
+// ---------------------------------------------------------------
+// Native (Tauri / desktop) file-backed adapter
+// ---------------------------------------------------------------
+//
+// The browser host uses `localStorage`; the Tauri / desktop host
+// stores `workspace.json` on disk under the platform-standard
+// per-user app-data directory. Both adapters share the same
+// envelope shape (`WorkspaceJson`) and the same auto-save /
+// hydrate API; the home-shell mount calls
+// `save_workspace_to_local_storage` and
+// `hydrate_state_from_local_storage` regardless of target — the
+// "local_storage" name is a slight misnomer on disk but kept for
+// callsite stability across the wasm / native boundary. The
+// actual paths:
+//
+// | Host | Path |
+// |---|---|
+// | Windows | `%APPDATA%\DnaOneCalc\workspace.json` |
+// | macOS | `~/Library/Application Support/DnaOneCalc/workspace.json` |
+// | Linux | `$XDG_CONFIG_HOME/DnaOneCalc/workspace.json` (falls back to `~/.config/...`) |
+// | Browser | `localStorage["dnaonecalc.workspace.v1"]` (no file) |
+//
+// A `DNAONECALC_WORKSPACE_DIR` env var overrides the path —
+// useful for tests and headless runs that want to write to a
+// scratch dir.
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn hydrate_state_from_local_storage(_state: &mut OneCalcHostState) {}
+const WORKSPACE_FILENAME: &str = "workspace.json";
+
+#[cfg(not(target_arch = "wasm32"))]
+const WORKSPACE_APP_DIR: &str = "DnaOneCalc";
+
+/// Resolve the platform-appropriate `workspace.json` path. Honours
+/// `DNAONECALC_WORKSPACE_DIR` (test override) before falling
+/// through to the OS-standard user-config location. Returns `None`
+/// when no usable directory could be located (rare; means
+/// `$HOME` / `%APPDATA%` are all unset, in which case persistence
+/// silently degrades to in-memory).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn workspace_storage_path() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if let Ok(dir) = std::env::var("DNAONECALC_WORKSPACE_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join(WORKSPACE_FILENAME));
+        }
+    }
+    let base = if cfg!(target_os = "windows") {
+        std::env::var("APPDATA").ok().map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var("HOME")
+            .ok()
+            .map(|home| PathBuf::from(home).join("Library/Application Support"))
+    } else {
+        // Linux / BSDs: respect XDG, fall back to ~/.config.
+        std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| PathBuf::from(home).join(".config"))
+            })
+    }?;
+    Some(base.join(WORKSPACE_APP_DIR).join(WORKSPACE_FILENAME))
+}
+
+/// Load the workspace.json file from disk. Returns `Ok(None)`
+/// when no file exists (fresh user) and `Err` for read failures
+/// or schema-incompatibility.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_workspace_from_disk() -> Result<Option<WorkspaceJson>, WorkspaceLoadError> {
+    let Some(path) = workspace_storage_path() else {
+        return Ok(None);
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path).map_err(WorkspaceLoadError::Io)?;
+    let envelope = deserialize_workspace(&raw).map_err(WorkspaceLoadError::Json)?;
+    Ok(Some(envelope))
+}
+
+/// Write the workspace envelope to disk. Creates the parent
+/// directory as needed; logs (via `eprintln!`) on failure rather
+/// than panicking so persistence failures don't crash the app.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_workspace_to_local_storage(state: &OneCalcHostState) {
+    let Some(path) = workspace_storage_path() else {
+        return;
+    };
+    let json = match serialize_workspace(state) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("[onecalc] workspace.json serialise failed: {error}");
+            return;
+        }
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            eprintln!(
+                "[onecalc] workspace.json mkdir failed at `{}`: {error}",
+                parent.display(),
+            );
+            return;
+        }
+    }
+    if let Err(error) = std::fs::write(&path, json) {
+        eprintln!(
+            "[onecalc] workspace.json write failed at `{}`: {error}",
+            path.display(),
+        );
+    }
+}
+
+/// Hydrate the host state from disk (mirror of the wasm
+/// `hydrate_state_from_local_storage`). Called from the home-
+/// shell mount before any subscriber sees the state signal.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn hydrate_state_from_local_storage(state: &mut OneCalcHostState) {
+    match load_workspace_from_disk() {
+        Ok(Some(envelope)) => {
+            if let Err(error) = envelope.apply_to_state(state) {
+                eprintln!("[onecalc] workspace.json apply failed: {error}");
+            }
+        }
+        Ok(None) => {
+            // Fresh user — no prior workspace to restore. Not an
+            // error.
+        }
+        Err(error) => {
+            eprintln!("[onecalc] workspace.json load failed: {error}");
+        }
+    }
+}
 
 // Take an unused import to silence the warning when the wasm path
 // isn't compiled.
@@ -332,14 +637,13 @@ mod tests {
 
     #[test]
     fn workspace_envelope_rejects_future_versions() {
-        let mut envelope = WorkspaceJson {
+        let envelope = WorkspaceJson {
             version: 999,
-            pinned_formula_space_ids: Vec::new(),
-            active_formula_xml: None,
+            ..WorkspaceJson::default()
         };
         let mut state = OneCalcHostState::default();
         let _ = new_formula_space(&mut state);
-        let result = std::mem::take(&mut envelope).apply_to_state(&mut state);
+        let result = envelope.apply_to_state(&mut state);
         assert!(matches!(
             result,
             Err(WorkspaceLoadError::UnsupportedVersion(999)),
@@ -349,9 +653,12 @@ mod tests {
     impl Default for WorkspaceJson {
         fn default() -> Self {
             Self {
-                version: 1,
+                version: 2,
                 pinned_formula_space_ids: Vec::new(),
                 active_formula_xml: None,
+                open_formulas: Vec::new(),
+                recent_formulas: Vec::new(),
+                active_formula_id: None,
             }
         }
     }
@@ -369,5 +676,104 @@ mod tests {
             json_pinned, json_unpinned,
             "envelope must reflect pin-toggle state",
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn workspace_disk_round_trip_via_env_override() {
+        use std::sync::Mutex;
+        // The override env var is process-global; serialise the
+        // disk-path tests through a mutex so concurrent test
+        // threads don't see each other's value.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // Use a scratch directory under `target/` so the test
+        // never touches the user's real config dir.
+        let scratch =
+            std::env::temp_dir().join(format!("dnaonecalc-workspace-test-{}", std::process::id(),));
+        if scratch.exists() {
+            let _ = std::fs::remove_dir_all(&scratch);
+        }
+        std::env::set_var("DNAONECALC_WORKSPACE_DIR", &scratch);
+
+        let mut original = OneCalcHostState::default();
+        let id = new_formula_space(&mut original);
+        original
+            .formula_spaces
+            .get_mut(&id)
+            .expect("space")
+            .raw_entered_cell_text = "=42".to_string();
+        // Save: writes the file to the scratch dir.
+        save_workspace_to_local_storage(&original);
+        let path = workspace_storage_path().expect("path resolves");
+        assert!(path.exists(), "save must create the file at {path:?}");
+
+        // Load: round-trips into a fresh state.
+        let mut restored = OneCalcHostState::default();
+        let _ = new_formula_space(&mut restored);
+        hydrate_state_from_local_storage(&mut restored);
+        let restored_active = restored
+            .workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|aid| restored.formula_spaces.get(aid))
+            .expect("active restored");
+        assert_eq!(restored_active.raw_entered_cell_text, "=42");
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::env::remove_var("DNAONECALC_WORKSPACE_DIR");
+    }
+
+    #[test]
+    fn workspace_v2_round_trips_multiple_open_formulas() {
+        // Build a workspace with two open formulas + one closed
+        // (recent) formula, mutate each one's text + formatting
+        // so we can assert distinct round-trip.
+        let mut original = OneCalcHostState::default();
+        let id_a = new_formula_space(&mut original);
+        let id_b = new_formula_space(&mut original);
+
+        original
+            .formula_spaces
+            .get_mut(&id_a)
+            .expect("space a")
+            .raw_entered_cell_text = "=A1+B1".to_string();
+        let formula_b = original.formula_spaces.get_mut(&id_b).expect("space b");
+        formula_b.raw_entered_cell_text = "=SUM(C1:C10)".to_string();
+        formula_b.formatting.number_format_code = "$#,##0.00".to_string();
+
+        // Close formula_a so it lands in recents.
+        let _ = crate::app::case_lifecycle::close_formula_space(&mut original, id_a.as_str());
+
+        // Round-trip the envelope.
+        let json = serialize_workspace(&original).expect("serialise");
+        let envelope = deserialize_workspace(&json).expect("parse");
+
+        // Apply onto a fresh host (which boots with one
+        // placeholder open formula).
+        let mut restored = OneCalcHostState::default();
+        let _ = new_formula_space(&mut restored);
+        envelope.apply_to_state(&mut restored).expect("apply");
+
+        // formula_b is the surviving open formula; assert text +
+        // formatting survived.
+        let restored_b = restored.formula_spaces.get(&id_b).expect("restored b");
+        assert_eq!(restored_b.raw_entered_cell_text, "=SUM(C1:C10)");
+        assert_eq!(restored_b.formatting.number_format_code, "$#,##0.00");
+        // The active id is the surviving open one (formula_a was
+        // closed and now lives in recents).
+        assert_eq!(
+            restored.workspace_shell.active_formula_space_id.as_ref(),
+            Some(&id_b),
+        );
+        // formula_a survives in `recent_formula_spaces`.
+        let recent_a = restored
+            .workspace_shell
+            .recent_formula_spaces
+            .get(&id_a)
+            .expect("recent a");
+        assert_eq!(recent_a.formula_space.raw_entered_cell_text, "=A1+B1");
     }
 }

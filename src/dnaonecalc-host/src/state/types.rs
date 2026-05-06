@@ -262,6 +262,90 @@ pub struct FormulaSpaceState {
     /// the UI's formatting-controls row; serialised back at save
     /// time via `scenario_projection::formula_space_to_scenario`.
     pub formatting: FormulaFormattingState,
+    /// Per-formula array-browser session state (zoom, current
+    /// rectangular selection, per-column/row resize overrides).
+    /// Transient — not persisted into `workspace.json` today —
+    /// but lives on `FormulaSpaceState` so switching tabs and
+    /// switching back keeps the user's visual context. WS-14
+    /// array-browser slice: zoom + selection + resize.
+    pub array_browser: ArrayBrowserSessionState,
+}
+
+/// Transient per-formula state for the array-result browser.
+/// Default `zoom = 1.0`, no selection, no resize overrides.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayBrowserSessionState {
+    /// Zoom factor applied to the grid via a CSS scale. `1.0`
+    /// means "render at the workspace base font-size"; values
+    /// greater than 1 enlarge, less than 1 shrink. Clamped at
+    /// the reducer boundary to `[0.5, 3.0]`.
+    pub zoom: f32,
+    /// Rectangular block selection. `None` means nothing is
+    /// selected (default on first render). The two corners are
+    /// `anchor` and `focus` — `anchor` is where the user pressed
+    /// the mouse, `focus` is where they last dragged to.
+    pub selection: Option<ArrayBlockSelection>,
+    /// Per-column width overrides keyed by column index. Empty
+    /// when the user hasn't resized anything; the renderer falls
+    /// back to a default `min-content` column otherwise.
+    pub column_widths_rem: std::collections::BTreeMap<usize, f32>,
+    /// Per-row height overrides keyed by row index. Same
+    /// fallback as `column_widths_rem`.
+    pub row_heights_rem: std::collections::BTreeMap<usize, f32>,
+}
+
+impl Default for ArrayBrowserSessionState {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            selection: None,
+            column_widths_rem: std::collections::BTreeMap::new(),
+            row_heights_rem: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// Excel-style rectangular block selection — the user holds the
+/// mouse button on one cell, drags to another, releases. The
+/// selection is the inclusive bounding rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayBlockSelection {
+    pub anchor_row: usize,
+    pub anchor_col: usize,
+    pub focus_row: usize,
+    pub focus_col: usize,
+}
+
+impl ArrayBlockSelection {
+    pub fn from_corners(
+        anchor_row: usize,
+        anchor_col: usize,
+        focus_row: usize,
+        focus_col: usize,
+    ) -> Self {
+        Self {
+            anchor_row,
+            anchor_col,
+            focus_row,
+            focus_col,
+        }
+    }
+
+    /// Inclusive `(row_min, row_max, col_min, col_max)` so the
+    /// renderer / clipboard helper can iterate without caring
+    /// which corner is anchor vs focus.
+    pub fn normalized(self) -> (usize, usize, usize, usize) {
+        let row_min = self.anchor_row.min(self.focus_row);
+        let row_max = self.anchor_row.max(self.focus_row);
+        let col_min = self.anchor_col.min(self.focus_col);
+        let col_max = self.anchor_col.max(self.focus_col);
+        (row_min, row_max, col_min, col_max)
+    }
+
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        let (r0, r1, c0, c1) = self.normalized();
+        row >= r0 && row <= r1 && col >= c0 && col <= c1
+    }
 }
 
 /// Live editable formatting settings for the active formula.
@@ -474,6 +558,7 @@ impl FormulaSpaceState {
             formatting_panel_open: false,
             load_diagnostics: Vec::new(),
             formatting: FormulaFormattingState::default(),
+            array_browser: ArrayBrowserSessionState::default(),
         }
     }
 
@@ -642,6 +727,49 @@ pub struct GlobalUiChromeState {
     /// clicks and Esc force `false` via the dedicated reducer
     /// helper. Default closed.
     pub scenario_breadcrumb_open: bool,
+    /// Command-palette overlay lifecycle. Toggled by `Ctrl+K`
+    /// (canonical) / `Ctrl+Shift+P` (discoverable secondary). The
+    /// palette renders as a centered modal with a filter input
+    /// over the active formula's command set: scenario actions,
+    /// recent / pinned formulas, workspace settings, function
+    /// reference. Default closed.
+    pub command_palette_open: bool,
+    /// Filter text the user has typed into the palette's input
+    /// field. Reset to empty whenever the palette closes so the
+    /// next open starts fresh.
+    pub command_palette_query: String,
+    /// Index of the currently-highlighted command in the
+    /// filtered list. `0` is the first matching command. The
+    /// renderer wraps on overflow.
+    pub command_palette_selected_index: usize,
+    /// Workspace-level array-browser display options. Apply
+    /// uniformly to every formula's array-result rendering;
+    /// per-formula transient state (zoom, selection, resize
+    /// overrides) lives on `FormulaSpaceState.array_browser`.
+    pub array_browser_display: ArrayBrowserDisplaySettings,
+}
+
+/// Workspace-level array-browser display knobs. These apply
+/// across every formula in the workspace; the user toggles them
+/// from the array-browser toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayBrowserDisplaySettings {
+    pub show_grid_lines: bool,
+    pub show_alternating_rows: bool,
+    pub show_row_column_headers: bool,
+}
+
+impl Default for ArrayBrowserDisplaySettings {
+    fn default() -> Self {
+        // Grid lines + headers default ON to match Excel's default
+        // worksheet rendering. Alternating rows OFF — power users
+        // can toggle on for "report-style" reading.
+        Self {
+            show_grid_lines: true,
+            show_alternating_rows: false,
+            show_row_column_headers: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
