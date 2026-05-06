@@ -133,6 +133,67 @@ pub struct FormulaArrayPreview {
     pub truncated: bool,
 }
 
+/// Mirror of `oxfml_core::publication::ArrayCellFormatGrid`. Carries
+/// per-cell CF outcomes when the formula's published value is an
+/// array. Row-major: `rows[row_index][col_index]`. `None` for non-
+/// array values.
+///
+/// Lands as a result of OxFml's W071 + W072 work — the per-cell
+/// carrier introduced by `HANDOFF_OXFML_CF_ARRAY_PER_CELL.md` and
+/// extended by `HANDOFF_OXFML_CF_AGGREGATE_VISUALIZATION_RULES.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayCellFormatGrid {
+    pub rows: Vec<Vec<ArrayCellFormat>>,
+}
+
+/// One cell's CF / format outcome. Mirrors
+/// `oxfml_core::publication::ArrayCellFormat`. `effective_*` fields
+/// carry the post-CF override (or fall back to the visible-value
+/// text and default chrome when no rule fired). `data_bar` /
+/// `icon` are populated when an aggregate visualization rule
+/// (W072) fired for this cell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayCellFormat {
+    pub effective_display_text: String,
+    pub effective_font_color: Option<String>,
+    pub effective_fill_color: Option<String>,
+    pub data_bar: Option<DataBarFill>,
+    pub icon: Option<CfIcon>,
+}
+
+/// Mirror of `oxfml_core::publication::DataBarFill`. Per-cell data-
+/// bar metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataBarFill {
+    /// `0.0`–`1.0`; the cell's value's position in the array's
+    /// numeric range.
+    pub fill_ratio: f64,
+    /// Hex `#RRGGBB`.
+    pub bar_color: String,
+    /// `Left` (positive bar grows right) or `Right` (negative bar
+    /// grows left). Excel's default is `Left`.
+    pub direction: DataBarDirection,
+    /// True when Excel's "show bar only" flag is set.
+    pub show_bar_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataBarDirection {
+    Left,
+    Right,
+}
+
+/// Mirror of `oxfml_core::publication::CfIcon`. Per-cell icon-set
+/// outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfIcon {
+    /// Icon-set kind label — `"3Arrows"` / `"3TrafficLights1"` /
+    /// `"4Rating"` / `"5Quarters"` / etc.
+    pub set_kind: String,
+    /// 0-based index into the kind's icon array.
+    pub icon_index: usize,
+}
+
 /// What the host shows for the cell's value. Bundles the upstream typed
 /// value with display strings so the UI layer can pick the right rendering
 /// without re-running OxFml.
@@ -146,6 +207,48 @@ pub struct FormulaValuePresentation {
     /// View-models dispatch on this discriminator (Number / Text / Logical /
     /// Error / Array / Reference / Lambda) instead of parsing strings.
     pub published_value: EvalValue,
+    /// Function-emitted presentation hint, lifted from
+    /// `RuntimeFormulaResult.returned_value_surface.presentation_hint`.
+    /// `None` for ordinary values; `Some` when a function (e.g. NOW,
+    /// TODAY) returned an `ExtendedValue::ValueWithPresentation`. Drives
+    /// the host's "auto-format on General default" behaviour: when the
+    /// formatting state is empty (General), the host applies the hint's
+    /// default code so a fresh `=NOW()` reads as a date+time without
+    /// the user having to pick a format manually.
+    pub number_format_hint: Option<NumberFormatHint>,
+    /// Effective font colour for the result hero, lifted from
+    /// `verification_publication_surface.effective_font_color`. `Some`
+    /// when a CF rule fired and overrode the font colour, or
+    /// (post-colour-token-publication-handoff) when the format code
+    /// included a `[Red]` / `[Color3]` token that selected the active
+    /// section. Hex `#RRGGBB`. `None` means "render in default chrome".
+    pub effective_font_color: Option<String>,
+    /// Effective fill colour for the result hero. Same source as
+    /// `effective_font_color` — CF-rule-fired or colour-token. Hex
+    /// `#RRGGBB`. `None` means "no fill applied".
+    pub effective_fill_color: Option<String>,
+    /// Per-cell CF outcomes for array results. `Some` when the
+    /// published value is an `EvalValue::Array`; `None` for scalar
+    /// values. Each cell carries its own font / fill / data-bar /
+    /// icon override based on the active CF rules with the array
+    /// as the implicit "selected range" (see
+    /// `docs/HANDOFF_OXFML_CF_ARRAY_PER_CELL.md` and
+    /// `docs/HANDOFF_OXFML_CF_AGGREGATE_VISUALIZATION_RULES.md`).
+    pub array_cell_format: Option<ArrayCellFormatGrid>,
+}
+
+/// Host-side mirror of `oxfunc_value_types::NumberFormatHint`. Kept as
+/// its own type at the bridge boundary so view-models and tests do not
+/// take a transitive dependency on `oxfunc_value_types`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumberFormatHint {
+    General,
+    DateLike,
+    Percentage,
+    Currency,
+    Scientific,
+    Fraction,
+    Custom,
 }
 
 /// Host's bundle of upstream editor-interaction + runtime-result. This

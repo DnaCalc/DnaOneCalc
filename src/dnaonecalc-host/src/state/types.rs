@@ -10,6 +10,7 @@ use crate::extensions::{
     ExtensionProviderCatalog, ExtensionRtdHostState, ExtensionUpstreamPressureRegister,
     FrozenExtensionHostContract,
 };
+use crate::services::completion_popup::CompletionPopupState;
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
@@ -17,7 +18,6 @@ use crate::services::spreadsheet_xml::SpreadsheetXmlCellExtraction;
 use crate::services::verification_bundle::{
     OxReplayExplainRecord, OxReplayMismatchRecord, VerificationObservationGapReport,
 };
-use crate::services::completion_popup::CompletionPopupState;
 use crate::ui::editor::geometry::{EditorOverlayGeometrySnapshot, TextareaMeasurementMetrics};
 use crate::ui::editor::state::{EditorLiveState, EditorSettings, EditorSurfaceState};
 
@@ -37,6 +37,15 @@ pub struct OneCalcHostState {
     /// engineering surface. Preference is per-session (not yet
     /// persisted across reloads — that is a separate seam).
     pub view_mode: ViewMode,
+    /// Workspace-level "ambient app context" — the background
+    /// preferences that drive *defaults* for things like the
+    /// presentation-hint format codes. Modelled after Excel reading
+    /// the Windows regional settings: not the formula's own state,
+    /// not strictly the locale either, but the user's machine /
+    /// app preference for what `=NOW()` and `=TODAY()` should look
+    /// like *when the formula author hasn't picked a format
+    /// explicitly*. Per-formula format codes always trump this.
+    pub ambient_app_context: AmbientAppContext,
 }
 
 impl Default for OneCalcHostState {
@@ -50,6 +59,61 @@ impl Default for OneCalcHostState {
             extension_surface: ExtensionSurfaceState::default(),
             global_ui_chrome: GlobalUiChromeState::default(),
             view_mode: ViewMode::default(),
+            ambient_app_context: AmbientAppContext::default(),
+        }
+    }
+}
+
+/// Workspace-level format defaults — what `=NOW()` / `=TODAY()` etc.
+/// should look like when the formula author hasn't picked a format
+/// explicitly. Excel sources these from the Windows regional
+/// settings; in DnaOneCalc they come from a dedicated host state
+/// slot so the user can also override them through workspace
+/// preferences (UI knob is a follow-up — the slot is the right
+/// architectural home today).
+///
+/// Initial values are populated by
+/// [`AmbientAppContext::detect_for_platform`] which makes a
+/// best-effort guess from the browser's `navigator.language` (on
+/// wasm) or falls back to ISO defaults (on non-wasm SSR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmbientAppContext {
+    /// BCP-47 language tag of the active workspace locale preset
+    /// (e.g. `"en-US"`, `"de-DE"`). Drives the format-code triple
+    /// below. Surface-only today: month / weekday name tables and
+    /// numeric separators stay en-US until OxFml's locale-expansion
+    /// chain (`SEAM-OXFML-LOCALE-EXPAND`, blocked on OxFunc W094)
+    /// lands. The user can still switch this — the result-hero
+    /// format defaults follow immediately, the runtime locale
+    /// tables follow when upstream lands.
+    pub language_tag: String,
+    /// Excel format-string-text used as the default for the
+    /// `DateLike` presentation hint **without** a time component
+    /// (e.g. `=TODAY()`). User-overridable.
+    pub date_format_code: String,
+    /// Excel format-string-text used as the default for the
+    /// `DateLike` presentation hint **with** a time component
+    /// (e.g. `=NOW()`). User-overridable.
+    pub datetime_format_code: String,
+    /// Excel format-string-text for time-only defaults. Reserved
+    /// for functions that return a pure time value once OxFunc
+    /// surfaces a `TimeLike` hint — for now no built-in function
+    /// emits this hint, but the slot stays so the same indirection
+    /// covers it when it arrives.
+    pub time_format_code: String,
+}
+
+impl Default for AmbientAppContext {
+    fn default() -> Self {
+        // ISO fallback — safe to read for any audience, deliberately
+        // *not* what most users see in Excel. The
+        // `detect_for_platform` initialiser overrides this with a
+        // platform-derived guess at startup.
+        Self {
+            language_tag: String::new(),
+            date_format_code: "yyyy-mm-dd".to_string(),
+            datetime_format_code: "yyyy-mm-dd HH:mm:ss".to_string(),
+            time_format_code: "HH:mm:ss".to_string(),
         }
     }
 }
@@ -176,6 +240,14 @@ pub struct FormulaSpaceState {
     /// and the result-caption. Toggled by Ctrl+D and by the
     /// editor-foot trigger row. Default false.
     pub formula_drill_open: bool,
+    /// Collapsible state for the formatting panel that sits above
+    /// the result section (WS-14 plan §5.3, item 8). When `false`
+    /// the panel renders as a one-line summary chip ("format ▸
+    /// General") that the user can click to expand; when `true`
+    /// the full formatting controls row is rendered. Default
+    /// false — the panel starts collapsed so the eye runs editor
+    /// → result without a visual detour.
+    pub formatting_panel_open: bool,
     /// Diagnostics surfaced from the persistence loader (slice 3 of
     /// the persistence ladder). Empty by default; populated when the
     /// user opens a `.dnafml` / `.xml` file that lacked the
@@ -198,9 +270,9 @@ pub struct FormulaSpaceState {
 /// controls row exposes today.
 ///
 /// Fields that aren't yet UI-editable but are part of the persisted
-/// schema (style hierarchy, CF rules, host profile, scenario
-/// policy) live in their own future home; this struct only carries
-/// the slice-5 surface.
+/// schema (style hierarchy, host profile) live in their own future
+/// home; this struct carries the surfaces that appear in the
+/// formatting panel today.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FormulaFormattingState {
     /// Excel format-string-text (e.g. `"0.00"`, `"$#,##0.00"`,
@@ -213,7 +285,165 @@ pub struct FormulaFormattingState {
     /// Locale's date-system flag. False = 1900 (default), true =
     /// 1904 (Mac legacy).
     pub date1904: bool,
+    /// Calc-options scenario policy for this formula. `Deterministic`
+    /// pins `now_serial` and `random_value` to fixed seeds so a
+    /// formula re-runs identically on every keystroke — what the
+    /// user wants while authoring. `LiveRecalc` lets each bridge
+    /// invocation pick fresh values, so `=NOW()` advances and
+    /// `=RAND()` rolls a new value per round-trip. The bridge reads
+    /// this and populates `RuntimeFormulaRequest`'s typed-context
+    /// bundle accordingly. Default `Deterministic` — that's the
+    /// authoring-friendly mode and the only mode the OxFml runtime
+    /// exposed pre-MVP.
+    pub scenario_policy: crate::persistence::ScenarioPolicy,
+    /// Conditional-formatting rules for this formula's result hero.
+    /// Each rule renders as a row inside the formatting panel and
+    /// flows through `VerificationPublicationContext.conditional_formatting_rules`
+    /// to OxFml's publication surface. Empty by default.
+    pub conditional_formatting_rules: Vec<FormulaConditionalFormattingRule>,
 }
+
+/// Host-side mirror of `oxfml_core`'s `VerificationConditionalFormattingRule`.
+/// One entry per CF rule the user has authored on this formula's
+/// result hero. The bridge translates this list into the upstream
+/// publication context so OxFml can apply / order / fall back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaConditionalFormattingRule {
+    /// Rule kind label. Live kinds (post-W070):
+    /// `"cell_value"` (operator-driven comparisons),
+    /// `"text"` (operator-driven text predicates),
+    /// `"dates"` (relative-date predicate; `thresholds[0]` carries
+    /// the relative-date keyword like `"today"` or `"last7Days"`),
+    /// `"blanks"` / `"noBlanks"` / `"errors"` / `"noErrors"`
+    /// (kind-only predicates, no operator / threshold needed),
+    /// `"expression"` (free-form formula evaluated as boolean).
+    /// Free-form string at the host boundary; tightens when OxFml
+    /// surfaces an enum.
+    pub rule_kind: String,
+    /// Comparison operator name in canonical Excel CF form
+    /// (`"greaterThan"`, `"greaterThanOrEqual"`, `"lessThan"`,
+    /// `"lessThanOrEqual"`, `"equal"`, `"notEqual"`, `"between"`,
+    /// `"notBetween"`, `"containsText"`, `"notContainsText"`,
+    /// `"beginsWith"`, `"endsWith"`). OxFml's
+    /// `evaluate_operator_rule` strips non-alphanumerics and
+    /// lowercases before matching, so casing is forgiving but the
+    /// operator *name* must match — abbreviated forms like `"gt"`
+    /// silently never fire. `None` when the rule kind doesn't
+    /// take an operator (`dates`, `blanks`, `errors`, …).
+    pub operator: Option<String>,
+    /// Threshold values, in operator order. For `between` two
+    /// thresholds; for single-operand operators one threshold;
+    /// for `dates` rule kind one entry holding the relative-date
+    /// keyword (`"today"`, `"yesterday"`, `"last7Days"`, …);
+    /// empty for predicate-only kinds.
+    pub thresholds: Vec<String>,
+    /// Hex `#RRGGBB` font colour to apply when the rule fires.
+    pub font_color: Option<String>,
+    /// Hex `#RRGGBB` fill colour to apply when the rule fires.
+    pub fill_color: Option<String>,
+    /// Optional **typed** rule payload — host-side mirror of
+    /// `oxfml_core::publication::ConditionalFormattingTypedRule`
+    /// landed in OxFml W073 (`HANDOFF-DNAONECALC-012`). When set,
+    /// OxFml prefers this typed payload over the bounded-string
+    /// `thresholds` convention. Leaving it `None` keeps the W072
+    /// bounded-string fallback active so older callers that only
+    /// author through `thresholds` keep working.
+    pub typed_rule: Option<FormulaConditionalFormattingTypedRule>,
+}
+
+/// Typed CF rule payload — host-side mirror of upstream
+/// `ConditionalFormattingTypedRule`. Each sub-options field is
+/// `Option<...>`; for a given rule_kind exactly one of them is
+/// populated. Empty rule (`Default`) round-trips as a no-op,
+/// which lets the seed helper attach a typed rule even when no
+/// kind-specific data has been authored yet.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FormulaConditionalFormattingTypedRule {
+    pub color_scale: Option<FormulaColorScaleRuleOptions>,
+    pub data_bar: Option<FormulaDataBarRuleOptions>,
+    pub icon_set: Option<FormulaIconSetRuleOptions>,
+    pub rank: Option<FormulaRankRuleOptions>,
+    pub average: Option<FormulaAverageRuleOptions>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FormulaColorScaleRuleOptions {
+    pub stops: Vec<FormulaColorScaleStop>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaColorScaleStop {
+    pub position: FormulaConditionalFormattingThreshold,
+    /// Hex `#RRGGBB`.
+    pub color: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FormulaDataBarRuleOptions {
+    pub minimum: Option<FormulaConditionalFormattingThreshold>,
+    pub maximum: Option<FormulaConditionalFormattingThreshold>,
+    /// Hex `#RRGGBB`. `None` means OxFml falls back to
+    /// `VerificationConditionalFormattingRule.fill_color`.
+    pub bar_color: Option<String>,
+    pub direction: Option<FormulaDataBarDirection>,
+    pub show_bar_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormulaDataBarDirection {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaIconSetRuleOptions {
+    /// Excel's published icon-set kind, e.g. `"3Arrows"`,
+    /// `"3TrafficLights1"`, `"4Rating"`, `"5Quarters"`.
+    pub set_kind: String,
+    /// `n - 1` thresholds for an `n`-icon set, in ascending order.
+    pub thresholds: Vec<FormulaConditionalFormattingThreshold>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaRankRuleOptions {
+    pub rank: FormulaConditionalFormattingRank,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormulaConditionalFormattingRank {
+    Count(usize),
+    /// 0..100 percentile.
+    Percent(f64),
+}
+
+impl Eq for FormulaConditionalFormattingRank {}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FormulaAverageRuleOptions {
+    /// When true, cells equal to the mean also fire (Excel's
+    /// `equalAverage` flag).
+    pub include_equal: bool,
+    /// Optional stddev offset multiplier (e.g. `1.0` for "above
+    /// 1 stddev").
+    pub stddev_multiplier: Option<f64>,
+}
+
+impl Eq for FormulaAverageRuleOptions {}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum FormulaConditionalFormattingThreshold {
+    #[default]
+    Min,
+    Mid,
+    Max,
+    /// 0..100.
+    Percent(f64),
+    /// 0..100.
+    Percentile(f64),
+    Number(f64),
+}
+
+impl Eq for FormulaConditionalFormattingThreshold {}
 
 impl FormulaSpaceState {
     pub fn new(formula_space_id: FormulaSpaceId, raw_entered_cell_text: impl Into<String>) -> Self {
@@ -241,6 +471,7 @@ impl FormulaSpaceState {
             proofed_cell_text: None,
             expanded_editor: false,
             formula_drill_open: false,
+            formatting_panel_open: false,
             load_diagnostics: Vec::new(),
             formatting: FormulaFormattingState::default(),
         }

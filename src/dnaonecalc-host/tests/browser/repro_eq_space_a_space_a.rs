@@ -67,9 +67,7 @@ async fn typing_eq_space_a_space_a_renders_all_chars_in_overlay() {
                 let role = el.get_attribute("data-token-role").unwrap_or_default();
                 let start = el.get_attribute("data-token-start").unwrap_or_default();
                 let text = el.text_content().unwrap_or_default();
-                dump.push(format!(
-                    "  [role={role:?} start={start:?} text={text:?}]"
-                ));
+                dump.push(format!("  [role={role:?} start={start:?} text={text:?}]"));
             }
         }
     }

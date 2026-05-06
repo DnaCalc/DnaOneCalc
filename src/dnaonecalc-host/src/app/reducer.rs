@@ -1,7 +1,6 @@
 use crate::services::completion_popup::{
-    accept_selected_completion as popup_accept_selected,
-    dismiss_completion_popup as popup_dismiss, move_completion_selection as popup_move_selection,
-    CompletionAcceptance,
+    accept_selected_completion as popup_accept_selected, dismiss_completion_popup as popup_dismiss,
+    move_completion_selection as popup_move_selection, CompletionAcceptance,
 };
 use crate::services::retained_artifacts::{
     import_manual_artifact_for_active_formula_space, import_verification_bundle_report_json,
@@ -235,6 +234,101 @@ pub fn set_active_date1904(state: &mut OneCalcHostState, value: bool) -> bool {
     true
 }
 
+/// Set the active formula's scenario policy (Deterministic /
+/// LiveRecalc). Drives whether the bridge passes fixed seeds for
+/// `now_serial` / `random_value` (Deterministic — formula re-runs
+/// identically on every keystroke) or fresh values per round-trip
+/// (LiveRecalc — `=NOW()` advances, `=RAND()` rolls). Returns true
+/// when the value actually changed.
+pub fn set_active_scenario_policy(
+    state: &mut OneCalcHostState,
+    policy: crate::persistence::ScenarioPolicy,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if formula_space.formatting.scenario_policy == policy {
+        return false;
+    }
+    formula_space.formatting.scenario_policy = policy;
+    true
+}
+
+/// Switch the workspace's ambient locale preset to the given
+/// BCP-47 language tag. Replaces the date / datetime / time format
+/// codes and the `language_tag` field on `AmbientAppContext`.
+/// Returns true when the value actually changed.
+///
+/// Note: surface-only today — the result hero's format defaults
+/// follow this preset, but month / weekday names and numeric
+/// separators stay en-US until OxFml's locale tables land
+/// (`SEAM-OXFML-LOCALE-EXPAND`).
+pub fn set_workspace_locale_preset(state: &mut OneCalcHostState, language_tag: String) -> bool {
+    let next = crate::services::ambient_app_context::ambient_app_context_for_language_tag(Some(
+        &language_tag,
+    ));
+    if state.ambient_app_context == next {
+        return false;
+    }
+    state.ambient_app_context = next;
+    true
+}
+
+/// Append a conditional-formatting rule to the active formula.
+/// Returns the new rule's index in the list, or `None` when there
+/// is no active formula space.
+pub fn add_active_conditional_formatting_rule(
+    state: &mut OneCalcHostState,
+    rule: crate::state::FormulaConditionalFormattingRule,
+) -> Option<usize> {
+    let formula_space = active_formula_space_mut(state)?;
+    formula_space
+        .formatting
+        .conditional_formatting_rules
+        .push(rule);
+    Some(formula_space.formatting.conditional_formatting_rules.len() - 1)
+}
+
+/// Remove a conditional-formatting rule by index. Returns true when
+/// the rule existed and was removed.
+pub fn remove_active_conditional_formatting_rule(
+    state: &mut OneCalcHostState,
+    index: usize,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    if index >= formula_space.formatting.conditional_formatting_rules.len() {
+        return false;
+    }
+    formula_space
+        .formatting
+        .conditional_formatting_rules
+        .remove(index);
+    true
+}
+
+/// Update an existing CF rule by index. Returns true when the rule
+/// existed and the new value is different from the current value.
+pub fn update_active_conditional_formatting_rule(
+    state: &mut OneCalcHostState,
+    index: usize,
+    rule: crate::state::FormulaConditionalFormattingRule,
+) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    let rules = &mut formula_space.formatting.conditional_formatting_rules;
+    if index >= rules.len() {
+        return false;
+    }
+    if rules[index] == rule {
+        return false;
+    }
+    rules[index] = rule;
+    true
+}
+
 pub fn apply_editor_overlay_measurement_to_active_formula_space(
     state: &mut OneCalcHostState,
     measurement_event: EditorOverlayMeasurementEvent,
@@ -256,7 +350,9 @@ pub fn accept_completion_by_proposal_id_on_active_formula_space(
     state: &mut OneCalcHostState,
     proposal_id: &str,
 ) -> Option<crate::services::completion_popup::CompletionAcceptance> {
-    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let raw_text = active_formula_space_mut(state)?
+        .raw_entered_cell_text
+        .clone();
     let formula_space = active_formula_space_mut(state)?;
     if let crate::services::completion_popup::CompletionPopupState::Open {
         items,
@@ -264,7 +360,10 @@ pub fn accept_completion_by_proposal_id_on_active_formula_space(
         ..
     } = &mut formula_space.completion_popup
     {
-        if let Some(index) = items.iter().position(|item| item.proposal_id == proposal_id) {
+        if let Some(index) = items
+            .iter()
+            .position(|item| item.proposal_id == proposal_id)
+        {
             *selected_index = index;
         } else {
             return None;
@@ -286,7 +385,9 @@ pub fn accept_completion_by_proposal_id_on_active_formula_space(
 pub fn accept_selected_completion_with_suppression_on_active_formula_space(
     state: &mut OneCalcHostState,
 ) -> Option<crate::services::completion_popup::CompletionAcceptance> {
-    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let raw_text = active_formula_space_mut(state)?
+        .raw_entered_cell_text
+        .clone();
     let formula_space = active_formula_space_mut(state)?;
     let acceptance = popup_accept_selected(&mut formula_space.completion_popup, &raw_text)?;
     formula_space.completion_popup_suppressed_until_next_input = true;
@@ -363,6 +464,20 @@ pub fn close_formula_drill_on_active_formula_space(state: &mut OneCalcHostState)
     true
 }
 
+/// Toggle the formatting-controls panel on the active formula space.
+/// The panel sits between the formula drill-down and the result
+/// section; when collapsed it renders as a single chip with the
+/// number-format summary, when expanded it renders the full
+/// formatting controls row. Returns the new `formatting_panel_open`
+/// value, or `false` when there is no active formula space.
+pub fn toggle_formatting_panel_on_active_formula_space(state: &mut OneCalcHostState) -> bool {
+    let Some(formula_space) = active_formula_space_mut(state) else {
+        return false;
+    };
+    formula_space.formatting_panel_open = !formula_space.formatting_panel_open;
+    formula_space.formatting_panel_open
+}
+
 /// Accept the popup's currently-selected completion. Returns the
 /// `CompletionAcceptance` describing the splice the editor layer
 /// should apply, plus transitions the popup to `Hidden`. Returns
@@ -371,7 +486,9 @@ pub fn close_formula_drill_on_active_formula_space(state: &mut OneCalcHostState)
 pub fn accept_selected_completion_on_active_formula_space(
     state: &mut OneCalcHostState,
 ) -> Option<CompletionAcceptance> {
-    let raw_text = active_formula_space_mut(state)?.raw_entered_cell_text.clone();
+    let raw_text = active_formula_space_mut(state)?
+        .raw_entered_cell_text
+        .clone();
     let formula_space = active_formula_space_mut(state)?;
     popup_accept_selected(&mut formula_space.completion_popup, &raw_text)
 }
@@ -988,9 +1105,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         let metrics = TextareaMeasurementMetrics {
             char_width_px: 9,
@@ -1011,9 +1129,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         let metrics = TextareaMeasurementMetrics {
             char_width_px: 9,
@@ -1037,9 +1156,10 @@ mod tests {
         let formula_space_id = FormulaSpaceId::new("space-1");
         let mut state = OneCalcHostState::default();
         state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
-        state
-            .formula_spaces
-            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=SUM(1,2)"));
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
 
         let initial = TextareaMeasurementMetrics {
             char_width_px: 9,

@@ -153,17 +153,127 @@ pub struct PublicationContext {
 /// One CF rule. Minimal shape for slice 1; richer fields land alongside
 /// `OxFml::publication::VerificationConditionalFormattingRule` mapping
 /// in slice 2.
+/// One CF rule. Two flavours overlap on this single shape:
+///
+/// - **Worksheet-range rules** (the SpreadsheetML 2003
+///   `<ConditionalFormatting>` lane) populate `range` plus `formula`
+///   / `rule_kind`. These persist into the worksheet block.
+/// - **Result-hero rules** (the host's
+///   `FormulaConditionalFormattingRule`, attached to the formula's
+///   single-cell display) leave `range` empty and populate the
+///   `operator` / `thresholds` / `font_color` / `fill_color`
+///   fields. These persist inside `<dna:CfRules>` only.
+///
+/// `scenario_projection.rs` decides which flavour each rule is and
+/// projects accordingly. The persistence layer never tries to
+/// disambiguate further than "range vs. no range".
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CfRule {
     pub range: String,
     pub formula: Option<String>,
     pub rule_kind: Option<String>,
+    pub operator: Option<String>,
+    pub thresholds: Vec<String>,
+    pub font_color: Option<String>,
+    pub fill_color: Option<String>,
+    /// Optional typed CF rule payload, mirroring OxFml W073's
+    /// `ConditionalFormattingTypedRule`. Persisted as a JSON string
+    /// inside a `<dna:TypedRule>` child element of `<dna:CfRule>` so
+    /// the typed shape can grow without churning the XML grammar.
+    /// `None` when the rule relies purely on the W072 bounded-string
+    /// `thresholds` convention.
+    pub typed_rule: Option<CfTypedRule>,
 }
+
+/// Persistence shape for the typed CF rule payload. Mirrors
+/// `crate::state::FormulaConditionalFormattingTypedRule` field-for-
+/// field; the projection layer (`scenario_projection.rs`) maps
+/// between this and the in-memory shape, and the JSON ser/de helpers
+/// at the bottom of this module round-trip it through the XML.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CfTypedRule {
+    pub color_scale: Option<CfColorScaleRuleOptions>,
+    pub data_bar: Option<CfDataBarRuleOptions>,
+    pub icon_set: Option<CfIconSetRuleOptions>,
+    pub rank: Option<CfRankRuleOptions>,
+    pub average: Option<CfAverageRuleOptions>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CfColorScaleRuleOptions {
+    pub stops: Vec<CfColorScaleStop>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfColorScaleStop {
+    pub position: CfThreshold,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CfDataBarRuleOptions {
+    pub minimum: Option<CfThreshold>,
+    pub maximum: Option<CfThreshold>,
+    pub bar_color: Option<String>,
+    pub direction: Option<CfDataBarDirection>,
+    pub show_bar_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CfDataBarDirection {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfIconSetRuleOptions {
+    pub set_kind: String,
+    pub thresholds: Vec<CfThreshold>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfRankRuleOptions {
+    pub rank: CfRank,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CfRank {
+    Count(usize),
+    Percent(f64),
+}
+
+impl Eq for CfRank {}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CfAverageRuleOptions {
+    pub include_equal: bool,
+    pub stddev_multiplier: Option<f64>,
+}
+
+impl Eq for CfAverageRuleOptions {}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum CfThreshold {
+    #[default]
+    Min,
+    Mid,
+    Max,
+    Percent(f64),
+    Percentile(f64),
+    Number(f64),
+}
+
+impl Eq for CfThreshold {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioPolicy {
-    #[default]
     Deterministic,
+    /// Default: volatile functions (`=NOW()`, `=RAND()`,
+    /// `=RANDARRAY()`) re-evaluate each bridge round-trip.
+    /// Matches Excel's default-on workbook behaviour.
+    /// Deterministic is the explicit "pin seeds for reproducible
+    /// authoring" mode the user toggles into.
+    #[default]
     LiveRecalc,
 }
 
@@ -589,7 +699,10 @@ fn write_worksheet(out: &mut String, scenario: &Scenario) {
 fn write_cell(out: &mut String, scenario: &Scenario) {
     let raw = &scenario.entry.text;
     let style_attr = if needs_default_style(scenario) {
-        format!(" ss:StyleID=\"{}\"", xml_attr_escape(&effective_style_id(scenario)))
+        format!(
+            " ss:StyleID=\"{}\"",
+            xml_attr_escape(&effective_style_id(scenario))
+        )
     } else {
         String::new()
     };
@@ -756,7 +869,32 @@ fn write_dna_publication_context(out: &mut String, pc: &PublicationContext) {
         if let Some(rule_kind) = rule.rule_kind.as_deref() {
             write_attr(out, "rule-kind", rule_kind);
         }
-        out.push_str("/>\n");
+        if let Some(operator) = rule.operator.as_deref() {
+            write_attr(out, "operator", operator);
+        }
+        if let Some(font_color) = rule.font_color.as_deref() {
+            write_attr(out, "font-color", font_color);
+        }
+        if let Some(fill_color) = rule.fill_color.as_deref() {
+            write_attr(out, "fill-color", fill_color);
+        }
+        let typed_rule_json = rule.typed_rule.as_ref().map(write_cf_typed_rule_json);
+        if rule.thresholds.is_empty() && typed_rule_json.is_none() {
+            out.push_str("/>\n");
+        } else {
+            out.push_str(">\n");
+            for threshold in &rule.thresholds {
+                out.push_str("            <dna:Threshold>");
+                out.push_str(&xml_text_escape(threshold));
+                out.push_str("</dna:Threshold>\n");
+            }
+            if let Some(json) = typed_rule_json {
+                out.push_str("            <dna:TypedRule>");
+                out.push_str(&xml_text_escape(&json));
+                out.push_str("</dna:TypedRule>\n");
+            }
+            out.push_str("          </dna:CfRule>\n");
+        }
     }
     out.push_str("        </dna:CfRules>\n");
     out.push_str("      </dna:PublicationContext>\n");
@@ -820,6 +958,318 @@ fn xml_attr_escape(value: &str) -> String {
 /// for safety (no harm; readability unchanged).
 fn xml_text_escape(value: &str) -> String {
     xml_attr_escape(value)
+}
+
+// ---------------------------------------------------------------------------
+// Typed CF rule JSON ser/de
+//
+// The typed CF rule payload is round-tripped through XML as a JSON
+// blob inside a `<dna:TypedRule>` child element of `<dna:CfRule>`. We
+// build / parse the JSON by hand (no `serde_json::to_value` round-
+// tripping through `Value`) so the encoded shape is stable and the
+// `.dnafml` files stay diffable. The keys mirror the upstream
+// `oxfml_core::publication::ConditionalFormattingTypedRule` JSON shape.
+// ---------------------------------------------------------------------------
+
+fn write_cf_typed_rule_json(rule: &CfTypedRule) -> String {
+    let mut json = String::from("{");
+    let mut first = true;
+    let field = |json: &mut String, name: &str, value: String, first: &mut bool| {
+        if !*first {
+            json.push(',');
+        }
+        *first = false;
+        json.push('"');
+        json.push_str(name);
+        json.push_str("\":");
+        json.push_str(&value);
+    };
+    if let Some(options) = rule.color_scale.as_ref() {
+        field(
+            &mut json,
+            "color_scale",
+            color_scale_options_json(options),
+            &mut first,
+        );
+    }
+    if let Some(options) = rule.data_bar.as_ref() {
+        field(
+            &mut json,
+            "data_bar",
+            data_bar_options_json(options),
+            &mut first,
+        );
+    }
+    if let Some(options) = rule.icon_set.as_ref() {
+        field(
+            &mut json,
+            "icon_set",
+            icon_set_options_json(options),
+            &mut first,
+        );
+    }
+    if let Some(options) = rule.rank.as_ref() {
+        field(&mut json, "rank", rank_options_json(options), &mut first);
+    }
+    if let Some(options) = rule.average.as_ref() {
+        field(
+            &mut json,
+            "average",
+            average_options_json(options),
+            &mut first,
+        );
+    }
+    json.push('}');
+    json
+}
+
+fn color_scale_options_json(options: &CfColorScaleRuleOptions) -> String {
+    let mut json = String::from("{\"stops\":[");
+    for (index, stop) in options.stops.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push('{');
+        json.push_str("\"position\":");
+        json.push_str(&threshold_json(&stop.position));
+        json.push_str(",\"color\":");
+        json.push_str(&json_string(&stop.color));
+        json.push('}');
+    }
+    json.push_str("]}");
+    json
+}
+
+fn data_bar_options_json(options: &CfDataBarRuleOptions) -> String {
+    let mut json = String::from("{");
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(threshold) = options.minimum.as_ref() {
+        parts.push(format!("\"minimum\":{}", threshold_json(threshold)));
+    }
+    if let Some(threshold) = options.maximum.as_ref() {
+        parts.push(format!("\"maximum\":{}", threshold_json(threshold)));
+    }
+    if let Some(color) = options.bar_color.as_ref() {
+        parts.push(format!("\"bar_color\":{}", json_string(color)));
+    }
+    if let Some(direction) = options.direction {
+        let label = match direction {
+            CfDataBarDirection::Left => "Left",
+            CfDataBarDirection::Right => "Right",
+        };
+        parts.push(format!("\"direction\":\"{label}\""));
+    }
+    if options.show_bar_only {
+        parts.push("\"show_bar_only\":true".to_string());
+    }
+    json.push_str(&parts.join(","));
+    json.push('}');
+    json
+}
+
+fn icon_set_options_json(options: &CfIconSetRuleOptions) -> String {
+    let mut json = String::from("{\"set_kind\":");
+    json.push_str(&json_string(&options.set_kind));
+    json.push_str(",\"thresholds\":[");
+    for (index, threshold) in options.thresholds.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&threshold_json(threshold));
+    }
+    json.push_str("]}");
+    json
+}
+
+fn rank_options_json(options: &CfRankRuleOptions) -> String {
+    match &options.rank {
+        CfRank::Count(count) => format!("{{\"rank\":{{\"Count\":{count}}}}}"),
+        CfRank::Percent(value) => format!("{{\"rank\":{{\"Percent\":{}}}}}", number_json(*value)),
+    }
+}
+
+fn average_options_json(options: &CfAverageRuleOptions) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if options.include_equal {
+        parts.push("\"include_equal\":true".to_string());
+    }
+    if let Some(value) = options.stddev_multiplier {
+        parts.push(format!("\"stddev_multiplier\":{}", number_json(value)));
+    }
+    let mut json = String::from("{");
+    json.push_str(&parts.join(","));
+    json.push('}');
+    json
+}
+
+fn threshold_json(threshold: &CfThreshold) -> String {
+    match threshold {
+        CfThreshold::Min => "\"Min\"".to_string(),
+        CfThreshold::Mid => "\"Mid\"".to_string(),
+        CfThreshold::Max => "\"Max\"".to_string(),
+        CfThreshold::Percent(value) => format!("{{\"Percent\":{}}}", number_json(*value)),
+        CfThreshold::Percentile(value) => format!("{{\"Percentile\":{}}}", number_json(*value)),
+        CfThreshold::Number(value) => format!("{{\"Number\":{}}}", number_json(*value)),
+    }
+}
+
+fn number_json(value: f64) -> String {
+    if value.is_finite() {
+        // Use shortest unambiguous f64 representation. For integer
+        // values we still emit a decimal point so the value parses
+        // back as an f64 (`3` would parse fine, but `3.0` is more
+        // readable in diffs).
+        if value.fract() == 0.0 && value.abs() < 1e16 {
+            format!("{value:.1}")
+        } else {
+            format!("{value}")
+        }
+    } else {
+        // Non-finite f64s have no JSON representation; emit `null`
+        // so the reader stamps a default. Authoring should never
+        // produce them but persistence shouldn't panic.
+        "null".to_string()
+    }
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if (ch as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", ch as u32));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn parse_cf_typed_rule_json(json: &str) -> Option<CfTypedRule> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let object = value.as_object()?;
+    Some(CfTypedRule {
+        color_scale: object
+            .get("color_scale")
+            .and_then(parse_color_scale_options),
+        data_bar: object.get("data_bar").and_then(parse_data_bar_options),
+        icon_set: object.get("icon_set").and_then(parse_icon_set_options),
+        rank: object.get("rank").and_then(parse_rank_options),
+        average: object.get("average").and_then(parse_average_options),
+    })
+}
+
+fn parse_color_scale_options(value: &serde_json::Value) -> Option<CfColorScaleRuleOptions> {
+    let object = value.as_object()?;
+    let stops_value = object.get("stops")?;
+    let stops_array = stops_value.as_array()?;
+    let mut stops: Vec<CfColorScaleStop> = Vec::with_capacity(stops_array.len());
+    for entry in stops_array {
+        let entry_object = entry.as_object()?;
+        let position = parse_threshold(entry_object.get("position")?)?;
+        let color = entry_object.get("color")?.as_str()?.to_string();
+        stops.push(CfColorScaleStop { position, color });
+    }
+    Some(CfColorScaleRuleOptions { stops })
+}
+
+fn parse_data_bar_options(value: &serde_json::Value) -> Option<CfDataBarRuleOptions> {
+    let object = value.as_object()?;
+    let minimum = object.get("minimum").and_then(parse_threshold);
+    let maximum = object.get("maximum").and_then(parse_threshold);
+    let bar_color = object
+        .get("bar_color")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let direction = match object.get("direction").and_then(|v| v.as_str()) {
+        Some("Left") => Some(CfDataBarDirection::Left),
+        Some("Right") => Some(CfDataBarDirection::Right),
+        _ => None,
+    };
+    let show_bar_only = object
+        .get("show_bar_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some(CfDataBarRuleOptions {
+        minimum,
+        maximum,
+        bar_color,
+        direction,
+        show_bar_only,
+    })
+}
+
+fn parse_icon_set_options(value: &serde_json::Value) -> Option<CfIconSetRuleOptions> {
+    let object = value.as_object()?;
+    let set_kind = object.get("set_kind")?.as_str()?.to_string();
+    let thresholds_array = object.get("thresholds")?.as_array()?;
+    let mut thresholds: Vec<CfThreshold> = Vec::with_capacity(thresholds_array.len());
+    for entry in thresholds_array {
+        thresholds.push(parse_threshold(entry)?);
+    }
+    Some(CfIconSetRuleOptions {
+        set_kind,
+        thresholds,
+    })
+}
+
+fn parse_rank_options(value: &serde_json::Value) -> Option<CfRankRuleOptions> {
+    let rank_value = value.as_object()?.get("rank")?;
+    let rank_object = rank_value.as_object()?;
+    if let Some(count_value) = rank_object.get("Count") {
+        let count = count_value.as_u64()? as usize;
+        return Some(CfRankRuleOptions {
+            rank: CfRank::Count(count),
+        });
+    }
+    if let Some(percent_value) = rank_object.get("Percent") {
+        let percent = percent_value.as_f64()?;
+        return Some(CfRankRuleOptions {
+            rank: CfRank::Percent(percent),
+        });
+    }
+    None
+}
+
+fn parse_average_options(value: &serde_json::Value) -> Option<CfAverageRuleOptions> {
+    let object = value.as_object()?;
+    let include_equal = object
+        .get("include_equal")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let stddev_multiplier = object.get("stddev_multiplier").and_then(|v| v.as_f64());
+    Some(CfAverageRuleOptions {
+        include_equal,
+        stddev_multiplier,
+    })
+}
+
+fn parse_threshold(value: &serde_json::Value) -> Option<CfThreshold> {
+    if let Some(label) = value.as_str() {
+        return match label {
+            "Min" => Some(CfThreshold::Min),
+            "Mid" => Some(CfThreshold::Mid),
+            "Max" => Some(CfThreshold::Max),
+            _ => None,
+        };
+    }
+    let object = value.as_object()?;
+    if let Some(num) = object.get("Number").and_then(|v| v.as_f64()) {
+        return Some(CfThreshold::Number(num));
+    }
+    if let Some(num) = object.get("Percent").and_then(|v| v.as_f64()) {
+        return Some(CfThreshold::Percent(num));
+    }
+    if let Some(num) = object.get("Percentile").and_then(|v| v.as_f64()) {
+        return Some(CfThreshold::Percentile(num));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -979,21 +1429,23 @@ fn read_compare_bundles(workbook: Node<'_, '_>) -> Vec<CompareBundle> {
 fn read_compare_bundle(node: Node<'_, '_>) -> CompareBundle {
     CompareBundle {
         bundle_id: node.attribute("bundle-id").unwrap_or_default().to_string(),
-        compared_at: node.attribute("compared-at").unwrap_or_default().to_string(),
-        excel_host_id: node.attribute("excel-host-id").unwrap_or_default().to_string(),
+        compared_at: node
+            .attribute("compared-at")
+            .unwrap_or_default()
+            .to_string(),
+        excel_host_id: node
+            .attribute("excel-host-id")
+            .unwrap_or_default()
+            .to_string(),
         for_formula_state: node
             .attribute("for-formula-state")
             .unwrap_or_default()
             .to_string(),
-        value_verdict: BundleVerdict::parse(
-            node.attribute("value-verdict").unwrap_or("unknown"),
-        ),
+        value_verdict: BundleVerdict::parse(node.attribute("value-verdict").unwrap_or("unknown")),
         display_verdict: BundleVerdict::parse(
             node.attribute("display-verdict").unwrap_or("unknown"),
         ),
-        replay_verdict: BundleVerdict::parse(
-            node.attribute("replay-verdict").unwrap_or("unknown"),
-        ),
+        replay_verdict: BundleVerdict::parse(node.attribute("replay-verdict").unwrap_or("unknown")),
         summary: find_child_in_namespace(node, DNA_NAMESPACE, "Summary")
             .and_then(|summary| summary.text())
             .map(ToOwned::to_owned),
@@ -1006,7 +1458,10 @@ fn read_identity(dna_formula: Node<'_, '_>) -> Identity {
         return Identity::default();
     };
     Identity {
-        id: identity_node.attribute("id").unwrap_or_default().to_string(),
+        id: identity_node
+            .attribute("id")
+            .unwrap_or_default()
+            .to_string(),
         name: identity_node
             .attribute("name")
             .unwrap_or_default()
@@ -1050,8 +1505,7 @@ fn read_excel_entry(workbook: Node<'_, '_>) -> Entry {
         return Entry::default();
     };
     let data_text = data.text().unwrap_or("").to_string();
-    let data_type =
-        cell_attribute_in_namespace(data, SS_NAMESPACE, "Type").unwrap_or("String");
+    let data_type = cell_attribute_in_namespace(data, SS_NAMESPACE, "Type").unwrap_or("String");
     let mode = match data_type {
         _ if data_text.is_empty() => EntryMode::Empty,
         "Number" => EntryMode::Value,
@@ -1108,25 +1562,23 @@ fn read_locale(context_node: Node<'_, '_>) -> Locale {
 }
 
 fn read_publication_context(context_node: Node<'_, '_>) -> PublicationContext {
-    let Some(node) =
-        find_child_in_namespace(context_node, DNA_NAMESPACE, "PublicationContext")
+    let Some(node) = find_child_in_namespace(context_node, DNA_NAMESPACE, "PublicationContext")
     else {
         return PublicationContext::default();
     };
-    let style_hierarchy =
-        find_child_in_namespace(node, DNA_NAMESPACE, "StyleHierarchy")
-            .map(|hierarchy| {
-                hierarchy
-                    .children()
-                    .filter(|child| {
-                        child.is_element()
-                            && child.tag_name().namespace() == Some(DNA_NAMESPACE)
-                            && child.tag_name().name() == "StyleLevel"
-                    })
-                    .map(|level| level.attribute("id").unwrap_or_default().to_string())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+    let style_hierarchy = find_child_in_namespace(node, DNA_NAMESPACE, "StyleHierarchy")
+        .map(|hierarchy| {
+            hierarchy
+                .children()
+                .filter(|child| {
+                    child.is_element()
+                        && child.tag_name().namespace() == Some(DNA_NAMESPACE)
+                        && child.tag_name().name() == "StyleLevel"
+                })
+                .map(|level| level.attribute("id").unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let cf_rules = find_child_in_namespace(node, DNA_NAMESPACE, "CfRules")
         .map(|rules| {
             rules
@@ -1136,16 +1588,38 @@ fn read_publication_context(context_node: Node<'_, '_>) -> PublicationContext {
                         && child.tag_name().namespace() == Some(DNA_NAMESPACE)
                         && child.tag_name().name() == "CfRule"
                 })
-                .map(|rule| CfRule {
-                    range: rule.attribute("range").unwrap_or_default().to_string(),
-                    formula: rule.attribute("formula").map(ToOwned::to_owned),
-                    rule_kind: rule.attribute("rule-kind").map(ToOwned::to_owned),
+                .map(|rule| {
+                    let thresholds = rule
+                        .children()
+                        .filter(|child| {
+                            child.is_element()
+                                && child.tag_name().namespace() == Some(DNA_NAMESPACE)
+                                && child.tag_name().name() == "Threshold"
+                        })
+                        .map(|threshold| threshold.text().unwrap_or_default().to_string())
+                        .collect::<Vec<_>>();
+                    let typed_rule = find_child_in_namespace(rule, DNA_NAMESPACE, "TypedRule")
+                        .and_then(|node| node.text())
+                        .and_then(parse_cf_typed_rule_json);
+                    CfRule {
+                        range: rule.attribute("range").unwrap_or_default().to_string(),
+                        formula: rule.attribute("formula").map(ToOwned::to_owned),
+                        rule_kind: rule.attribute("rule-kind").map(ToOwned::to_owned),
+                        operator: rule.attribute("operator").map(ToOwned::to_owned),
+                        thresholds,
+                        font_color: rule.attribute("font-color").map(ToOwned::to_owned),
+                        fill_color: rule.attribute("fill-color").map(ToOwned::to_owned),
+                        typed_rule,
+                    }
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     PublicationContext {
-        format_profile: node.attribute("format-profile").unwrap_or_default().to_string(),
+        format_profile: node
+            .attribute("format-profile")
+            .unwrap_or_default()
+            .to_string(),
         number_format_code: node
             .attribute("number-format-code")
             .unwrap_or_default()
@@ -1242,6 +1716,11 @@ mod tests {
                         range: "A1".to_string(),
                         formula: Some("=A1>0".to_string()),
                         rule_kind: Some("CellIs".to_string()),
+                        operator: None,
+                        thresholds: Vec::new(),
+                        font_color: None,
+                        fill_color: None,
+                        typed_rule: None,
                     }],
                 },
                 scenario_policy: ScenarioPolicy::Deterministic,
@@ -1559,6 +2038,189 @@ mod tests {
         assert_eq!(restored.context.scenario_policy, ScenarioPolicy::LiveRecalc);
     }
 
+    /// Cover the W073 typed CF rule round-trip. Each of the five
+    /// supported families (color scale / data bar / icon set / rank /
+    /// average) plus the threshold variants must survive a full
+    /// XML write+read pass via the `<dna:TypedRule>` JSON envelope.
+    #[test]
+    fn round_trip_with_typed_color_scale_rule() {
+        let mut scenario = Scenario::default();
+        scenario.context.publication_context.cf_rules = vec![CfRule {
+            range: String::new(),
+            formula: None,
+            rule_kind: Some("colorScale".to_string()),
+            operator: None,
+            thresholds: vec![
+                "min:#F8696B".to_string(),
+                "mid:#FFEB84".to_string(),
+                "max:#63BE7B".to_string(),
+            ],
+            font_color: None,
+            fill_color: None,
+            typed_rule: Some(CfTypedRule {
+                color_scale: Some(CfColorScaleRuleOptions {
+                    stops: vec![
+                        CfColorScaleStop {
+                            position: CfThreshold::Min,
+                            color: "#F8696B".to_string(),
+                        },
+                        CfColorScaleStop {
+                            position: CfThreshold::Percentile(50.0),
+                            color: "#FFEB84".to_string(),
+                        },
+                        CfColorScaleStop {
+                            position: CfThreshold::Max,
+                            color: "#63BE7B".to_string(),
+                        },
+                    ],
+                }),
+                ..CfTypedRule::default()
+            }),
+        }];
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.context.publication_context.cf_rules,
+            scenario.context.publication_context.cf_rules,
+        );
+    }
+
+    #[test]
+    fn round_trip_with_typed_data_bar_rule() {
+        let mut scenario = Scenario::default();
+        scenario.context.publication_context.cf_rules = vec![CfRule {
+            range: String::new(),
+            formula: None,
+            rule_kind: Some("dataBar".to_string()),
+            operator: None,
+            thresholds: Vec::new(),
+            font_color: None,
+            fill_color: Some("#638EC6".to_string()),
+            typed_rule: Some(CfTypedRule {
+                data_bar: Some(CfDataBarRuleOptions {
+                    minimum: Some(CfThreshold::Min),
+                    maximum: Some(CfThreshold::Max),
+                    bar_color: Some("#638EC6".to_string()),
+                    direction: Some(CfDataBarDirection::Right),
+                    show_bar_only: true,
+                }),
+                ..CfTypedRule::default()
+            }),
+        }];
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.context.publication_context.cf_rules,
+            scenario.context.publication_context.cf_rules,
+        );
+    }
+
+    #[test]
+    fn round_trip_with_typed_icon_set_rule() {
+        let mut scenario = Scenario::default();
+        scenario.context.publication_context.cf_rules = vec![CfRule {
+            range: String::new(),
+            formula: None,
+            rule_kind: Some("iconSet".to_string()),
+            operator: None,
+            thresholds: vec!["3Arrows".to_string()],
+            font_color: None,
+            fill_color: None,
+            typed_rule: Some(CfTypedRule {
+                icon_set: Some(CfIconSetRuleOptions {
+                    set_kind: "3Arrows".to_string(),
+                    thresholds: vec![CfThreshold::Percent(33.0), CfThreshold::Percent(67.0)],
+                }),
+                ..CfTypedRule::default()
+            }),
+        }];
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.context.publication_context.cf_rules,
+            scenario.context.publication_context.cf_rules,
+        );
+    }
+
+    #[test]
+    fn round_trip_with_typed_rank_rule() {
+        let mut scenario = Scenario::default();
+        scenario.context.publication_context.cf_rules = vec![
+            CfRule {
+                rule_kind: Some("top".to_string()),
+                thresholds: vec!["10".to_string()],
+                typed_rule: Some(CfTypedRule {
+                    rank: Some(CfRankRuleOptions {
+                        rank: CfRank::Count(10),
+                    }),
+                    ..CfTypedRule::default()
+                }),
+                ..CfRule::default()
+            },
+            CfRule {
+                rule_kind: Some("bottom".to_string()),
+                thresholds: vec!["5".to_string()],
+                typed_rule: Some(CfTypedRule {
+                    rank: Some(CfRankRuleOptions {
+                        rank: CfRank::Percent(5.0),
+                    }),
+                    ..CfTypedRule::default()
+                }),
+                ..CfRule::default()
+            },
+        ];
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.context.publication_context.cf_rules,
+            scenario.context.publication_context.cf_rules,
+        );
+    }
+
+    #[test]
+    fn round_trip_with_typed_average_rule() {
+        let mut scenario = Scenario::default();
+        scenario.context.publication_context.cf_rules = vec![CfRule {
+            rule_kind: Some("aboveAverage".to_string()),
+            typed_rule: Some(CfTypedRule {
+                average: Some(CfAverageRuleOptions {
+                    include_equal: true,
+                    stddev_multiplier: Some(1.5),
+                }),
+                ..CfTypedRule::default()
+            }),
+            ..CfRule::default()
+        }];
+        let restored = round_trip(&scenario);
+        assert_eq!(
+            restored.context.publication_context.cf_rules,
+            scenario.context.publication_context.cf_rules,
+        );
+    }
+
+    /// CfRule with no typed_rule emits no `<dna:TypedRule>` element so
+    /// older readers that don't know about the typed payload continue
+    /// to parse the bounded-string convention without surprise.
+    #[test]
+    fn cf_rule_without_typed_rule_emits_no_typed_rule_element() {
+        let scenario = Scenario {
+            context: Context {
+                publication_context: PublicationContext {
+                    cf_rules: vec![CfRule {
+                        rule_kind: Some("cell_value".to_string()),
+                        operator: Some("greaterThan".to_string()),
+                        thresholds: vec!["0".to_string()],
+                        ..CfRule::default()
+                    }],
+                    ..PublicationContext::default()
+                },
+                ..Context::default()
+            },
+            ..Scenario::default()
+        };
+        let xml = write_formula_xml(&scenario);
+        assert!(
+            !xml.contains("<dna:TypedRule"),
+            "expected no TypedRule element when typed_rule is None; got:\n{xml}",
+        );
+    }
+
     #[test]
     fn entry_mode_round_trips_for_all_four_variants() {
         for &mode in &[
@@ -1581,7 +2243,10 @@ mod tests {
             };
             let restored = round_trip(&scenario);
             assert_eq!(restored.entry.mode, mode, "mode {mode:?}");
-            assert_eq!(restored.entry.text, scenario.entry.text, "text for {mode:?}");
+            assert_eq!(
+                restored.entry.text, scenario.entry.text,
+                "text for {mode:?}"
+            );
         }
     }
 
@@ -1659,12 +2324,7 @@ mod tests {
                     "Excel365Win",
                     "sha256:older",
                 ),
-                sample_bundle(
-                    "cb-mid",
-                    "2026-04-23T10:14:22Z",
-                    "ExcelMac",
-                    "sha256:older",
-                ),
+                sample_bundle("cb-mid", "2026-04-23T10:14:22Z", "ExcelMac", "sha256:older"),
                 sample_bundle(
                     "cb-new",
                     "2026-04-26T14:30:11Z",
@@ -1724,22 +2384,14 @@ mod tests {
             ..Scenario::default()
         };
         let restored = round_trip(&scenario);
-        assert_eq!(
-            restored.bundles[0].value_verdict,
-            BundleVerdict::Unknown,
-        );
-        assert_eq!(
-            restored.bundles[0].display_verdict,
-            BundleVerdict::Blocked,
-        );
+        assert_eq!(restored.bundles[0].value_verdict, BundleVerdict::Unknown,);
+        assert_eq!(restored.bundles[0].display_verdict, BundleVerdict::Blocked,);
     }
 
     #[test]
     fn bundle_summary_with_xml_metacharacters_round_trips() {
         let mut bundle = sample_bundle("cb-1", "2026-04-26T14:30:11Z", "host", "state");
-        bundle.summary = Some(
-            r#"display mismatch: "<&>'\""#.to_string(),
-        );
+        bundle.summary = Some(r#"display mismatch: "<&>'\""#.to_string());
         let scenario = Scenario {
             bundles: vec![bundle.clone()],
             ..Scenario::default()
@@ -1757,7 +2409,10 @@ mod tests {
             sample_bundle("cb-2", "t2", "host", "new-state"),
         ];
         apply_bundle_retention_policy(&mut bundles, "new-state", 10);
-        let ids: Vec<_> = bundles.iter().map(|bundle| bundle.bundle_id.as_str()).collect();
+        let ids: Vec<_> = bundles
+            .iter()
+            .map(|bundle| bundle.bundle_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["cb-1", "cb-2"]);
     }
 
@@ -1874,7 +2529,10 @@ mod tests {
         };
         let xml = write_formula_xml(&scenario);
         // The Styles block exists and references the style by id.
-        assert!(xml.contains("<Styles>"), "expected Styles block; got:\n{xml}");
+        assert!(
+            xml.contains("<Styles>"),
+            "expected Styles block; got:\n{xml}"
+        );
         assert!(
             xml.contains(r##"<Style ss:ID="calc">"##),
             "expected named Style entry; got:\n{xml}",
@@ -1930,6 +2588,11 @@ mod tests {
                         range: "A1".to_string(),
                         formula: Some("=A1>0".to_string()),
                         rule_kind: Some("Expression".to_string()),
+                        operator: None,
+                        thresholds: Vec::new(),
+                        font_color: None,
+                        fill_color: None,
+                        typed_rule: None,
                     }],
                     ..PublicationContext::default()
                 },
@@ -1969,6 +2632,11 @@ mod tests {
                         range: "A1".to_string(),
                         formula: Some("=A1>0".to_string()),
                         rule_kind: Some("Expression".to_string()),
+                        operator: None,
+                        thresholds: Vec::new(),
+                        font_color: None,
+                        fill_color: None,
+                        typed_rule: None,
                     }],
                     ..PublicationContext::default()
                 },

@@ -46,6 +46,8 @@ mod tests {
                 cursor_offset: 8,
                 previous_green_tree_key: None,
                 analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
+                formatting_request: None,
+                scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
             })
             .is_ok());
         assert!(web
@@ -55,6 +57,8 @@ mod tests {
                 cursor_offset: 8,
                 previous_green_tree_key: None,
                 analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
+                formatting_request: None,
+                scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
             })
             .is_ok());
     }

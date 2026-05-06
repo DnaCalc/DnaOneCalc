@@ -28,9 +28,7 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 
-use super::scaffold::{
-    dispatch_input, mount_home_shell, text_of, wait_for, wait_for_text,
-};
+use super::scaffold::{dispatch_input, mount_home_shell, text_of, wait_for, wait_for_text};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -221,8 +219,7 @@ async fn syntax_overlay_emits_function_token_for_sum() {
     // until then).
     let _ = wait_for_text(&shell, ".onecalc-home-shell__result-block .value", "6").await;
 
-    let function_spans =
-        shell.select_all(".onecalc-home-shell__editor-overlay .syn-fn");
+    let function_spans = shell.select_all(".onecalc-home-shell__editor-overlay .syn-fn");
     assert_eq!(
         function_spans.length(),
         1,
@@ -268,7 +265,10 @@ async fn editor_metrics_chip_reports_token_function_diagnostic_counts() {
         .and_then(|s| s.parse().ok())
         .expect("data-diagnostics parses");
 
-    assert!(tokens >= 5, "tokens count should grow with formula content; got {tokens}");
+    assert!(
+        tokens >= 5,
+        "tokens count should grow with formula content; got {tokens}"
+    );
     assert_eq!(functions, 1, "exactly one function (SUM)");
     assert_eq!(diagnostics, 0, "no diagnostics on a well-formed SUM");
 
@@ -291,17 +291,13 @@ async fn result_context_chip_renders_locale_and_format_seam_markers() {
     let context_chip = shell
         .select(".onecalc-home-shell__chip--context")
         .expect("result-context chip rendered");
-    let seam_fields = context_chip
+    let _ = context_chip
         .query_selector_all("[data-seam-id]")
         .expect("query ok");
-    assert!(
-        seam_fields.length() >= 2,
-        "expected at least locale + format SEAM-pending fields; got {}",
-        seam_fields.length(),
-    );
 
-    // In Developer mode the visible chip text surfaces the SEAM
-    // ids inline. Switch via Ctrl+Alt+D and assert.
+    // In Developer mode the chip's visible labels include the
+    // policy and format-family strings. Locale moved to the
+    // formatting panel and is no longer in the result-foot chip.
     super::scaffold::dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
     let context_chip = shell
@@ -309,18 +305,17 @@ async fn result_context_chip_renders_locale_and_format_seam_markers() {
         .expect("context chip still rendered after mode toggle");
     let chip_text = context_chip.text_content().unwrap_or_default();
     assert!(
-        chip_text.contains("SEAM-OXFUNC-LOCALE-EXPAND"),
-        "Developer-mode context chip must surface SEAM-OXFUNC-LOCALE-EXPAND; \
-         got {chip_text:?}",
+        chip_text.contains("General"),
+        "Developer-mode context chip must show the live `General` format \
+         family label by default; got {chip_text:?}",
     );
+    // Default scenario policy is `live-recalc` (Excel's default-on
+    // workbook behaviour) — switched from `deterministic` in the
+    // post-W072 cleanup; deterministic is now the explicit toggle
+    // for reproducible-authoring mode.
     assert!(
-        chip_text.contains("SEAM-OXFUNC-FORMAT-GENERAL"),
-        "Developer-mode context chip must surface SEAM-OXFUNC-FORMAT-GENERAL; \
-         got {chip_text:?}",
-    );
-    assert!(
-        chip_text.contains("deterministic"),
-        "context chip must show the live policy value; got {chip_text:?}",
+        chip_text.contains("live-recalc"),
+        "context chip must show the default `live-recalc` policy; got {chip_text:?}",
     );
 
     shell.tear_down();
@@ -355,9 +350,7 @@ async fn clearing_textarea_returns_result_to_placeholder() {
 
     let placeholder = text_of(&shell, ".onecalc-home-shell__result-block .muted");
     assert!(
-        placeholder
-            .as_deref()
-            .is_some_and(|s| !s.is_empty()),
+        placeholder.as_deref().is_some_and(|s| !s.is_empty()),
         "muted placeholder should render in the result block; got {:?}",
         placeholder,
     );
@@ -377,11 +370,9 @@ async fn status_foot_dot_lights_when_live_bridge_returns_green_tree() {
 
     let _ = wait_for_text(&shell, ".onecalc-home-shell__result-block .value", "3").await;
 
-    let dot_health = wait_for(
-        &shell,
-        ".onecalc-home-shell__statusfoot-dot",
-        |element| element.get_attribute("data-health"),
-    )
+    let dot_health = wait_for(&shell, ".onecalc-home-shell__statusfoot-dot", |element| {
+        element.get_attribute("data-health")
+    })
     .await;
     assert_eq!(dot_health.as_deref(), Some("live"));
 

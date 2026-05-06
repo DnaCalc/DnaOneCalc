@@ -28,7 +28,10 @@ use crate::ui::editor::state::{EditorEntryMode, EditorSurfaceState};
 /// Built freshly per render via `build_home_shell_view_model`. Returns
 /// `None` when there is no active formula space (the home shell renders an
 /// empty state in that case).
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` cannot be derived: `ResultView::Array.cell_format` carries
+// `DataBarFillView { fill_ratio: f64, ... }` (W072 visualization
+// payload) and `f64` does not implement `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct HomeShellViewModel {
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
@@ -121,45 +124,326 @@ pub struct FormattingControlsView {
     pub fill_color: String,
     pub date1904: bool,
     pub number_format_presets: Vec<NumberFormatPreset>,
+    /// Collapsible state from `FormulaSpaceState.formatting_panel_open`.
+    /// When `false`, the renderer surfaces the one-line summary chip
+    /// and hides the full controls row; when `true`, the full row is
+    /// visible. Toggled via the summary-chip button (and by Ctrl+,
+    /// once the keyboard wiring lands).
+    pub is_open: bool,
+    /// One-line summary rendered inside the collapsed-state chip.
+    /// Reads e.g. `"format ▸ Currency · Date1904"` when both fields
+    /// are set, or `"format ▸ General"` when nothing is overridden.
+    /// Built deterministically so the summary string round-trips
+    /// through pin-tests.
+    pub summary: String,
+    /// Calc-options scenario policy: Deterministic (stable seeds for
+    /// `=NOW()` / `=RAND()`) or LiveRecalc (fresh values per
+    /// keystroke). The renderer surfaces this as a two-state segmented
+    /// control inside the formatting panel.
+    pub scenario_policy: ScenarioPolicyView,
+    /// Conditional-formatting rules (one row per rule). The renderer
+    /// shows a "+ add rule" affordance plus per-rule editor cards.
+    pub conditional_formatting_rules: Vec<ConditionalFormattingRuleView>,
+    /// Workspace locale display, lifted from the active
+    /// `AmbientAppContext`. Currently a heuristic label derived from
+    /// the date-format-code shape; replaced by a `LocaleProfileId`
+    /// label once OxFml's locale tables land.
+    pub locale_label: String,
+    /// BCP-47 language tag of the active locale preset (the one the
+    /// user picked or the platform-detected default). Used to drive
+    /// the dropdown's "currently-selected" indicator.
+    pub locale_language_tag: String,
+    /// Curated list of selectable locale presets surfaced in the
+    /// formatting-panel dropdown. `(language_tag, label)` pairs.
+    pub locale_presets: Vec<(&'static str, &'static str)>,
+    /// SEAM id flagging that runtime locale tables (month/weekday
+    /// names, separators) aren't yet rendered upstream (today:
+    /// always `Some("SEAM-OXFML-LOCALE-EXPAND")`). The picker is
+    /// usable today — it sets the format-code defaults — but the
+    /// SEAM marker stays alongside until OxFml lands the runtime
+    /// locale plumbing. Becomes `None` when the locale chain
+    /// unblocks.
+    pub locale_seam_id: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumberFormatPreset {
+    /// Human-readable family label rendered on the preset chip.
     pub label: &'static str,
+    /// Excel format-string-text the chip applies when clicked.
+    /// Empty string means the General (default) family.
     pub format_code: &'static str,
+    /// Optional SEAM id when the family's *renderer* is not yet
+    /// implemented in OxFml. The chip is still clickable — clicking
+    /// stores the right format intent — but the result hero falls
+    /// back to OxFml's hint-default rendering until the engine work
+    /// lands. The renderer surfaces this with a small `<NOT IMPL>`
+    /// badge and an `aria-describedby` referencing the seam.
+    pub seam_id: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScenarioPolicyView {
+    Deterministic,
+    LiveRecalc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConditionalFormattingRuleView {
+    pub rule_kind: String,
+    pub operator: Option<String>,
+    pub thresholds: Vec<String>,
+    pub font_color: Option<String>,
+    pub fill_color: Option<String>,
+    /// Optional typed CF rule payload mirrored from the host state.
+    /// When present the per-kind sub-form authors directly into this
+    /// shape; the bounded-string `thresholds` continues to ride along
+    /// as the W072 fallback. `None` means the rule is authored only
+    /// through the bounded payload.
+    pub typed_rule: Option<crate::state::FormulaConditionalFormattingTypedRule>,
+    /// Optional SEAM id for rule kinds OxFml has not yet evaluated
+    /// (color scales, data bars, icon sets, rank, average, unique,
+    /// text, dates, blanks, errors). `None` means OxFml supports
+    /// this kind today (cell_value comparisons + threshold).
+    pub seam_id: Option<&'static str>,
 }
 
 impl FormattingControlsView {
-    pub fn from_state(formatting: &crate::state::FormulaFormattingState) -> Self {
+    pub fn from_state(
+        formatting: &crate::state::FormulaFormattingState,
+        is_open: bool,
+        ambient: &crate::state::AmbientAppContext,
+    ) -> Self {
+        let presets = number_format_presets();
+        let summary = build_formatting_summary(formatting, &presets);
+        let scenario_policy = match formatting.scenario_policy {
+            crate::persistence::ScenarioPolicy::Deterministic => ScenarioPolicyView::Deterministic,
+            crate::persistence::ScenarioPolicy::LiveRecalc => ScenarioPolicyView::LiveRecalc,
+        };
+        let conditional_formatting_rules = formatting
+            .conditional_formatting_rules
+            .iter()
+            .map(|rule| ConditionalFormattingRuleView {
+                rule_kind: rule.rule_kind.clone(),
+                operator: rule.operator.clone(),
+                thresholds: rule.thresholds.clone(),
+                font_color: rule.font_color.clone(),
+                fill_color: rule.fill_color.clone(),
+                typed_rule: rule.typed_rule.clone(),
+                seam_id: cf_seam_id_for_kind(&rule.rule_kind),
+            })
+            .collect();
         Self {
             number_format_code: formatting.number_format_code.clone(),
             font_color: formatting.font_color.clone(),
             fill_color: formatting.fill_color.clone(),
             date1904: formatting.date1904,
-            number_format_presets: vec![
-                NumberFormatPreset {
-                    label: "General",
-                    format_code: "",
-                },
-                NumberFormatPreset {
-                    label: "Number",
-                    format_code: "0.00",
-                },
-                NumberFormatPreset {
-                    label: "Currency",
-                    format_code: "$#,##0.00",
-                },
-                NumberFormatPreset {
-                    label: "Percent",
-                    format_code: "0.00%",
-                },
-                NumberFormatPreset {
-                    label: "Date",
-                    format_code: "yyyy-mm-dd",
-                },
-            ],
+            number_format_presets: presets,
+            is_open,
+            summary,
+            scenario_policy,
+            conditional_formatting_rules,
+            locale_label: ambient_locale_label(ambient),
+            locale_language_tag: ambient.language_tag.clone(),
+            locale_presets: crate::services::ambient_app_context::supported_locale_presets()
+                .to_vec(),
+            locale_seam_id: Some("SEAM-OXFML-LOCALE-EXPAND"),
         }
     }
+}
+
+/// The full format-family preset row exposed in the panel.
+///
+/// Coverage tracks OxFml's published format space after W069:
+/// - **General / Number / Currency / Percent / Scientific** —
+///   `oxfml_core::format::number::render_with_number_format_code`.
+/// - **Date / Date (long)** — `oxfml_core::format::datetime`.
+/// - **Time / Time (12h) / Datetime** — W069 time tokens
+///   (`h`/`hh`/`m`/`mm`/`s`/`ss`/`AM/PM`/datetime composites).
+/// - **Fraction** — W069 fraction grammar (`?/?` / `??/??` /
+///   `# ?/?` / `# ??/??` / `0/0`).
+/// - **Accounting** — W069 common accounting parens.
+/// - **Text** — `@` placeholder rendering.
+///
+/// All preset chips are now live; SEAM markers retired. Note that
+/// the live family coverage is "what OxFml renders correctly when
+/// the user types these codes" — the `applied colour` and
+/// locale-prefix sub-grammar remain pending behind
+/// `docs/HANDOFF_OXFML_CUSTOM_FORMAT_GRAMMAR.md`, but those are
+/// only reachable via custom-typed codes, not via these presets.
+fn number_format_presets() -> Vec<NumberFormatPreset> {
+    vec![
+        NumberFormatPreset {
+            label: "General",
+            format_code: "",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Number",
+            format_code: "0.00",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Number (with separators)",
+            format_code: "#,##0.00",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Currency",
+            format_code: "$#,##0.00",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Accounting",
+            format_code: "_($* #,##0.00_);_($* (#,##0.00);_($* \"-\"??_);_(@_)",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Percent",
+            format_code: "0.00%",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Fraction",
+            format_code: "# ?/?",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Scientific",
+            format_code: "0.00E+00",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Date",
+            format_code: "yyyy-mm-dd",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Date (long)",
+            format_code: "dddd, mmmm d, yyyy",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Time",
+            format_code: "HH:mm:ss",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Time (12h)",
+            format_code: "h:mm:ss AM/PM",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Datetime",
+            format_code: "yyyy-mm-dd HH:mm:ss",
+            seam_id: None,
+        },
+        NumberFormatPreset {
+            label: "Text",
+            format_code: "@",
+            seam_id: None,
+        },
+    ]
+}
+
+/// Map a CF rule_kind string to its SEAM id. Returns `None` when
+/// OxFml's `evaluate_conditional_formatting_rule` already handles
+/// that kind today.
+///
+/// Live after W070 / W071 / W072:
+///
+/// **Per-cell (operator / predicate) rules:**
+/// - `cell_value` — operator-driven comparisons (greaterThan,
+///   greaterThanOrEqual, lessThan, lessThanOrEqual, equal,
+///   notEqual, between, notBetween).
+/// - `text` — operator-driven text predicates (containsText,
+///   notContainsText, beginsWith, endsWith).
+/// - `expression` — user-supplied formula evaluated as boolean.
+/// - `dates` — relative-date predicates evaluated against the
+///   bridge's `now_serial` (today / yesterday / tomorrow /
+///   last7Days / thisWeek / lastWeek / nextWeek / thisMonth /
+///   lastMonth / nextMonth).
+/// - `blanks` / `noBlanks` — blank-value predicates.
+/// - `errors` / `noErrors` — error-value predicates.
+///
+/// **Aggregate (array-as-range) typed-payload kinds (W073, only
+/// `typed_rule` accepted upstream; bounded `thresholds` ignored):**
+/// - `aboveAverage` / `belowAverage` — `typed_rule.average`
+///   (`include_equal`, optional `stddev_multiplier`).
+/// - `top` / `bottom` — `typed_rule.rank`
+///   (`Count(usize)` or `Percent(f64)`).
+/// - `colorScale` — `typed_rule.color_scale.stops`
+///   (ordered `(position, color)` pairs).
+/// - `dataBar` — `typed_rule.data_bar`
+///   (`bar_color`, optional `minimum`/`maximum`, `direction`,
+///   `show_bar_only`).
+/// - `iconSet` — `typed_rule.icon_set`
+///   (`set_kind` plus per-icon thresholds).
+///
+/// **Aggregate predicate kinds (no typed payload, kind-only):**
+/// - `uniqueValues` / `duplicateValues` — count occurrences
+///   within the array; the kind itself is the predicate.
+///
+/// Unknown kinds get a SEAM marker as a defensive fallback —
+/// scenarios saved against an older host version may carry a
+/// rule_kind we no longer expose, and the marker makes the
+/// "this rule won't fire" state visible rather than silent.
+fn cf_seam_id_for_kind(rule_kind: &str) -> Option<&'static str> {
+    match rule_kind.to_ascii_lowercase().as_str() {
+        "cell_value" | "" | "text" | "expression" => None,
+        "dates" | "blanks" | "noblanks" | "errors" | "noerrors" => None,
+        "colorscale" | "databar" | "iconset" | "aboveaverage" | "belowaverage" | "top"
+        | "bottom" | "uniquevalues" | "duplicatevalues" => None,
+        _ => Some("SEAM-ONECALC-CF-UNKNOWN-RULE-KIND"),
+    }
+}
+
+/// Build the one-line summary that the collapsed formatting chip
+/// shows. When nothing is overridden the label is `"General"`.
+/// Otherwise, list the overrides in a stable order: number-format
+/// (preset label when matched, else the raw code), font colour,
+/// fill colour, and the 1904-dates flag. The output is plain text
+/// — formatting is the renderer's job — and is prefixed by the
+/// renderer with `"format ▸ "` as a caption.
+fn build_formatting_summary(
+    formatting: &crate::state::FormulaFormattingState,
+    presets: &[NumberFormatPreset],
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let format_code = formatting.number_format_code.trim();
+    if format_code.is_empty() {
+        parts.push("General".to_string());
+    } else if let Some(preset) = presets
+        .iter()
+        .find(|p| !p.format_code.is_empty() && p.format_code == format_code)
+    {
+        parts.push(preset.label.to_string());
+    } else {
+        parts.push(format_code.to_string());
+    }
+    let font = formatting.font_color.trim();
+    if !font.is_empty() {
+        parts.push(format!("font {}", font));
+    }
+    let fill = formatting.fill_color.trim();
+    if !fill.is_empty() {
+        parts.push(format!("fill {}", fill));
+    }
+    if formatting.date1904 {
+        parts.push("Date1904".to_string());
+    }
+    if formatting.scenario_policy == crate::persistence::ScenarioPolicy::LiveRecalc {
+        parts.push("Live".to_string());
+    }
+    let cf_count = formatting.conditional_formatting_rules.len();
+    if cf_count > 0 {
+        parts.push(format!(
+            "{} CF rule{}",
+            cf_count,
+            if cf_count == 1 { "" } else { "s" }
+        ));
+    }
+    parts.join(" · ")
 }
 
 /// View-model shape for the titlebar scenario breadcrumb + its
@@ -262,9 +546,19 @@ pub struct ScenarioBreadcrumbAction {
 pub struct FormulaDrillView {
     pub expanded: bool,
     /// Walk tree from `editor_document.formula_walk`, projected
-    /// into render-friendly nodes. Empty when the document is
-    /// missing or stale.
+    /// into nested render-friendly nodes (each node carries its
+    /// own children — the renderer uses `<details>` to collapse
+    /// per-node, mirroring how a user reads the tree). Empty
+    /// when the document is missing or stale.
     pub tree: Vec<FormulaDrillNode>,
+    /// Live diagnostics surfaced from `editor_document.live_diagnostics`.
+    /// Empty when the formula is empty (the host suppresses the
+    /// upstream `unexpected token Eof` for empty input) or when
+    /// no diagnostics fired. Renders as a list inside the
+    /// drill-down panel so the user can read full diagnostic
+    /// messages — the editor-foot metrics chip just shows the
+    /// count.
+    pub diagnostics: Vec<FormulaDrillDiagnosticRow>,
     /// Bottom-strip phase chips: `parse: <status> · bind: <vars>
     /// vars · eval: <steps> steps`. Pulled from the document's
     /// parse_summary / bind_summary / eval_summary fields. Empty
@@ -279,19 +573,32 @@ pub struct FormulaDrillView {
 }
 
 /// One row in the formula walk-tree panel. Mirrors
-/// [`crate::adapters::oxfml::FormulaWalkNode`] but flattened by
-/// the projector so the component renders without recursion
-/// helpers — `depth` carries the indent level and the projector
-/// emits parent rows before child rows in the order the user
-/// reads them.
+/// [`crate::adapters::oxfml::FormulaWalkNode`] with nested
+/// children preserved so the renderer can use `<details>`
+/// elements for click-to-collapse per-node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormulaDrillNode {
     pub node_id: String,
     pub label: String,
     pub value_preview: Option<String>,
     pub state: crate::adapters::oxfml::FormulaWalkNodeState,
-    pub depth: usize,
-    pub has_children: bool,
+    pub children: Vec<FormulaDrillNode>,
+}
+
+/// One diagnostic surfaced inside the drill-down panel. Mirrors
+/// the editor's `LiveDiagnostic` with the fields the user wants
+/// at a glance: severity slug, message text, and the formula
+/// span it points at (so a click could later scroll the editor
+/// to that span — wired separately when the click handler lands).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaDrillDiagnosticRow {
+    pub diagnostic_id: String,
+    pub severity: SquiggleSeverity,
+    pub stage: DiagnosticStage,
+    pub code: Option<String>,
+    pub message: String,
+    pub span_start: usize,
+    pub span_len: usize,
 }
 
 /// Phase-strip chip. Renders `label · detail` with a state
@@ -465,8 +772,14 @@ pub struct EditorMetricsChip {
 /// dot-separated string `locale · format · policy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultContextChip {
-    pub locale: ContextChipField,
+    /// Active format-family label for the current formula.
+    /// `Live("General")` when no format code is set; `Live(family)`
+    /// for a matched preset; `Live("Custom · <code>")` for a user-
+    /// typed code that doesn't match a preset.
     pub format: ContextChipField,
+    /// `live-recalc` or `deterministic`, lifted from the formula's
+    /// `formatting.scenario_policy`. Always `Live(...)`; defaults
+    /// to `live-recalc` (Excel's default).
     pub policy: ContextChipField,
 }
 
@@ -670,25 +983,88 @@ impl ResultClassPill {
 
 /// What the result block should render. Mirrors the shape called out in the
 /// path doc and matches the five mutually-exclusive UI states.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` cannot be derived: `Array.cell_format` carries
+// `DataBarFillView { fill_ratio: f64, ... }` and `f64` is not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ResultView {
     /// Editor is empty — show a muted placeholder.
     Empty,
     /// Editor has text but no eval result yet — show "..." muted.
     Pending,
-    /// A scalar / text / logical result we can render.
-    Display { text: String, kind: ResultKind },
+    /// A scalar / text / logical result we can render. The
+    /// optional colour fields carry CF-applied font / fill colours
+    /// from `verification_publication_surface.effective_*` —
+    /// today populated only when a CF rule fires; will also carry
+    /// custom-format colour-token output once the OxFml colour-
+    /// token publication handoff lands.
+    Display {
+        text: String,
+        kind: ResultKind,
+        applied_font_color: Option<String>,
+        applied_fill_color: Option<String>,
+    },
     /// A diagnostic, blocked-lane, or error code state.
     Error {
         code: String,
         surface_repr: Option<String>,
     },
-    /// An array result; preview is deferred to a later WS-14 phase.
+    /// An array result. `total_rows` / `total_cols` are the full
+    /// shape from the upstream `EvalValue::Array`; `cells` is a
+    /// (possibly-truncated) preview window the bridge ships back.
+    /// `truncated` is `true` when either dimension was clamped —
+    /// the renderer surfaces a `+N rows / +M cols hidden` chip in
+    /// that case. The browser-grid component renders the cells
+    /// with `overflow: auto; resize: both` so the user can scroll
+    /// and resize the result panel.
+    ///
+    /// `cell_format` carries OxFml's per-cell CF outcomes (W071 +
+    /// W072) when the formula has CF rules attached. Each entry
+    /// has a font / fill colour, a data-bar fill, and / or an
+    /// icon. `None` when no CF rules fired or the formula has
+    /// none. The grid is row-major and indexed parallel to
+    /// `cells` (a cell at `cells[r][c]` has its formatting at
+    /// `cell_format[r][c]` when both are present).
     Array {
-        rows: usize,
-        cols: usize,
+        total_rows: usize,
+        total_cols: usize,
         label: String,
+        cells: Vec<Vec<String>>,
+        cell_format: Option<Vec<Vec<ArrayCellFormatView>>>,
+        truncated: bool,
     },
+}
+
+/// Per-cell CF outcome lifted onto the view-model. Mirrors the
+/// host adapter's `ArrayCellFormat` minus the `effective_display_text`
+/// (which the renderer reads from `cells` directly when no CF rule
+/// supplied a per-cell text override; when one did, the bridge
+/// already substituted it into the string-based preview).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayCellFormatView {
+    pub effective_font_color: Option<String>,
+    pub effective_fill_color: Option<String>,
+    pub data_bar: Option<DataBarFillView>,
+    pub icon: Option<CfIconView>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataBarFillView {
+    pub fill_ratio: f64,
+    pub bar_color: String,
+    pub direction: DataBarDirectionView,
+    pub show_bar_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataBarDirectionView {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfIconView {
+    pub set_kind: String,
+    pub icon_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -751,13 +1127,17 @@ fn project_formula_space(
     let syntax_runs = project_syntax_runs(formula_space);
     let diagnostic_squiggles = project_diagnostic_squiggles(formula_space);
     let editor_metrics = project_editor_metrics(formula_space, &syntax_runs);
-    let result_context = project_result_context(formula_space);
+    let result_context = project_result_context(formula_space, &state.ambient_app_context);
     let completion_popup = project_completion_popup(formula_space);
     let signature_help = project_signature_help(formula_space, completion_popup.is_some());
     let function_help_card = project_function_help_card(formula_space);
     let formula_drill = project_formula_drill(formula_space);
     let scenario_breadcrumb = project_scenario_breadcrumb(formula_space, state);
-    let formatting_controls = FormattingControlsView::from_state(&formula_space.formatting);
+    let formatting_controls = FormattingControlsView::from_state(
+        &formula_space.formatting,
+        formula_space.formatting_panel_open,
+        &state.ambient_app_context,
+    );
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -798,10 +1178,38 @@ fn project_formula_drill(formula_space: &FormulaSpaceState) -> FormulaDrillView 
     if document_is_fresh {
         if let Some(document) = document {
             for node in &document.formula_walk {
-                flatten_walk_node(node, 0, &mut tree);
+                tree.push(project_walk_node(node));
             }
         }
     }
+
+    // Suppress diagnostics for empty input — same rule as
+    // `project_diagnostic_squiggles` / `project_editor_metrics`.
+    let suppress_diagnostics = formula_space.raw_entered_cell_text.is_empty();
+    let diagnostics: Vec<FormulaDrillDiagnosticRow> = if suppress_diagnostics {
+        Vec::new()
+    } else if document_is_fresh {
+        document
+            .map(|document| {
+                document
+                    .live_diagnostics
+                    .diagnostics
+                    .iter()
+                    .map(|diag| FormulaDrillDiagnosticRow {
+                        diagnostic_id: diag.diagnostic_id.clone(),
+                        severity: SquiggleSeverity::from_upstream(diag.severity),
+                        stage: DiagnosticStage::from_upstream(diag.stage),
+                        code: diag.code.clone(),
+                        message: diag.message.clone(),
+                        span_start: diag.primary_span.start,
+                        span_len: diag.primary_span.len,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let mut phase_summaries = Vec::new();
     if document_is_fresh {
@@ -836,8 +1244,12 @@ fn project_formula_drill(formula_space: &FormulaSpaceState) -> FormulaDrillView 
                     .is_some();
                 phase_summaries.push(FormulaDrillPhaseChip {
                     label: "eval",
-                    detail: format!("{} step{} · {}", eval.step_count,
-                        if eval.step_count == 1 { "" } else { "s" }, eval.duration_text),
+                    detail: format!(
+                        "{} step{} · {}",
+                        eval.step_count,
+                        if eval.step_count == 1 { "" } else { "s" },
+                        eval.duration_text
+                    ),
                     state: if blocked {
                         FormulaDrillPhaseState::Blocked
                     } else {
@@ -851,29 +1263,23 @@ fn project_formula_drill(formula_space: &FormulaSpaceState) -> FormulaDrillView 
     FormulaDrillView {
         expanded: formula_space.formula_drill_open,
         tree,
+        diagnostics,
         phase_summaries,
         document_is_fresh,
     }
 }
 
-/// Flatten a `FormulaWalkNode` recursively in pre-order (parent
-/// before children) into the target vec. `depth` is the indent
-/// level; root nodes have depth 0.
-fn flatten_walk_node(
-    node: &crate::adapters::oxfml::FormulaWalkNode,
-    depth: usize,
-    out: &mut Vec<FormulaDrillNode>,
-) {
-    out.push(FormulaDrillNode {
+/// Project a `FormulaWalkNode` into the view-model shape, recursing
+/// into children so the tree stays nested. The renderer uses
+/// `<details>` elements to give the user click-to-collapse on each
+/// node — matching how the eye reads a function-call structure.
+fn project_walk_node(node: &crate::adapters::oxfml::FormulaWalkNode) -> FormulaDrillNode {
+    FormulaDrillNode {
         node_id: node.node_id.clone(),
         label: node.label.clone(),
         value_preview: node.value_preview.clone(),
         state: node.state,
-        depth,
-        has_children: !node.children.is_empty(),
-    });
-    for child in &node.children {
-        flatten_walk_node(child, depth + 1, out);
+        children: node.children.iter().map(project_walk_node).collect(),
     }
 }
 
@@ -886,9 +1292,7 @@ fn flatten_walk_node(
 /// The component decides WHEN to render the tooltip (based on hover
 /// state); the view-model only carries the *content* and the
 /// `lookup_key` that gates which `.syn-fn` span is eligible.
-fn project_function_help_card(
-    formula_space: &FormulaSpaceState,
-) -> Option<FunctionHelpCardView> {
+fn project_function_help_card(formula_space: &FormulaSpaceState) -> Option<FunctionHelpCardView> {
     let document = formula_space.editor_document.as_ref()?;
     if document.source_text != formula_space.raw_entered_cell_text {
         return None;
@@ -966,11 +1370,7 @@ fn project_signature_help(
     };
 
     let caret_offset = formula_space.editor_surface_state.caret.offset;
-    let anchor = caret_box_for_offset(
-        &formula_space.raw_entered_cell_text,
-        caret_offset,
-        metrics,
-    );
+    let anchor = caret_box_for_offset(&formula_space.raw_entered_cell_text, caret_offset, metrics);
 
     Some(SignatureHelpView {
         callee_text: signature_help_context.callee_text.clone(),
@@ -1034,6 +1434,15 @@ fn project_completion_popup(formula_space: &FormulaSpaceState) -> Option<Complet
 /// document where present (token_count, diagnostic_count) and from the
 /// projected syntax runs (function_count = run with role == Function).
 /// All zeros when there is no document.
+///
+/// Empty-input guard: when the user has typed then cleared the formula,
+/// upstream OxFml's parser still runs against the empty source and emits
+/// "unexpected token Eof" diagnostics. Those are correct for a
+/// `parse(empty)` API call but wrong for the editor surface — an empty
+/// formula is the *initial state*, not a syntax error. The host
+/// suppresses every diagnostic surface (squiggles + metrics chip) when
+/// `raw_entered_cell_text` is empty so the editor reads as quiet again
+/// after a delete-to-empty.
 fn project_editor_metrics(
     formula_space: &FormulaSpaceState,
     syntax_runs: &[SyntaxRun],
@@ -1053,35 +1462,87 @@ fn project_editor_metrics(
         .iter()
         .filter(|run| run.role == SyntaxTokenRole::Function)
         .count();
-    let first_diagnostic_message = document
-        .live_diagnostics
-        .diagnostics
-        .first()
-        .map(|diagnostic| diagnostic.message.clone());
+    let suppress_diagnostics = formula_space.raw_entered_cell_text.is_empty();
+    let first_diagnostic_message = if suppress_diagnostics {
+        None
+    } else {
+        document
+            .live_diagnostics
+            .diagnostics
+            .first()
+            .map(|diagnostic| diagnostic.message.clone())
+    };
+    let diagnostic_count = if suppress_diagnostics {
+        0
+    } else {
+        document.live_diagnostics.diagnostics.len()
+    };
     EditorMetricsChip {
         token_count: document.editor_syntax_snapshot.tokens.len(),
         function_count,
-        diagnostic_count: document.live_diagnostics.diagnostics.len(),
+        diagnostic_count,
         first_diagnostic_message,
     }
 }
 
-/// Build the result-foot active-context chip. The pre-MVP defaults are
-/// `en-US` (locale), `GENERAL` (number-format family) and `deterministic`
-/// (scenario policy). Locale and format are tagged SEAM-pending because
-/// the cascade machinery they belong to is partly stubbed (WS-14 plan
-/// §11); policy is rendered live since the deterministic lane is wired.
-fn project_result_context(_formula_space: &FormulaSpaceState) -> ResultContextChip {
+/// Build the result-foot active-context chip. The locale field
+/// moved to the formatting panel (its inner section); the
+/// result-foot stays focused on the two indicators the user
+/// glances at while the result is on screen — what format
+/// family the result is rendered as, and whether the formula's
+/// volatile functions are live or pinned.
+fn project_result_context(
+    formula_space: &FormulaSpaceState,
+    _ambient: &crate::state::AmbientAppContext,
+) -> ResultContextChip {
+    let format_code = formula_space.formatting.number_format_code.trim();
+    let format_label = if format_code.is_empty() {
+        "General".to_string()
+    } else {
+        classify_format_family_label(format_code)
+    };
+    let policy_label = match formula_space.formatting.scenario_policy {
+        crate::persistence::ScenarioPolicy::Deterministic => "deterministic",
+        crate::persistence::ScenarioPolicy::LiveRecalc => "live-recalc",
+    };
     ResultContextChip {
-        locale: ContextChipField::SeamPending {
-            value: "en-US".to_string(),
-            seam_id: "SEAM-OXFUNC-LOCALE-EXPAND".to_string(),
-        },
-        format: ContextChipField::SeamPending {
-            value: "GENERAL".to_string(),
-            seam_id: "SEAM-OXFUNC-FORMAT-GENERAL".to_string(),
-        },
-        policy: ContextChipField::Live("deterministic".to_string()),
+        format: ContextChipField::Live(format_label),
+        policy: ContextChipField::Live(policy_label.to_string()),
+    }
+}
+
+/// Crude inverse of the format-preset table: pick the closest
+/// matching family label for a given number-format code so the
+/// result-context chip reads as a human family name rather than
+/// the raw code. Falls back to a `Custom` label for codes the
+/// user authored that don't match any preset.
+fn classify_format_family_label(format_code: &str) -> String {
+    for preset in number_format_presets() {
+        if !preset.format_code.is_empty() && preset.format_code == format_code {
+            return preset.label.to_string();
+        }
+    }
+    format!("Custom · {format_code}")
+}
+
+/// Best-effort label for the workspace's ambient locale. Reads
+/// the date format code as a heuristic for the locale family
+/// (since the AmbientAppContext doesn't yet carry a locale id —
+/// it derives format codes from `navigator.language` directly).
+/// Replaced by a live `LocaleProfileId` label when OxFml's
+/// locale tables grow per the locale-expansion handoff.
+fn ambient_locale_label(ambient: &crate::state::AmbientAppContext) -> String {
+    let date = ambient.date_format_code.as_str();
+    if date.starts_with("yyyy") {
+        "yyyy-mm-dd locale".to_string()
+    } else if date.starts_with("dd.") {
+        "dd.mm.yyyy locale".to_string()
+    } else if date.starts_with("dd/") {
+        "dd/mm/yyyy locale".to_string()
+    } else if date.starts_with("m/") {
+        "m/d/yyyy locale".to_string()
+    } else {
+        format!("custom · {date}")
     }
 }
 
@@ -1115,6 +1576,12 @@ fn project_diagnostic_squiggles(formula_space: &FormulaSpaceState) -> Vec<Diagno
     if document.source_text != formula_space.raw_entered_cell_text {
         return Vec::new();
     }
+    // See `project_editor_metrics`: empty input is the editor's idle
+    // state, not a syntax error. Suppress the parse-level "unexpected
+    // token Eof" stream upstream OxFml emits for empty source.
+    if formula_space.raw_entered_cell_text.is_empty() {
+        return Vec::new();
+    }
     let mut squiggles: Vec<DiagnosticSquiggle> = document
         .live_diagnostics
         .diagnostics
@@ -1144,6 +1611,69 @@ fn project_diagnostic_squiggles(formula_space: &FormulaSpaceState) -> Vec<Diagno
     deduped
 }
 
+/// Project the host adapter's `ArrayCellFormatGrid` onto the
+/// view-model shape, clamped to the preview window so the
+/// renderer doesn't index past `cells`. The carrier upstream
+/// can be larger than the preview when the bridge truncated
+/// — we keep view-model and renderer in lock-step.
+fn project_array_cell_format_grid(
+    grid: &crate::adapters::oxfml::ArrayCellFormatGrid,
+    preview_rows: usize,
+    preview_cols: usize,
+) -> Vec<Vec<ArrayCellFormatView>> {
+    grid.rows
+        .iter()
+        .take(preview_rows)
+        .map(|row| {
+            row.iter()
+                .take(preview_cols)
+                .map(project_array_cell_format)
+                .collect()
+        })
+        .collect()
+}
+
+fn project_array_cell_format(
+    cell: &crate::adapters::oxfml::ArrayCellFormat,
+) -> ArrayCellFormatView {
+    ArrayCellFormatView {
+        effective_font_color: cell.effective_font_color.clone(),
+        effective_fill_color: cell.effective_fill_color.clone(),
+        data_bar: cell.data_bar.as_ref().map(|fill| DataBarFillView {
+            fill_ratio: fill.fill_ratio,
+            bar_color: fill.bar_color.clone(),
+            direction: match fill.direction {
+                crate::adapters::oxfml::DataBarDirection::Left => DataBarDirectionView::Left,
+                crate::adapters::oxfml::DataBarDirection::Right => DataBarDirectionView::Right,
+            },
+            show_bar_only: fill.show_bar_only,
+        }),
+        icon: cell.icon.as_ref().map(|icon| CfIconView {
+            set_kind: icon.set_kind.clone(),
+            icon_index: icon.icon_index,
+        }),
+    }
+}
+
+/// Parse the upstream `FormulaArrayPreview.label` shape prefix back
+/// to `(rows, cols)`. The bridge constructs the label as
+/// `"<rows>x<cols> spill preview"`; this helper takes the rows / cols
+/// numbers from the prefix so the result-hero browser can surface
+/// the *full* shape (not just the preview-window shape) regardless
+/// of whether the cells were truncated. Returns `None` for any label
+/// shape that doesn't parse — the caller falls back to the preview-
+/// window dimensions in that case.
+fn parse_shape_from_array_label(label: &str) -> Option<(usize, usize)> {
+    let prefix = label.split_whitespace().next()?;
+    let mut parts = prefix.split('x');
+    let rows: usize = parts.next()?.parse().ok()?;
+    let cols: usize = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((rows, cols))
+}
+
 fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
     let raw_text = formula_space.raw_entered_cell_text.as_str();
 
@@ -1152,14 +1682,39 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         return ResultView::Empty;
     }
 
-    // Array result projects to shape only; preview grid is a later phase.
+    // Array result projects to a real browser. The bridge ships back
+    // a (possibly-truncated) preview window + a label that already
+    // carries the *full* shape (e.g. `"100x80 spill preview"` even
+    // when only 30×20 cells are populated). Parse the shape from the
+    // label so the renderer can surface "+N rows hidden" chips when
+    // `truncated` is true.
     if let Some(preview) = formula_space.array_preview.as_ref() {
-        let rows = preview.rows.len();
-        let cols = preview.rows.first().map(|row| row.len()).unwrap_or(0);
+        let preview_rows = preview.rows.len();
+        let preview_cols = preview.rows.first().map(|row| row.len()).unwrap_or(0);
+        let (total_rows, total_cols) =
+            parse_shape_from_array_label(&preview.label).unwrap_or((preview_rows, preview_cols));
+        // W071 + W072: per-cell CF carrier. The bridge populates
+        // `array_cell_format` on `value_presentation` when the
+        // active formula has CF rules attached; rendering applies
+        // the per-cell font / fill / data-bar / icon overrides.
+        // The carrier dimensions come from OxFml's full shape
+        // (matching `EvalValue::Array`), which can exceed the
+        // preview-window dimensions — in that case the renderer
+        // only consumes the first `preview_rows × preview_cols`
+        // entries to stay aligned with `cells`.
+        let cell_format = formula_space
+            .editor_document
+            .as_ref()
+            .and_then(|doc| doc.value_presentation.as_ref())
+            .and_then(|presentation| presentation.array_cell_format.as_ref())
+            .map(|grid| project_array_cell_format_grid(grid, preview_rows, preview_cols));
         return ResultView::Array {
-            rows,
-            cols,
+            total_rows,
+            total_cols,
             label: preview.label.clone(),
+            cells: preview.rows.clone(),
+            cell_format,
+            truncated: preview.truncated,
         };
     }
 
@@ -1217,6 +1772,8 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         return ResultView::Display {
             text: forced_text.to_string(),
             kind: ResultKind::Text,
+            applied_font_color: None,
+            applied_fill_color: None,
         };
     }
     if !raw_text.starts_with('=') {
@@ -1224,11 +1781,15 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
             return ResultView::Display {
                 text: format_literal_number(number),
                 kind: ResultKind::Number,
+                applied_font_color: None,
+                applied_fill_color: None,
             };
         }
         return ResultView::Display {
             text: raw_text.to_string(),
             kind: ResultKind::Text,
+            applied_font_color: None,
+            applied_fill_color: None,
         };
     }
 
@@ -1254,18 +1815,25 @@ fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> 
             .clone()
             .unwrap_or_default()
     };
+    let (applied_font_color, applied_fill_color) = applied_cf_colours(formula_space);
     match value {
         EvalValue::Number(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Number,
+            applied_font_color,
+            applied_fill_color,
         },
         EvalValue::Text(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Text,
+            applied_font_color,
+            applied_fill_color,
         },
         EvalValue::Logical(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Logical,
+            applied_font_color,
+            applied_fill_color,
         },
         EvalValue::Error(code) => ResultView::Error {
             code: worksheet_error_literal(*code).to_string(),
@@ -1274,17 +1842,44 @@ fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> 
         EvalValue::Array(_) => {
             // Array path normally goes through `formula_space.array_preview`
             // (handled above). If we reach here without a preview, surface
-            // the effective display string.
+            // the effective display string. CF colours apply per-cell on
+            // arrays (see `docs/HANDOFF_OXFML_CF_ARRAY_PER_CELL.md`); the
+            // single overall colour the bridge currently emits for an
+            // array is intentionally dropped on the floor for the array
+            // path because it's the misleading "compare-the-stringified-
+            // array-to-the-threshold" output.
             ResultView::Display {
                 text: display_text(),
                 kind: ResultKind::Other,
+                applied_font_color: None,
+                applied_fill_color: None,
             }
         }
         EvalValue::Reference(_) | EvalValue::Lambda(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Other,
+            applied_font_color,
+            applied_fill_color,
         },
     }
+}
+
+/// Pull the CF-applied font / fill colours off the editor
+/// document's value presentation. `(None, None)` when no CF rule
+/// fired (the publication surface emitted no override) or when
+/// the bridge hasn't returned a value presentation yet.
+fn applied_cf_colours(formula_space: &FormulaSpaceState) -> (Option<String>, Option<String>) {
+    let Some(presentation) = formula_space
+        .editor_document
+        .as_ref()
+        .and_then(|doc| doc.value_presentation.as_ref())
+    else {
+        return (None, None);
+    };
+    (
+        presentation.effective_font_color.clone(),
+        presentation.effective_fill_color.clone(),
+    )
 }
 
 fn format_literal_number(value: f64) -> String {
@@ -1411,6 +2006,18 @@ fn project_scenario_breadcrumb(
     // file IO is a separate later slice; the per-host adapter
     // lives below the action layer, so the breadcrumb sees the
     // same dispatch surface either way.
+    // Browser-host save uses the browser's download dialog, not a
+    // file-overwrite save; users see a download confirmation, not a
+    // "save back to the same path" flow. The label says "Download
+    // Formula File" on wasm so the action's effect matches the
+    // user's mental model. On the desktop (Tauri) host the action
+    // is a real "Save as…" with a native file picker, which is the
+    // label there.
+    #[cfg(target_arch = "wasm32")]
+    let save_as_label = "Download Formula File";
+    #[cfg(not(target_arch = "wasm32"))]
+    let save_as_label = "Save as…";
+
     let actions = vec![
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::NewScenario,
@@ -1420,7 +2027,7 @@ fn project_scenario_breadcrumb(
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::SaveAs,
-            label: "Save as…",
+            label: save_as_label,
             chord_label: "Ctrl+Shift+S",
             seam_id: None,
         },
@@ -1505,7 +2112,8 @@ mod tests {
     /// editor_document attached. Helper for the test cases below.
     fn host_state_with(formula_space: FormulaSpaceState) -> OneCalcHostState {
         let mut state = OneCalcHostState::default();
-        state.workspace_shell.active_formula_space_id = Some(formula_space.formula_space_id.clone());
+        state.workspace_shell.active_formula_space_id =
+            Some(formula_space.formula_space_id.clone());
         state
             .workspace_shell
             .open_formula_space_order
@@ -1527,6 +2135,10 @@ mod tests {
             array_preview: None,
             blocked_reason: None,
             published_value: EvalValue::Number(number),
+            number_format_hint: None,
+            effective_font_color: None,
+            effective_fill_color: None,
+            array_cell_format: None,
         });
     }
 
@@ -1556,7 +2168,7 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
-            ResultView::Display { text, kind } => {
+            ResultView::Display { text, kind, .. } => {
                 assert_eq!(text, "3");
                 assert_eq!(kind, ResultKind::Number);
             }
@@ -1585,7 +2197,8 @@ mod tests {
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=XLOOKUP(...)");
         formula_space.editor_document = Some(blocked_editor_document("=XLOOKUP(...)"));
-        formula_space.context.blocked_reason = Some("XLOOKUP not admitted on this host".to_string());
+        formula_space.context.blocked_reason =
+            Some("XLOOKUP not admitted on this host".to_string());
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
@@ -1641,10 +2254,21 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
-            ResultView::Array { rows, cols, label } => {
-                assert_eq!(rows, 2);
-                assert_eq!(cols, 3);
+            ResultView::Array {
+                total_rows,
+                total_cols,
+                label,
+                cells,
+                cell_format,
+                truncated,
+            } => {
+                assert_eq!(total_rows, 2);
+                assert_eq!(total_cols, 3);
                 assert_eq!(label, "Array[2 × 3]");
+                assert_eq!(cells.len(), 2);
+                assert_eq!(cells[0], vec!["1", "2", "3"]);
+                assert!(!truncated);
+                assert!(cell_format.is_none(), "no CF rules → no per-cell carrier");
             }
             other => panic!("expected Array(2 × 3), got {other:?}"),
         }
@@ -1668,7 +2292,7 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
-            ResultView::Display { text, kind } => {
+            ResultView::Display { text, kind, .. } => {
                 assert_eq!(text, "1.5");
                 assert_eq!(kind, ResultKind::Number);
             }
@@ -1682,7 +2306,7 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
-            ResultView::Display { text, kind } => {
+            ResultView::Display { text, kind, .. } => {
                 assert_eq!(text, "hello");
                 assert_eq!(kind, ResultKind::Text);
             }
@@ -1696,7 +2320,7 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         match vm.result_view {
-            ResultView::Display { text, kind } => {
+            ResultView::Display { text, kind, .. } => {
                 assert_eq!(text, "123");
                 assert_eq!(kind, ResultKind::Text);
             }
@@ -1718,8 +2342,7 @@ mod tests {
 
     #[test]
     fn entry_mode_pill_is_formula_for_leading_equals() {
-        let formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert_eq!(vm.entry_mode_pill, EntryModePill::Formula);
@@ -1817,8 +2440,7 @@ mod tests {
 
     #[test]
     fn syntax_runs_empty_without_editor_document() {
-        let formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert!(vm.syntax_runs.is_empty());
@@ -1832,7 +2454,10 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert!(!vm.syntax_runs.is_empty());
-        assert_eq!(vm.syntax_runs.first().map(|run| run.text.as_str()), Some("="));
+        assert_eq!(
+            vm.syntax_runs.first().map(|run| run.text.as_str()),
+            Some("=")
+        );
     }
 
     #[test]
@@ -1852,8 +2477,7 @@ mod tests {
 
     #[test]
     fn diagnostic_squiggles_empty_without_editor_document() {
-        let formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert!(vm.diagnostic_squiggles.is_empty());
@@ -1908,7 +2532,10 @@ mod tests {
         assert_eq!(vm.diagnostic_squiggles[0].diagnostic_id, "d-early");
         assert_eq!(vm.diagnostic_squiggles[0].severity, SquiggleSeverity::Error);
         assert_eq!(vm.diagnostic_squiggles[1].diagnostic_id, "d-late");
-        assert_eq!(vm.diagnostic_squiggles[1].severity, SquiggleSeverity::Warning);
+        assert_eq!(
+            vm.diagnostic_squiggles[1].severity,
+            SquiggleSeverity::Warning
+        );
     }
 
     fn make_diag(
@@ -1938,8 +2565,7 @@ mod tests {
 
     #[test]
     fn editor_metrics_zero_without_document() {
-        let formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         assert_eq!(vm.editor_metrics.token_count, 0);
@@ -1962,22 +2588,47 @@ mod tests {
     }
 
     #[test]
-    fn result_context_defaults_to_seam_pending_locale_and_format_with_live_policy() {
+    fn result_context_default_format_is_general_locale_seam_policy_live() {
+        // Empty `number_format_code` ⇒ format chip reads "General"
+        // *live* (no SEAM); policy default is `live-recalc` (Excel's
+        // default-on workbook behaviour); locale stays SEAM-pending
+        // behind the locale-expansion handoff because non-en-US
+        // tables aren't rendered yet.
         let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
-        assert_eq!(vm.result_context.locale.value(), "en-US");
-        assert_eq!(
-            vm.result_context.locale.seam_id(),
-            Some("SEAM-OXFUNC-LOCALE-EXPAND")
-        );
-        assert_eq!(vm.result_context.format.value(), "GENERAL");
-        assert_eq!(
-            vm.result_context.format.seam_id(),
-            Some("SEAM-OXFUNC-FORMAT-GENERAL")
-        );
-        assert_eq!(vm.result_context.policy.value(), "deterministic");
+        assert_eq!(vm.result_context.format.value(), "General");
+        assert_eq!(vm.result_context.format.seam_id(), None);
+        assert_eq!(vm.result_context.policy.value(), "live-recalc");
         assert_eq!(vm.result_context.policy.seam_id(), None);
+        // Locale moved to the formatting panel; check it surfaces
+        // there with the expected SEAM marker until the locale-
+        // expansion handoff lands.
+        assert_eq!(
+            vm.formatting_controls.locale_seam_id,
+            Some("SEAM-OXFML-LOCALE-EXPAND")
+        );
+        assert!(!vm.formatting_controls.locale_label.is_empty());
+    }
+
+    #[test]
+    fn result_context_format_chip_reads_active_formula_format_code() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=A1");
+        formula_space.formatting.number_format_code = "$#,##0.00".to_string();
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        // The chip shows the matched preset family label, not the raw code.
+        assert_eq!(vm.result_context.format.value(), "Currency");
+        assert_eq!(vm.result_context.format.seam_id(), None);
+    }
+
+    #[test]
+    fn result_context_policy_reflects_live_recalc_when_set() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=NOW()");
+        formula_space.formatting.scenario_policy = crate::persistence::ScenarioPolicy::LiveRecalc;
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert_eq!(vm.result_context.policy.value(), "live-recalc");
     }
 
     // -----------------------------------------------------------------
@@ -2098,8 +2749,14 @@ mod tests {
             (Kind::StructuredSelector, '#', "Selector"),
             (Kind::SyntaxAssist, '·', "Syntax"),
         ] {
-            assert_eq!(CompletionPopupItemView::glyph_for_kind(kind), expected_glyph);
-            assert_eq!(CompletionPopupItemView::label_for_kind(kind), expected_label);
+            assert_eq!(
+                CompletionPopupItemView::glyph_for_kind(kind),
+                expected_glyph
+            );
+            assert_eq!(
+                CompletionPopupItemView::label_for_kind(kind),
+                expected_label
+            );
         }
     }
 
@@ -2146,44 +2803,40 @@ mod tests {
     ) -> crate::adapters::oxfml::EditorDocument {
         use oxfml_core::syntax::green::SyntaxKind;
         let mut document = sample_editor_document(source_text);
-        document.signature_help =
-            Some(crate::adapters::oxfml::SignatureHelpContext {
-                callee_text: "SUM".to_string(),
-                call_span: crate::adapters::oxfml::FormulaTextSpan {
-                    start: 1,
-                    len: source_text.chars().count().saturating_sub(1),
-                },
-                active_argument_index,
-                invocation_kind: SyntaxKind::CallExpr,
-            });
-        document.function_help =
-            Some(crate::adapters::oxfml::FunctionHelpPacket {
-                lookup_key: "SUM".to_string(),
-                library_context_snapshot_ref: None,
-                display_name: "SUM".to_string(),
-                signature_forms: vec![crate::adapters::oxfml::FunctionHelpSignatureForm {
-                    display_signature: "SUM(number1, number2, ...)".to_string(),
-                    min_arity: 1,
-                    max_arity: None,
-                }],
-                argument_help: vec![
-                    "number1".to_string(),
-                    "number2".to_string(),
-                    "additional_numbers".to_string(),
-                ],
-                short_description: Some("Adds numbers together.".to_string()),
-                availability_summary: Some("supported".to_string()),
-                deferred_or_profile_limited: false,
-            });
+        document.signature_help = Some(crate::adapters::oxfml::SignatureHelpContext {
+            callee_text: "SUM".to_string(),
+            call_span: crate::adapters::oxfml::FormulaTextSpan {
+                start: 1,
+                len: source_text.chars().count().saturating_sub(1),
+            },
+            active_argument_index,
+            invocation_kind: SyntaxKind::CallExpr,
+        });
+        document.function_help = Some(crate::adapters::oxfml::FunctionHelpPacket {
+            lookup_key: "SUM".to_string(),
+            library_context_snapshot_ref: None,
+            display_name: "SUM".to_string(),
+            signature_forms: vec![crate::adapters::oxfml::FunctionHelpSignatureForm {
+                display_signature: "SUM(number1, number2, ...)".to_string(),
+                min_arity: 1,
+                max_arity: None,
+            }],
+            argument_help: vec![
+                "number1".to_string(),
+                "number2".to_string(),
+                "additional_numbers".to_string(),
+            ],
+            short_description: Some("Adds numbers together.".to_string()),
+            availability_summary: Some("supported".to_string()),
+            deferred_or_profile_limited: false,
+        });
         document
     }
 
     #[test]
     fn signature_help_view_built_from_editor_document() {
-        let mut formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
-        formula_space.editor_document =
-            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        formula_space.editor_document = Some(document_with_signature_help_for_sum("=SUM(", 0));
         formula_space.editor_box_metrics = Some(metrics_9x22());
         formula_space.editor_surface_state.caret.offset = 5;
 
@@ -2207,8 +2860,7 @@ mod tests {
         // to 1 — the second parameter is now the active one.
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,");
-        formula_space.editor_document =
-            Some(document_with_signature_help_for_sum("=SUM(1,", 1));
+        formula_space.editor_document = Some(document_with_signature_help_for_sum("=SUM(1,", 1));
         formula_space.editor_box_metrics = Some(metrics_9x22());
         formula_space.editor_surface_state.caret.offset = 7;
 
@@ -2245,8 +2897,7 @@ mod tests {
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2");
         // Document still reflects the pre-`,2` state — stale by one keystroke.
-        formula_space.editor_document =
-            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        formula_space.editor_document = Some(document_with_signature_help_for_sum("=SUM(", 0));
         formula_space.editor_box_metrics = Some(metrics_9x22());
 
         let state = host_state_with(formula_space);
@@ -2273,10 +2924,8 @@ mod tests {
 
     #[test]
     fn signature_help_view_empty_when_metrics_unmeasured() {
-        let mut formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
-        formula_space.editor_document =
-            Some(document_with_signature_help_for_sum("=SUM(", 0));
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        formula_space.editor_document = Some(document_with_signature_help_for_sum("=SUM(", 0));
         // editor_box_metrics deliberately None — geometry can't anchor yet.
 
         let state = host_state_with(formula_space);
@@ -2287,10 +2936,8 @@ mod tests {
     #[test]
     fn signature_help_view_suppressed_when_completion_popup_open() {
         // Popup wins; signature help hides until the popup dismisses.
-        let mut formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(s");
-        formula_space.editor_document =
-            Some(document_with_signature_help_for_sum("=SUM(s", 0));
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(s");
+        formula_space.editor_document = Some(document_with_signature_help_for_sum("=SUM(s", 0));
         formula_space.editor_box_metrics = Some(metrics_9x22());
         formula_space.completion_popup = open_popup_state();
         formula_space.editor_surface_state.caret.offset = 6;
@@ -2309,8 +2956,7 @@ mod tests {
         // Defensive: bridge gives signature_help but no function_help
         // (theoretically possible during a brief stale-document tick).
         // The view-model still renders the callee — empty parameter list.
-        let mut formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(");
         let mut document = document_with_signature_help_for_sum("=SUM(", 0);
         document.function_help = None;
         formula_space.editor_document = Some(document);
@@ -2422,8 +3068,7 @@ mod tests {
 
     #[test]
     fn formula_drill_default_collapsed_with_empty_tree() {
-        let formula_space =
-            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("vm");
         assert!(!vm.formula_drill.expanded);
@@ -2474,16 +3119,15 @@ mod tests {
         formula_space.editor_document = Some(document);
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("vm");
+        // Tree is now nested rather than flat-with-depth: the root
+        // is a single LET node carrying the two child rows.
         let nodes = &vm.formula_drill.tree;
-        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_id, "let");
-        assert_eq!(nodes[0].depth, 0);
-        assert!(nodes[0].has_children);
-        assert_eq!(nodes[1].node_id, "x-bind");
-        assert_eq!(nodes[1].depth, 1);
-        assert!(!nodes[1].has_children);
-        assert_eq!(nodes[2].node_id, "x-use");
-        assert_eq!(nodes[2].depth, 1);
+        assert_eq!(nodes[0].children.len(), 2);
+        assert_eq!(nodes[0].children[0].node_id, "x-bind");
+        assert!(nodes[0].children[0].children.is_empty());
+        assert_eq!(nodes[0].children[1].node_id, "x-use");
     }
 
     #[test]
@@ -2511,8 +3155,7 @@ mod tests {
     fn formula_drill_eval_phase_blocked_when_provenance_carries_blocked_reason() {
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=XLOOKUP(...)");
-        formula_space.editor_document =
-            Some(blocked_editor_document("=XLOOKUP(...)"));
+        formula_space.editor_document = Some(blocked_editor_document("=XLOOKUP(...)"));
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("vm");
         let eval = vm
@@ -2624,9 +3267,19 @@ mod tests {
     fn breadcrumb_dropdown_open_mirrors_global_chrome_state() {
         let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
         let mut state = host_state_with(formula_space);
-        assert!(!build_home_shell_view_model(&state).unwrap().scenario_breadcrumb.is_open);
+        assert!(
+            !build_home_shell_view_model(&state)
+                .unwrap()
+                .scenario_breadcrumb
+                .is_open
+        );
         state.global_ui_chrome.scenario_breadcrumb_open = true;
-        assert!(build_home_shell_view_model(&state).unwrap().scenario_breadcrumb.is_open);
+        assert!(
+            build_home_shell_view_model(&state)
+                .unwrap()
+                .scenario_breadcrumb
+                .is_open
+        );
     }
 
     #[test]
@@ -2635,7 +3288,10 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active");
         let recent = &vm.scenario_breadcrumb.recent;
-        assert!(!recent.is_empty(), "recent must include the active scenario");
+        assert!(
+            !recent.is_empty(),
+            "recent must include the active scenario"
+        );
         assert!(recent[0].is_active);
         assert_eq!(recent[0].formula_space_id, "space-active");
         assert_eq!(recent[0].meta, "active");
@@ -2750,10 +3406,9 @@ mod tests {
         // `persistence/browser_file_io.rs`.
         for action in &vm.scenario_breadcrumb.actions {
             match action.action_id {
-                ScenarioBreadcrumbActionId::ManageScenarios => assert_eq!(
-                    action.seam_id,
-                    Some("SEAM-ONECALC-SCENARIO-PERSIST"),
-                ),
+                ScenarioBreadcrumbActionId::ManageScenarios => {
+                    assert_eq!(action.seam_id, Some("SEAM-ONECALC-SCENARIO-PERSIST"),)
+                }
                 _ => assert_eq!(action.seam_id, None, "{:?}", action.action_id),
             }
         }

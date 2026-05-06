@@ -38,9 +38,7 @@ fn dispatch_mouseover(element: &web_sys::Element) {
     init.set_cancelable(true);
     let event = web_sys::MouseEvent::new_with_mouse_event_init_dict("mouseover", &init)
         .expect("mouseover event");
-    element
-        .dispatch_event(&event)
-        .expect("dispatch mouseover");
+    element.dispatch_event(&event).expect("dispatch mouseover");
 }
 
 /// Dispatch a `mouseleave` event on the given element.
@@ -52,9 +50,7 @@ fn dispatch_mouseleave(element: &web_sys::Element) {
     init.set_cancelable(true);
     let event = web_sys::MouseEvent::new_with_mouse_event_init_dict("mouseleave", &init)
         .expect("mouseleave event");
-    element
-        .dispatch_event(&event)
-        .expect("dispatch mouseleave");
+    element.dispatch_event(&event).expect("dispatch mouseleave");
 }
 
 #[wasm_bindgen_test(async)]
@@ -65,14 +61,18 @@ async fn function_help_tooltip_appears_on_function_token_mouseover() {
 
     // Wait for the syntax overlay's SUM span to mount with the
     // expected attributes.
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        let text = el.get_attribute("data-token-text")?;
-        if text.eq_ignore_ascii_case("SUM") {
-            Some(el.clone())
-        } else {
-            None
-        }
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| {
+            let text = el.get_attribute("data-token-text")?;
+            if text.eq_ignore_ascii_case("SUM") {
+                Some(el.clone())
+            } else {
+                None
+            }
+        },
+    )
     .await
     .expect("SUM .syn-fn span mounted");
 
@@ -98,10 +98,7 @@ async fn function_help_tooltip_appears_on_function_token_mouseover() {
     // (which varies across bridge versions). Pin only that the
     // signature line is present and non-empty.
     assert!(
-        signature
-            .as_deref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
+        signature.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
         "signature line should be present and non-empty; got {signature:?}",
     );
 
@@ -114,11 +111,15 @@ async fn function_help_tooltip_dismisses_on_editor_frame_mouseleave() {
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        el.get_attribute("data-token-text")
-            .filter(|t| t.eq_ignore_ascii_case("SUM"))
-            .map(|_| el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| {
+            el.get_attribute("data-token-text")
+                .filter(|t| t.eq_ignore_ascii_case("SUM"))
+                .map(|_| el.clone())
+        },
+    )
     .await
     .expect("SUM span mounted");
     dispatch_mouseover(&function_span);
@@ -145,11 +146,15 @@ async fn function_help_tooltip_dismisses_on_subsequent_input() {
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        el.get_attribute("data-token-text")
-            .filter(|t| t.eq_ignore_ascii_case("SUM"))
-            .map(|_| el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| {
+            el.get_attribute("data-token-text")
+                .filter(|t| t.eq_ignore_ascii_case("SUM"))
+                .map(|_| el.clone())
+        },
+    )
     .await
     .expect("SUM span mounted");
     dispatch_mouseover(&function_span);
@@ -175,9 +180,11 @@ async fn function_help_tooltip_does_not_appear_for_non_function_tokens() {
     dispatch_input(&textarea, "=SUM(1,2)");
 
     // Find a non-function span (e.g. the `=` operator or a number).
-    let number_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-num", |el| {
-        Some(el.clone())
-    })
+    let number_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-num",
+        |el| Some(el.clone()),
+    )
     .await
     .expect("a number span mounted");
 
@@ -202,11 +209,15 @@ async fn function_help_tooltip_carries_short_description_from_bridge() {
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        el.get_attribute("data-token-text")
-            .filter(|t| t.eq_ignore_ascii_case("SUM"))
-            .map(|_| el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| {
+            el.get_attribute("data-token-text")
+                .filter(|t| t.eq_ignore_ascii_case("SUM"))
+                .map(|_| el.clone())
+        },
+    )
     .await
     .expect("SUM span mounted");
     dispatch_mouseover(&function_span);
@@ -237,9 +248,11 @@ async fn syntax_overlay_function_spans_carry_data_token_attributes() {
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        Some(el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| Some(el.clone()),
+    )
     .await
     .expect("function span mounted");
 
@@ -273,9 +286,11 @@ async fn function_help_tooltip_uses_caret_box_anchor_not_dom_rect() {
     let textarea = shell.textarea().await;
     dispatch_input(&textarea, "=SUM(1,2)");
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        Some(el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| Some(el.clone()),
+    )
     .await
     .expect("function span mounted");
     dispatch_mouseover(&function_span);
@@ -308,11 +323,15 @@ async fn function_help_tooltip_disappears_when_function_help_packet_clears() {
     // clear function_help packet.
     super::scaffold::flush_microtasks(15).await;
 
-    let function_span = wait_for(&shell, ".onecalc-home-shell__editor-overlay .syn-fn", |el| {
-        el.get_attribute("data-token-text")
-            .filter(|t| t.eq_ignore_ascii_case("SUM"))
-            .map(|_| el.clone())
-    })
+    let function_span = wait_for(
+        &shell,
+        ".onecalc-home-shell__editor-overlay .syn-fn",
+        |el| {
+            el.get_attribute("data-token-text")
+                .filter(|t| t.eq_ignore_ascii_case("SUM"))
+                .map(|_| el.clone())
+        },
+    )
     .await;
 
     if let Some(span) = function_span {

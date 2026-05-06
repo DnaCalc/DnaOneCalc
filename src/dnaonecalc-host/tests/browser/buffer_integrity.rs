@@ -59,7 +59,8 @@ async fn assert_overlay_matches_textarea_for(input: &str) {
         .unwrap_or(overlay_text_raw.clone());
 
     assert_eq!(
-        overlay_stripped, textarea_value,
+        overlay_stripped,
+        textarea_value,
         "buffer-integrity: overlay text must match textarea value \
          character-for-character. \
          input = {input:?}, overlay = {overlay_stripped:?} \

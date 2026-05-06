@@ -256,7 +256,10 @@ async fn mode_toggle_re_renders_walk_tree_without_collapsing_panel() {
     let panel = shell
         .select(".onecalc-home-shell__formula-drill-panel")
         .expect("panel");
-    assert_eq!(panel.get_attribute("data-expanded").as_deref(), Some("true"));
+    assert_eq!(
+        panel.get_attribute("data-expanded").as_deref(),
+        Some("true")
+    );
     assert_eq!(panel.get_attribute("data-mode").as_deref(), Some("user"));
 
     switch_to_developer_mode(&textarea).await;
@@ -293,8 +296,8 @@ async fn user_mode_blocked_row_renders_blocked_tag_instead_of_equals() {
     let textarea = shell.textarea().await;
     open_drill(&shell, &textarea, "=XLOOKUP(A1,B1:B9,C1:C9)").await;
 
-    let blocked_row = shell
-        .select_all(".onecalc-home-shell__formula-drill-row[data-state=\"blocked\"]");
+    let blocked_row =
+        shell.select_all(".onecalc-home-shell__formula-drill-row[data-state=\"blocked\"]");
     if blocked_row.length() == 0 {
         // No blocked row materialised — bridge tokenized the
         // input some other way. Skip the rendering assertion;

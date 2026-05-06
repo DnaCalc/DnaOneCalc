@@ -136,16 +136,14 @@ async fn signature_help_anchors_above_caret() {
     // Read the inline `top` style — that's the caret-box top in pixels
     // (the upward offset is applied via CSS transform, not by the
     // top value).
-    let top_attr = help_element
-        .get_attribute("style")
-        .and_then(|style| {
-            style
-                .split(';')
-                .map(str::trim)
-                .find(|s| s.starts_with("top:"))
-                .and_then(|s| s.split(':').nth(1))
-                .map(|v| v.trim().trim_end_matches("px").trim().to_string())
-        });
+    let top_attr = help_element.get_attribute("style").and_then(|style| {
+        style
+            .split(';')
+            .map(str::trim)
+            .find(|s| s.starts_with("top:"))
+            .and_then(|s| s.split(':').nth(1))
+            .map(|v| v.trim().trim_end_matches("px").trim().to_string())
+    });
     assert!(
         top_attr.is_some(),
         "signature help inline style should carry a top:Npx value",

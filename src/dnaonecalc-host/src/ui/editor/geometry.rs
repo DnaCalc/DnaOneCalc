@@ -336,7 +336,10 @@ mod tests {
     fn offset_to_line_column_handles_empty_text_at_offset_zero() {
         assert_eq!(
             offset_to_line_column("", 0),
-            EditorLineColumn { line_index: 0, column_index: 0 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 0
+            }
         );
     }
 
@@ -345,7 +348,10 @@ mod tests {
     fn offset_to_line_column_handles_past_end_on_empty_text() {
         assert_eq!(
             offset_to_line_column("", 10),
-            EditorLineColumn { line_index: 0, column_index: 0 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 0
+            }
         );
     }
 
@@ -358,13 +364,19 @@ mod tests {
         // text: "abc\ndef", `\n` is at offset 3
         assert_eq!(
             offset_to_line_column("abc\ndef", 3),
-            EditorLineColumn { line_index: 0, column_index: 3 },
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 3
+            },
             "offset on the newline char itself = end of line 0",
         );
         // offset 4 is the first char of line 1
         assert_eq!(
             offset_to_line_column("abc\ndef", 4),
-            EditorLineColumn { line_index: 1, column_index: 0 },
+            EditorLineColumn {
+                line_index: 1,
+                column_index: 0
+            },
         );
     }
 
@@ -378,11 +390,17 @@ mod tests {
         // "ab\rcd" — the `\r` is at offset 2, treated as a column.
         assert_eq!(
             offset_to_line_column("ab\rcd", 2),
-            EditorLineColumn { line_index: 0, column_index: 2 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 2
+            }
         );
         assert_eq!(
             offset_to_line_column("ab\rcd", 4),
-            EditorLineColumn { line_index: 0, column_index: 4 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 4
+            }
         );
     }
 
@@ -395,12 +413,18 @@ mod tests {
         // "ab\r\ncd" — `\r` at offset 2, `\n` at offset 3, `c` at offset 4.
         assert_eq!(
             offset_to_line_column("ab\r\ncd", 3),
-            EditorLineColumn { line_index: 0, column_index: 3 },
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 3
+            },
             "offset on `\\n` = end of line 0 (column index 3 includes the `\\r`)",
         );
         assert_eq!(
             offset_to_line_column("ab\r\ncd", 4),
-            EditorLineColumn { line_index: 1, column_index: 0 },
+            EditorLineColumn {
+                line_index: 1,
+                column_index: 0
+            },
             "offset 4 = first char of line 1",
         );
     }
@@ -413,20 +437,32 @@ mod tests {
     fn offset_to_line_column_clamps_past_end_offset_to_last_position() {
         assert_eq!(
             offset_to_line_column("abc", 3),
-            EditorLineColumn { line_index: 0, column_index: 3 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 3
+            }
         );
         assert_eq!(
             offset_to_line_column("abc", 100),
-            EditorLineColumn { line_index: 0, column_index: 3 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 3
+            }
         );
         // Multi-line: end of line 1 after `\n` is line 1, col 3
         assert_eq!(
             offset_to_line_column("abc\ndef", 7),
-            EditorLineColumn { line_index: 1, column_index: 3 }
+            EditorLineColumn {
+                line_index: 1,
+                column_index: 3
+            }
         );
         assert_eq!(
             offset_to_line_column("abc\ndef", usize::MAX / 2),
-            EditorLineColumn { line_index: 1, column_index: 3 }
+            EditorLineColumn {
+                line_index: 1,
+                column_index: 3
+            }
         );
     }
 
@@ -440,16 +476,25 @@ mod tests {
         // code point, one Rust char.
         assert_eq!(
             offset_to_line_column("café", 4),
-            EditorLineColumn { line_index: 0, column_index: 4 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 4
+            }
         );
         // Mixed scripts: "中a" — 中 is one BMP char.
         assert_eq!(
             offset_to_line_column("中a", 1),
-            EditorLineColumn { line_index: 0, column_index: 1 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 1
+            }
         );
         assert_eq!(
             offset_to_line_column("中a", 2),
-            EditorLineColumn { line_index: 0, column_index: 2 }
+            EditorLineColumn {
+                line_index: 0,
+                column_index: 2
+            }
         );
     }
 
@@ -510,7 +555,7 @@ mod tests {
         let metrics = TextareaMeasurementMetrics {
             char_width_px: 9,
             line_height_px: 22,
-            scroll_top_px: 44, // 2 lines scrolled
+            scroll_top_px: 44,  // 2 lines scrolled
             scroll_left_px: 18, // 2 cols scrolled
         };
         // 5 lines of "abc": offset on line 4 col 0 = char index 16

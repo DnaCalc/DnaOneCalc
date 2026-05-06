@@ -88,7 +88,8 @@ fn assert_overlay_matches_textarea(
         .unwrap_or(overlay_text_raw.clone());
 
     assert_eq!(
-        overlay_stripped, textarea_value,
+        overlay_stripped,
+        textarea_value,
         "[{label}] overlay text must match textarea value character-for-character. \
          textarea = {textarea_value:?} ({} chars), \
          overlay  = {overlay_stripped:?} ({} chars).",

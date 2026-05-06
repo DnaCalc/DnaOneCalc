@@ -156,7 +156,10 @@ async fn popup_is_a_descendant_of_editor_frame_for_anchoring() {
     let frame = shell
         .select(".onecalc-home-shell__editor-frame")
         .expect("editor frame mounted");
-    let popup_inside_frame = frame.query_selector(".onecalc-completion-popup").ok().flatten();
+    let popup_inside_frame = frame
+        .query_selector(".onecalc-completion-popup")
+        .ok()
+        .flatten();
     assert!(
         popup_inside_frame.is_some(),
         "popup must be a descendant of the editor frame so absolute positioning anchors correctly",
@@ -625,7 +628,8 @@ async fn syntax_overlay_text_must_match_textarea_value_exactly() {
         .unwrap_or(overlay_text);
 
     assert_eq!(
-        overlay_text_stripped, textarea_value,
+        overlay_text_stripped,
+        textarea_value,
         "syntax overlay text must equal textarea.value character-for-character. \
          Mismatch causes caret position to drift visually away from the textarea \
          content at any offset past a missing trivia run. textarea_value = \
@@ -772,14 +776,12 @@ async fn caret_lands_at_end_when_prefix_starts_inside_text_not_at_offset_zero() 
     // Snapshot popup state BEFORE Tab so we can confirm it's actually
     // mounted. Read each item's proposal_id + data-selected to see the
     // shape of what acceptance is supposed to apply.
-    let popup_before_attrs = shell
-        .select(".onecalc-completion-popup")
-        .map(|el| {
-            (
-                el.get_attribute("data-item-count").unwrap_or_default(),
-                el.get_attribute("data-selected-index").unwrap_or_default(),
-            )
-        });
+    let popup_before_attrs = shell.select(".onecalc-completion-popup").map(|el| {
+        (
+            el.get_attribute("data-item-count").unwrap_or_default(),
+            el.get_attribute("data-selected-index").unwrap_or_default(),
+        )
+    });
     let first_item_id = shell
         .select(".onecalc-completion-popup__item")
         .and_then(|el| el.get_attribute("data-proposal-id"));
@@ -869,7 +871,9 @@ async fn caret_lands_at_end_of_inserted_text_after_mouse_acceptance() {
     let mousedown =
         web_sys::MouseEvent::new_with_mouse_event_init_dict("mousedown", &mousedown_init)
             .expect("mousedown event");
-    first.dispatch_event(&mousedown).expect("dispatch mousedown");
+    first
+        .dispatch_event(&mousedown)
+        .expect("dispatch mousedown");
 
     let textarea_for_value = textarea.clone();
     let value_after = wait_for(&shell, ".onecalc-home-shell__textarea", move |_| {

@@ -253,10 +253,7 @@ pub fn open_loaded_scenario_into_workspace(
     id
 }
 
-fn derive_unique_formula_space_id(
-    state: &OneCalcHostState,
-    candidate: &str,
-) -> FormulaSpaceId {
+fn derive_unique_formula_space_id(state: &OneCalcHostState, candidate: &str) -> FormulaSpaceId {
     let trimmed = candidate.trim();
     let base = if trimmed.is_empty() {
         "imported".to_string()

@@ -21,10 +21,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 fn computed_style(element: &web_sys::Element) -> Option<web_sys::CssStyleDeclaration> {
     let window = web_sys::window()?;
-    window
-        .get_computed_style(element)
-        .ok()
-        .flatten()
+    window.get_computed_style(element).ok().flatten()
 }
 
 fn rect(element: &web_sys::Element) -> web_sys::DomRect {
@@ -283,13 +280,8 @@ async fn drill_panel_id_matches_toggle_aria_controls() {
     let toggle = shell
         .select(".onecalc-home-shell__formula-drill-toggle")
         .expect("toggle button");
-    let aria_controls = toggle
-        .get_attribute("aria-controls")
-        .unwrap_or_default();
-    assert!(
-        !aria_controls.is_empty(),
-        "toggle must carry aria-controls",
-    );
+    let aria_controls = toggle.get_attribute("aria-controls").unwrap_or_default();
+    assert!(!aria_controls.is_empty(), "toggle must carry aria-controls",);
 
     let panel_by_id = document()
         .get_element_by_id(&aria_controls)
@@ -319,11 +311,9 @@ async fn drill_long_value_preview_truncates_with_full_text_in_title() {
     );
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, false);
 
-    let row = wait_for(
-        &shell,
-        ".onecalc-home-shell__formula-drill-row",
-        |el| Some(el.clone()),
-    )
+    let row = wait_for(&shell, ".onecalc-home-shell__formula-drill-row", |el| {
+        Some(el.clone())
+    })
     .await
     .expect("row mounted");
     let value_span = row

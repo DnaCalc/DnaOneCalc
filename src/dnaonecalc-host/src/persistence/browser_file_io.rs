@@ -24,8 +24,8 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Blob, BlobPropertyBag, Document, Event, File, FileReader, HtmlAnchorElement,
-    HtmlInputElement, Url, Window,
+    Blob, BlobPropertyBag, Document, Event, File, FileReader, HtmlAnchorElement, HtmlInputElement,
+    Url, Window,
 };
 
 /// Suggest a filename for the save dialog given a scenario. The
@@ -121,12 +121,8 @@ fn build_xml_blob(xml: &str) -> Result<Blob, String> {
     let property_bag = BlobPropertyBag::new();
     property_bag.set_type("application/vnd.dnaonecalc.formula+xml");
 
-    Blob::new_with_buffer_source_sequence_and_options(&parts, &property_bag).map_err(|error| {
-        format!(
-            "Blob construction failed: {}",
-            js_error_message(&error),
-        )
-    })
+    Blob::new_with_buffer_source_sequence_and_options(&parts, &property_bag)
+        .map_err(|error| format!("Blob construction failed: {}", js_error_message(&error),))
 }
 
 /// Opened-file payload returned by the open dialog.
@@ -178,7 +174,9 @@ pub async fn open_xml_via_file_input() -> Result<Option<OpenedFormulaFile>, Stri
         let target = event
             .target()
             .and_then(|t| t.dyn_into::<HtmlInputElement>().ok());
-        let file = target.and_then(|input| input.files()).and_then(|list| list.item(0));
+        let file = target
+            .and_then(|input| input.files())
+            .and_then(|list| list.item(0));
         sender_for_change.send(file);
     }) as Box<dyn FnMut(Event)>);
     input
@@ -213,8 +211,12 @@ pub async fn open_xml_via_file_input() -> Result<Option<OpenedFormulaFile>, Stri
 }
 
 async fn read_file_as_text(file: File) -> Result<String, String> {
-    let reader = FileReader::new()
-        .map_err(|error| format!("FileReader construction failed: {}", js_error_message(&error)))?;
+    let reader = FileReader::new().map_err(|error| {
+        format!(
+            "FileReader construction failed: {}",
+            js_error_message(&error)
+        )
+    })?;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let reader_clone = reader.clone();
         let resolve_clone = resolve.clone();
@@ -222,21 +224,12 @@ async fn read_file_as_text(file: File) -> Result<String, String> {
             let result = reader_clone.result().unwrap_or(JsValue::NULL);
             let _ = resolve_clone.call1(&JsValue::NULL, &result);
         });
-        let _ = reader.add_event_listener_with_callback(
-            "load",
-            on_load.as_ref().unchecked_ref(),
-        );
+        let _ = reader.add_event_listener_with_callback("load", on_load.as_ref().unchecked_ref());
 
         let on_error = Closure::once_into_js(move || {
-            let _ = reject.call1(
-                &JsValue::NULL,
-                &JsValue::from_str("FileReader error"),
-            );
+            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("FileReader error"));
         });
-        let _ = reader.add_event_listener_with_callback(
-            "error",
-            on_error.as_ref().unchecked_ref(),
-        );
+        let _ = reader.add_event_listener_with_callback("error", on_error.as_ref().unchecked_ref());
     });
 
     reader
@@ -353,14 +346,8 @@ mod tests {
 
     #[test]
     fn suggested_filename_stem_prefers_name_then_id_then_default() {
-        assert_eq!(
-            suggested_filename_stem("my-name", "untitled-1"),
-            "my-name",
-        );
-        assert_eq!(
-            suggested_filename_stem("", "untitled-1"),
-            "untitled-1",
-        );
+        assert_eq!(suggested_filename_stem("my-name", "untitled-1"), "my-name",);
+        assert_eq!(suggested_filename_stem("", "untitled-1"), "untitled-1",);
         assert_eq!(suggested_filename_stem("", ""), "formula");
     }
 }

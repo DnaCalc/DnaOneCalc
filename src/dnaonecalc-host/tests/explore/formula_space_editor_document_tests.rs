@@ -75,6 +75,8 @@ fn ex_03_formula_edit_intent_preserves_raw_cell_entry_path_for_direct_values() {
             entered_text: "123.4".to_string(),
             cursor_offset: 5,
             analysis_stage: EditorAnalysisStage::SyntaxOnly,
+            formatting_request: None,
+            scenario_policy: dnaonecalc_host::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
         },
     )
     .expect("direct value edit should round-trip through bridge");

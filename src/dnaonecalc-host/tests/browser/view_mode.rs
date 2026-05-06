@@ -15,9 +15,7 @@
 
 use wasm_bindgen_test::*;
 
-use super::scaffold::{
-    dispatch_input, dispatch_keydown_with_modifiers, mount_home_shell,
-};
+use super::scaffold::{dispatch_input, dispatch_keydown_with_modifiers, mount_home_shell};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -46,9 +44,7 @@ async fn ctrl_alt_d_toggles_data_view_mode_attribute() {
     // Ctrl+Alt+D — User -> Developer.
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
-    let root = shell
-        .select(".onecalc-home-shell")
-        .expect("root mounted");
+    let root = shell.select(".onecalc-home-shell").expect("root mounted");
     assert_eq!(
         root.get_attribute("data-view-mode").as_deref(),
         Some("developer"),
@@ -58,9 +54,7 @@ async fn ctrl_alt_d_toggles_data_view_mode_attribute() {
     // Ctrl+Alt+D again — Developer -> User.
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
-    let root = shell
-        .select(".onecalc-home-shell")
-        .expect("root mounted");
+    let root = shell.select(".onecalc-home-shell").expect("root mounted");
     assert_eq!(
         root.get_attribute("data-view-mode").as_deref(),
         Some("user"),
@@ -86,7 +80,10 @@ async fn status_foot_dev_button_is_always_present_with_mode_attribute() {
         button.get_attribute("data-view-mode").as_deref(),
         Some("user"),
     );
-    assert_eq!(button.get_attribute("aria-pressed").as_deref(), Some("false"));
+    assert_eq!(
+        button.get_attribute("aria-pressed").as_deref(),
+        Some("false")
+    );
     assert_eq!(button.text_content().unwrap_or_default().trim(), "dev");
 
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
@@ -99,7 +96,10 @@ async fn status_foot_dev_button_is_always_present_with_mode_attribute() {
         button.get_attribute("data-view-mode").as_deref(),
         Some("developer"),
     );
-    assert_eq!(button.get_attribute("aria-pressed").as_deref(), Some("true"));
+    assert_eq!(
+        button.get_attribute("aria-pressed").as_deref(),
+        Some("true")
+    );
 
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, true);
     super::scaffold::flush_microtasks(15).await;
@@ -238,9 +238,7 @@ async fn ctrl_d_alone_still_toggles_drill_not_view_mode() {
     );
 
     // View-mode is still User (Ctrl+D alone did not flip it).
-    let root = shell
-        .select(".onecalc-home-shell")
-        .expect("root mounted");
+    let root = shell.select(".onecalc-home-shell").expect("root mounted");
     assert_eq!(
         root.get_attribute("data-view-mode").as_deref(),
         Some("user"),

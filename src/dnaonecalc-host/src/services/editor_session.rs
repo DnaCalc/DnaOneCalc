@@ -33,6 +33,8 @@ impl EditorSessionService {
                 .as_ref()
                 .map(|document| document.green_tree_key().to_string()),
             analysis_stage: intent.analysis_stage,
+            formatting_request: intent.formatting_request,
+            scenario_policy: intent.scenario_policy,
         };
         let result = bridge
             .apply_formula_edit(request)
@@ -88,6 +90,9 @@ fn update_formula_space_from_editor_document(
     if let Some(blocked_reason) = derived_presentation.blocked_reason {
         formula_space.context.blocked_reason = Some(blocked_reason);
     }
+    // Hint-application is performed by the live-edit layer once the
+    // bridge returns — that layer has access to the workspace's
+    // `AmbientAppContext`, which the projection here doesn't.
 }
 
 fn infer_truth_source(document: &EditorDocument) -> ProjectionTruthSource {
@@ -341,6 +346,8 @@ mod tests {
                 entered_text: "=SUM(1,2,3)".to_string(),
                 cursor_offset: 4,
                 analysis_stage: EditorAnalysisStage::SyntaxAndBind,
+                formatting_request: None,
+                scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
             },
         )
         .expect("edit intent should update via bridge");

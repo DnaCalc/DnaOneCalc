@@ -67,7 +67,10 @@ mod wasm {
         let window = web_sys::window()?;
         let style = window.get_computed_style(textarea).ok().flatten()?;
 
-        let font = style.get_property_value("font").ok().filter(|s| !s.is_empty())
+        let font = style
+            .get_property_value("font")
+            .ok()
+            .filter(|s| !s.is_empty())
             .or_else(|| compose_font_shorthand(&style));
         let line_height_px = read_line_height_px(&style)?;
 
@@ -125,10 +128,24 @@ mod wasm {
     /// style properties when the browser doesn't expose `font` directly
     /// (Firefox computed style omits the shorthand).
     fn compose_font_shorthand(style: &web_sys::CssStyleDeclaration) -> Option<String> {
-        let family = style.get_property_value("font-family").ok().filter(|s| !s.is_empty())?;
-        let size = style.get_property_value("font-size").ok().filter(|s| !s.is_empty())?;
-        let weight = style.get_property_value("font-weight").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "normal".to_string());
-        let style_kw = style.get_property_value("font-style").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "normal".to_string());
+        let family = style
+            .get_property_value("font-family")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        let size = style
+            .get_property_value("font-size")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        let weight = style
+            .get_property_value("font-weight")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "normal".to_string());
+        let style_kw = style
+            .get_property_value("font-style")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "normal".to_string());
         Some(format!("{style_kw} {weight} {size} / 1 {family}"))
     }
 
@@ -136,10 +153,7 @@ mod wasm {
     /// the first time. The span is positioned off-screen but visible to
     /// layout (`position: absolute; visibility: hidden; top: -9999px`)
     /// so its `getBoundingClientRect` reports an honest width.
-    fn ensure_char_mirror_span(
-        document: &Document,
-        font: Option<&str>,
-    ) -> Option<Element> {
+    fn ensure_char_mirror_span(document: &Document, font: Option<&str>) -> Option<Element> {
         let element = match document.get_element_by_id(CHAR_MIRROR_ID) {
             Some(existing) => existing,
             None => {
@@ -154,10 +168,7 @@ mod wasm {
                                 white-space: pre; pointer-events: none;";
                 html_span.style().set_css_text(css_text);
 
-                document
-                    .body()?
-                    .append_child(&span)
-                    .ok()?;
+                document.body()?.append_child(&span).ok()?;
                 span
             }
         };

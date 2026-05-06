@@ -149,7 +149,11 @@ async fn dropdown_renders_recent_pinned_and_actions_sections() {
     super::scaffold::flush_microtasks(5).await;
 
     let sections = shell.select_all(".onecalc-home-shell__scenario-menu-section");
-    assert_eq!(sections.length(), 3, "three sections expected: recent, pinned, actions");
+    assert_eq!(
+        sections.length(),
+        3,
+        "three sections expected: recent, pinned, actions"
+    );
 
     let recent = shell
         .select(".onecalc-home-shell__scenario-menu-section[data-section=\"recent\"]")
@@ -173,7 +177,10 @@ async fn dropdown_renders_recent_pinned_and_actions_sections() {
     // §1A); the internal action-id slugs (`new-scenario`,
     // `manage-scenarios`, …) keep `scenario`.
     assert!(actions_text.contains("New formula"));
-    assert!(actions_text.contains("Save as…"));
+    // Browser-host SaveAs label says "Download Formula File"
+    // (the action runs through the download adapter, not a real
+    // file-save). Desktop host uses "Save as…".
+    assert!(actions_text.contains("Download Formula File"));
     assert!(actions_text.contains("Open…"));
     assert!(actions_text.contains("Duplicate"));
     assert!(actions_text.contains("Manage formulas…"));
@@ -325,9 +332,7 @@ async fn duplicate_action_clones_active_with_copy_suffix() {
     super::scaffold::flush_microtasks(5).await;
 
     let duplicate_action = shell
-        .select(
-            ".onecalc-home-shell__scenario-menu-item[data-action-id=\"duplicate\"]",
-        )
+        .select(".onecalc-home-shell__scenario-menu-item[data-action-id=\"duplicate\"]")
         .expect("duplicate action");
     click_element(&duplicate_action);
     super::scaffold::flush_microtasks(10).await;

@@ -30,9 +30,8 @@ async fn formatting_row_renders_four_controls() {
     );
 
     for field in ["number-format-code", "font-color", "fill-color", "date1904"] {
-        let selector = format!(
-            ".onecalc-home-shell__formatting-row [data-formatting-field=\"{field}\"]",
-        );
+        let selector =
+            format!(".onecalc-home-shell__formatting-row [data-formatting-field=\"{field}\"]",);
         assert!(
             shell.select(&selector).is_some(),
             "expected formatting field {field}",
@@ -47,8 +46,7 @@ async fn number_format_preset_chips_render_with_format_codes() {
     let shell = mount_home_shell();
     let _textarea = shell.textarea().await;
 
-    let chips = shell
-        .select_all(".onecalc-home-shell__formatting-preset");
+    let chips = shell.select_all(".onecalc-home-shell__formatting-preset");
     assert!(
         chips.length() >= 5,
         "expected at least 5 preset chips (General/Number/Currency/Percent/Date); got {}",
@@ -66,7 +64,10 @@ async fn number_format_preset_chips_render_with_format_codes() {
         }
     }
     assert!(format_codes.iter().any(|code| code == ""), "General preset");
-    assert!(format_codes.iter().any(|code| code == "0.00"), "Number preset");
+    assert!(
+        format_codes.iter().any(|code| code == "0.00"),
+        "Number preset"
+    );
     assert!(
         format_codes.iter().any(|code| code == "$#,##0.00"),
         "Currency preset",
@@ -108,7 +109,9 @@ async fn clicking_preset_updates_number_format_input() {
 
     // The number-format-code input should now contain the preset's format code.
     let input = shell
-        .select(".onecalc-home-shell__formatting-row [data-formatting-field=\"number-format-code\"]")
+        .select(
+            ".onecalc-home-shell__formatting-row [data-formatting-field=\"number-format-code\"]",
+        )
         .expect("number-format input")
         .dyn_into::<web_sys::HtmlInputElement>()
         .expect("input element");

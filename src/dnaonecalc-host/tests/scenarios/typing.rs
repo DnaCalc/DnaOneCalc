@@ -69,7 +69,7 @@ fn typing_a_sum_formula_shows_the_numeric_result() {
     let home = home_view(&state);
     assert_eq!(home.raw_entered_cell_text, "=SUM(1,2,3)");
     match home.result_view {
-        ResultView::Display { text, kind } => {
+        ResultView::Display { text, kind, .. } => {
             assert_eq!(text, "6");
             assert_eq!(kind, ResultKind::Number);
         }
@@ -87,7 +87,7 @@ fn typing_a_two_arg_sum_shows_the_addition_result() {
 
     let home = home_view(&state);
     match home.result_view {
-        ResultView::Display { text, kind } => {
+        ResultView::Display { text, kind, .. } => {
             assert_eq!(text, "2");
             assert_eq!(kind, ResultKind::Number);
         }
@@ -107,9 +107,13 @@ fn typing_a_sequence_formula_shows_the_two_by_two_array_preview() {
 
     let home = home_view(&state);
     match home.result_view {
-        ResultView::Array { rows, cols, .. } => {
-            assert_eq!(rows, 2);
-            assert_eq!(cols, 2);
+        ResultView::Array {
+            total_rows,
+            total_cols,
+            ..
+        } => {
+            assert_eq!(total_rows, 2);
+            assert_eq!(total_cols, 2);
         }
         other => panic!("expected Array{{2x2}}, got {other:?}"),
     }
@@ -157,14 +161,9 @@ fn typing_an_invalid_formula_surfaces_a_diagnostic_in_the_result_view() {
     // the diagnostic so a future drill-down can render the squiggle.
     let mut state = fresh_state_with_active_space();
     let mut document = sample_editor_document("=SUM(");
-    document.live_diagnostics = dnaonecalc_host::test_support::live_diagnostic_snapshot_with(
-        vec![dnaonecalc_host::test_support::make_live_diagnostic(
-            "diag-1",
-            "unmatched '('",
-            4,
-            1,
-        )],
-    );
+    document.live_diagnostics = dnaonecalc_host::test_support::live_diagnostic_snapshot_with(vec![
+        dnaonecalc_host::test_support::make_live_diagnostic("diag-1", "unmatched '('", 4, 1),
+    ]);
     let bridge = DiagnosticFakeBridge { document };
 
     apply_live_editor_input(
@@ -206,6 +205,149 @@ fn typing_an_invalid_formula_surfaces_a_diagnostic_in_the_result_view() {
     assert_eq!(diagnostics[0].message, "unmatched '('");
 }
 
+/// User types `=SUM(1,2,3)` and then presses ArrowRight to move
+/// the caret one position past the close paren. The signature-help
+/// popup must be suppressed at every cursor position outside the
+/// call's argument list, end-to-end through the real bridge.
+///
+/// Pinned-failing today against an OxFml regression: the past-`)`
+/// guard in `signature_help_context_at_cursor` looks for `RParen` as
+/// a direct child of the CallExpr node, but the parser places the
+/// `)` inside the ArgumentList child — so the guard is never
+/// reachable and `signature_help` keeps firing past `)`. Tracked in
+/// `docs/HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION.md`.
+/// Re-enable when the OxFml fix lands.
+#[test]
+#[ignore = "pending HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION"]
+fn signature_help_disappears_when_caret_is_past_close_paren() {
+    let mut state = fresh_state_with_active_space();
+    let bridge = scenario_bridge();
+
+    // First: type the open paren and confirm signature help is on.
+    type_formula(&bridge, &mut state, "=SUM(");
+    let active_id = state
+        .workspace_shell
+        .active_formula_space_id
+        .clone()
+        .expect("active formula space");
+    {
+        let space = state.formula_spaces.get(&active_id).expect("space present");
+        let doc = space
+            .editor_document
+            .as_ref()
+            .expect("document built by bridge");
+        assert!(
+            doc.signature_help.is_some(),
+            "expected signature help inside `=SUM(`",
+        );
+    }
+
+    // Type the rest, leaving caret immediately after the `)` —
+    // exactly the position the user reported the popup persisting at.
+    type_formula(&bridge, &mut state, "=SUM(1,2,3)");
+    let space = state.formula_spaces.get(&active_id).expect("space present");
+    let doc = space
+        .editor_document
+        .as_ref()
+        .expect("document built by bridge");
+    assert!(
+        doc.signature_help.is_none(),
+        "expected signature help suppressed once caret is past `)`; document still carries: {:?}",
+        doc.signature_help,
+    );
+
+    let home = home_view(&state);
+    assert!(
+        home.signature_help.is_none(),
+        "view-model must not project a signature help popup past `)`",
+    );
+}
+
+/// Caret-only navigation (mouse click, arrow keys) past a closed
+/// call must suppress signature help — the user expects the popup
+/// to disappear without having to type more text. Same upstream
+/// regression as
+/// `signature_help_disappears_when_caret_is_past_close_paren`;
+/// re-enable when OxFml's `closed_call_close_paren_end` walks into
+/// the ArgumentList child.
+#[test]
+#[ignore = "pending HANDOFF_OXFML_SIGNATURE_HELP_PAST_PAREN_REGRESSION"]
+fn signature_help_disappears_after_caret_moves_past_close_paren() {
+    let mut state = fresh_state_with_active_space();
+    let bridge = scenario_bridge();
+
+    // Type the formula in two halves so the caret ends up inside the
+    // open parens first (signature help on), then advance past `)` by
+    // synthesising a caret-only move (the same shape the on:keyup /
+    // on:click handlers in the home shell emit).
+    type_formula(&bridge, &mut state, "=SUM(1,2,3)");
+
+    // First confirm the popup is gone post-typing-)`.
+    let active_id = state
+        .workspace_shell
+        .active_formula_space_id
+        .clone()
+        .expect("active formula space");
+    {
+        let doc = state
+            .formula_spaces
+            .get(&active_id)
+            .and_then(|space| space.editor_document.as_ref())
+            .expect("document built by bridge");
+        assert!(doc.signature_help.is_none());
+    }
+
+    // Now simulate the user moving the caret BACK INTO the call
+    // (cursor=7 is between `1,` and `2`) — popup must come back.
+    apply_live_editor_input(
+        &bridge,
+        &mut state,
+        EditorInputEvent {
+            text: "=SUM(1,2,3)".to_string(),
+            selection_start: Some(7),
+            selection_end: Some(7),
+            input_kind: EditorInputKind::Other,
+            inserted_text: None,
+        },
+    )
+    .expect("live bridge");
+    {
+        let doc = state
+            .formula_spaces
+            .get(&active_id)
+            .and_then(|space| space.editor_document.as_ref())
+            .expect("document built by bridge");
+        assert!(
+            doc.signature_help.is_some(),
+            "expected signature help to return when caret moves back inside `(...)`",
+        );
+    }
+
+    // And out again past `)` — caret_offset 11.
+    apply_live_editor_input(
+        &bridge,
+        &mut state,
+        EditorInputEvent {
+            text: "=SUM(1,2,3)".to_string(),
+            selection_start: Some(11),
+            selection_end: Some(11),
+            input_kind: EditorInputKind::Other,
+            inserted_text: None,
+        },
+    )
+    .expect("live bridge");
+    let doc = state
+        .formula_spaces
+        .get(&active_id)
+        .and_then(|space| space.editor_document.as_ref())
+        .expect("document built by bridge");
+    assert!(
+        doc.signature_help.is_none(),
+        "expected signature help suppressed after caret-only move past `)`; got: {:?}",
+        doc.signature_help,
+    );
+}
+
 #[test]
 fn rapid_typing_preserves_the_latest_input_without_stale_state() {
     // S12: dispatch three sequential input events through the live
@@ -222,7 +364,7 @@ fn rapid_typing_preserves_the_latest_input_without_stale_state() {
     let home = home_view(&state);
     assert_eq!(home.raw_entered_cell_text, "=SUM(1,2,3)");
     match home.result_view {
-        ResultView::Display { text, kind } => {
+        ResultView::Display { text, kind, .. } => {
             assert_eq!(text, "6");
             assert_eq!(kind, ResultKind::Number);
         }

@@ -163,11 +163,7 @@ pub fn dispatch_input(textarea: &web_sys::HtmlTextAreaElement, value: &str) {
 /// success (trimmed), or the last seen text on timeout. The 30-tick
 /// default is enough for one bridge round-trip in headless Edge with a
 /// live `LiveOxfmlBridge`.
-pub async fn wait_for_text(
-    shell: &MountedShell,
-    selector: &str,
-    expected: &str,
-) -> Option<String> {
+pub async fn wait_for_text(shell: &MountedShell, selector: &str, expected: &str) -> Option<String> {
     for _ in 0..30 {
         next_microtask().await;
         if let Some(element) = shell.select(selector) {
@@ -241,9 +237,7 @@ pub fn dispatch_keydown_with_modifiers(
     init.set_alt_key(alt);
     let event = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
         .expect("keydown event");
-    textarea
-        .dispatch_event(&event)
-        .expect("dispatch keydown");
+    textarea.dispatch_event(&event).expect("dispatch keydown");
 }
 
 /// Dispatch a synthetic focusout event on the textarea.
@@ -251,11 +245,9 @@ pub fn dispatch_focusout(textarea: &web_sys::HtmlTextAreaElement) {
     let init = web_sys::EventInit::new();
     init.set_bubbles(true);
     init.set_cancelable(true);
-    let event = web_sys::Event::new_with_event_init_dict("focusout", &init)
-        .expect("focusout event");
-    textarea
-        .dispatch_event(&event)
-        .expect("dispatch focusout");
+    let event =
+        web_sys::Event::new_with_event_init_dict("focusout", &init).expect("focusout event");
+    textarea.dispatch_event(&event).expect("dispatch focusout");
 }
 
 /// Read the popup's `data-selected-index` attribute as a `usize`.

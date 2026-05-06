@@ -1632,6 +1632,8 @@ fn run_oxfml_case(
             cursor_offset: case.entered_cell_text.len(),
             previous_green_tree_key: None,
             analysis_stage: EditorAnalysisStage::FullSemanticPlan,
+            formatting_request: None,
+            scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
         })
         .map_err(|error| {
             format!(
@@ -2389,6 +2391,11 @@ fn build_verification_conditional_formatting_rule(
             .as_ref()
             .map(|value| value.to_ascii_lowercase()),
         thresholds,
+        // Spreadsheet-XML-imported rules carry only the bounded
+        // payload shape today; the typed payload arrives via the
+        // host UI authoring path. The W072 fallback lets OxFml
+        // continue to evaluate these rules unchanged.
+        typed_rule: None,
         font_color: rule.font_color.clone(),
         fill_color: rule.interior_color.clone(),
         effective_display_text: None,

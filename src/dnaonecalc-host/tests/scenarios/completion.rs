@@ -80,7 +80,11 @@ fn s_cmp_1_typing_partial_function_opens_popup_with_proposals() {
     type_formula(&bridge, &mut state, "=SU");
 
     match active_popup(&state) {
-        CompletionPopupState::Open { items, selected_index, .. } => {
+        CompletionPopupState::Open {
+            items,
+            selected_index,
+            ..
+        } => {
             assert!(
                 !items.is_empty(),
                 "bridge should produce at least one proposal for '=SU'",
@@ -167,7 +171,11 @@ fn s_cmp_4_move_selection_round_trips_back_to_starting_index() {
     type_formula(&bridge, &mut state, "=SU");
 
     let initial_index = match active_popup(&state) {
-        CompletionPopupState::Open { selected_index, items, .. } => {
+        CompletionPopupState::Open {
+            selected_index,
+            items,
+            ..
+        } => {
             assert!(items.len() >= 2, "scenario requires >= 2 proposals");
             selected_index
         }
@@ -219,5 +227,9 @@ fn s_cmp_6_accept_when_hidden_returns_none_and_does_not_change_text() {
     let before = active_text(&state);
     let acceptance = accept_selected_completion_on_active_formula_space(&mut state);
     assert!(acceptance.is_none());
-    assert_eq!(active_text(&state), before, "text unchanged on no-op accept");
+    assert_eq!(
+        active_text(&state),
+        before,
+        "text unchanged on no-op accept"
+    );
 }

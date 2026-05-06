@@ -127,15 +127,11 @@ async fn drill_panel_renders_walk_tree_for_current_formula() {
     dispatch_keydown_with_modifiers(&textarea, "d", true, false, false);
 
     // Wait for the panel body to mount with at least one walk-tree row.
-    let row_count = wait_for(
-        &shell,
-        ".onecalc-home-shell__formula-drill-panel",
-        |el| {
-            el.get_attribute("data-row-count")
-                .and_then(|s| s.parse::<usize>().ok())
-                .filter(|n| *n >= 1)
-        },
-    )
+    let row_count = wait_for(&shell, ".onecalc-home-shell__formula-drill-panel", |el| {
+        el.get_attribute("data-row-count")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+    })
     .await;
     assert!(
         row_count.is_some(),
@@ -162,11 +158,7 @@ async fn drill_rows_carry_depth_and_state_attributes() {
     let depth = row
         .get_attribute("data-depth")
         .and_then(|s| s.parse::<usize>().ok());
-    assert_eq!(
-        depth,
-        Some(0),
-        "first walk-tree row is at depth 0",
-    );
+    assert_eq!(depth, Some(0), "first walk-tree row is at depth 0",);
     let state = row.get_attribute("data-state");
     assert!(
         matches!(
@@ -255,8 +247,7 @@ async fn drill_panel_dom_order_sits_between_editor_and_result() {
             result_index = Some(i);
         }
     }
-    let (Some(editor_i), Some(drill_i), Some(result_i)) =
-        (editor_index, drill_index, result_index)
+    let (Some(editor_i), Some(drill_i), Some(result_i)) = (editor_index, drill_index, result_index)
     else {
         panic!("could not locate editor / drill / result sections in parent's children");
     };

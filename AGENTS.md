@@ -18,14 +18,57 @@ Within this repo:
 4. `docs/BEADS.md` defines the local bead method.
 
 ## 3. Cross-Repo Rule
-Agents working in this repo may read sibling repositories under `C:\Work\DnaCalc`
-for context, upstream contracts, reference docs, and retained evidence.
 
-Agents must not write outside this repo.
+Agents working in this repo may **read** sibling repositories under
+`C:\Work\DnaCalc` (`OxFml`, `OxFunc`, `OxReplay`, `OxXlPlay`, `OxVba`, `OxIde`,
+`OxCalc`, `Foundation`, etc.) for context, upstream contracts, reference docs,
+and retained evidence.
 
-Do not modify, create, delete, rename, or reformat files outside `DnaOneCalc`.
-If another repo needs changes, capture that through a handoff, prompt, or separate
-repo-scoped execution flow.
+Agents **must not write** outside this repo.
+
+**Hard prohibitions** (no exceptions, no “quick fixes”, no “while I’m here”):
+1. Do not edit, create, delete, rename, or reformat files outside `DnaOneCalc`.
+2. Do not run `git add`, `git commit`, `git checkout`, `git reset`, `git stash`,
+   `git rebase`, `git merge`, or any other state-mutating git command in a
+   sibling repo working tree.
+3. Do not run `cargo fix`, `cargo fmt`, code generators, or migration scripts
+   that touch sibling repo files.
+4. Do not edit a file whose absolute path is not under
+   `C:\Work\DnaCalc\DnaOneCalc\`. The path test is the rule, regardless of how
+   the file was reached (path-dep cargo workspace, symlink, reference doc).
+
+**This applies even when:**
+- The bug is unambiguously in the upstream repo and the upstream fix is small.
+- The host-side workaround would be ugly and the upstream fix would be clean.
+- OPERATIONS.md §9 says “no host-side workaround for an upstream defect”.
+  That instruction is about *not papering over* the issue locally — it is **not**
+  permission to reach into another repo. The correct response is a handoff, not
+  a sibling-repo commit.
+
+**How to capture cross-repo work instead:**
+
+When the agent identifies that an upstream repo needs to change, the only
+sanctioned outputs are *inside DnaOneCalc*:
+1. **Write a handoff doc** at `docs/HANDOFF_<REPO>_<TOPIC>.md` (matching the
+   existing `HANDOFF_OXFML_*`, `HANDOFF_OXREPLAY_*`, `HANDOFF_OXXLPLAY_*`
+   pattern). The doc states the symptom observed in DnaOneCalc, the upstream
+   root cause as best understood, the proposed surface change, and a minimal
+   reproduction path.
+2. **Bead it** under the appropriate workset (see §4) so the handoff is tracked
+   to closure.
+3. **Report the handoff back to the user** in the answer that surfaces the
+   issue, with the doc path and the one-line summary. Do **not** silently
+   continue assuming the upstream change will land.
+
+If a host-side mitigation is needed in the meantime, mark it explicitly in code
+with a `// SEAM-<UPSTREAM>-<TOPIC>` comment that points at the handoff doc, and
+keep the mitigation visibly *temporary* — never inline it into the architecture.
+
+**On discovering the rule has been violated** (including by a previous agent
+turn): do **not** try to “undo” the sibling-repo change. Surface the violation
+in the answer, include the sibling repo SHA(s) and a precise diff summary, and
+write a retroactive `docs/HANDOFF_<REPO>_<TOPIC>.md` so the change is at least
+captured as a tracked handoff rather than an invisible side-effect.
 
 ## 4. Execution Rule
 Active work executes through:

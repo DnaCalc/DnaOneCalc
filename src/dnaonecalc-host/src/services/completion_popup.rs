@@ -312,7 +312,11 @@ mod tests {
         // Same length; expect selected_index preserved.
         let _ = sync_completion_popup_with_proposals(&mut state, 4, three_items());
         match state {
-            CompletionPopupState::Open { selected_index, anchor_offset, .. } => {
+            CompletionPopupState::Open {
+                selected_index,
+                anchor_offset,
+                ..
+            } => {
                 assert_eq!(selected_index, 2);
                 assert_eq!(anchor_offset, 4, "anchor still updates");
             }
@@ -330,7 +334,11 @@ mod tests {
         let single = vec![item("p-x", "SUMSQ", "SUMSQ(", span(1, 2))];
         let _ = sync_completion_popup_with_proposals(&mut state, 3, single);
         match state {
-            CompletionPopupState::Open { selected_index, items, .. } => {
+            CompletionPopupState::Open {
+                selected_index,
+                items,
+                ..
+            } => {
                 assert_eq!(items.len(), 1);
                 assert_eq!(selected_index, 0);
             }
@@ -490,7 +498,11 @@ mod tests {
         ];
         let _ = sync_completion_popup_with_proposals(&mut state, 3, two);
         match state {
-            CompletionPopupState::Open { items, selected_index, .. } => {
+            CompletionPopupState::Open {
+                items,
+                selected_index,
+                ..
+            } => {
                 // length changed (3 -> 2), so selected_index resets to 0
                 assert_eq!(items.len(), 2);
                 assert_eq!(selected_index, 0);

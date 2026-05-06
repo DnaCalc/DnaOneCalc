@@ -3205,6 +3205,41 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-muted);
 }
 
+/* Rotating-colour bracket nesting (WS-14 §2.3 item 4). The renderer
+   tags each `(` `)` `[` `]` `{` `}` span with `syn-bracket` and
+   `syn-bracket--depth-N` (N modulo 4). Four colours pulled from the
+   existing accent rhythm so the brackets read as part of the warm
+   palette rather than a separate ink layer. */
+.onecalc-home-shell__editor-overlay .syn-bracket {
+  font-weight: 600;
+}
+
+.onecalc-home-shell__editor-overlay .syn-bracket--depth-0 {
+  color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__editor-overlay .syn-bracket--depth-1 {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__editor-overlay .syn-bracket--depth-2 {
+  color: var(--oc-color-warning);
+}
+
+.onecalc-home-shell__editor-overlay .syn-bracket--depth-3 {
+  color: var(--oc-color-success);
+}
+
+/* Active-pair emphasis: the bracket pair surrounding the caret gets
+   a soft accent box + bold weight. Keeps the rotating colour intact
+   so the user can still see the depth, but pulls the eye to the pair
+   under inspection. */
+.onecalc-home-shell__editor-overlay .syn-bracket--active {
+  font-weight: 800;
+  background: rgba(36, 93, 90, 0.15);
+  border-radius: 3px;
+}
+
 .onecalc-home-shell__editor-overlay .syn-id {
   color: var(--oc-color-ink);
 }
@@ -3415,22 +3450,35 @@ pub const ONECALC_THEME_CSS: &str = r#"
      the help renders entirely above the caret. The 6px gap keeps
      the tooltip from kissing the caret. */
   transform: translateY(calc(-100% - 6px));
+  /* Match the completion popup chrome: same surface, border, radius,
+     and shadow weight. The signature-help is the popup's *partner*
+     — a quiet, non-interactive sibling — so the two should read as a
+     pair, not as two unrelated tooltips. */
   max-width: 380px;
-  padding: 0.25rem var(--oc-space-3);
+  padding: 1px var(--oc-space-2);
   background: var(--oc-color-surface);
   border: 1px solid var(--oc-color-card-edge);
-  border-radius: var(--oc-radius-panel);
-  box-shadow: var(--oc-shadow-panel);
+  border-radius: 6px;
+  box-shadow: 0 6px 14px rgba(31, 42, 44, 0.10);
   font-family: var(--oc-font-mono);
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 0.78rem;
+  line-height: 1.35;
   color: var(--oc-color-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+  /* Inline-flex so the callee, parens, and parameters share the row
+     baseline cleanly — matches the completion-popup item's grid
+     density without making the help a grid (its content is variable
+     width and a flow layout reads as a function-signature line). */
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
 }
 
+/* Callee gets the same accent treatment as the completion popup's
+   selected-state glyph: bold, accent-coloured, monospace. */
 .onecalc-signature-help__callee {
   font-weight: 600;
   color: var(--oc-color-accent);
@@ -3444,12 +3492,13 @@ pub const ONECALC_THEME_CSS: &str = r#"
   color: var(--oc-color-ink);
 }
 
+/* Active-parameter treatment mirrors the completion popup's selected
+   item: bold + accent fill, but without the underline (the popup uses
+   background, the signature line uses inline emphasis since it has no
+   row to fill). */
 .onecalc-signature-help__parameter--active {
   font-weight: 700;
   color: var(--oc-color-accent);
-  text-decoration: underline;
-  text-decoration-color: var(--oc-color-accent);
-  text-underline-offset: 3px;
 }
 
 .onecalc-signature-help__separator {
@@ -3581,19 +3630,163 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-home-shell__formula-drill-row {
+  font-family: var(--oc-font-mono);
+  font-size: 0.8rem;
+  color: var(--oc-color-ink);
+}
+
+/* Leaf row — terminal node with no children. Same grid layout
+   as the summary row inside a branch so leaves and summaries
+   align horizontally. */
+.onecalc-home-shell__formula-drill-row--leaf {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: var(--oc-space-2);
   padding: 2px var(--oc-space-2);
-  font-family: var(--oc-font-mono);
-  font-size: 0.8rem;
-  color: var(--oc-color-ink);
   border-radius: 4px;
 }
 
-.onecalc-home-shell__formula-drill-row:hover {
+.onecalc-home-shell__formula-drill-row--leaf:hover {
   background: rgba(36, 93, 90, 0.06);
+}
+
+/* Branch row — `<details>` element that holds the summary plus
+   nested children. The default disclosure marker is suppressed in
+   favour of a chevron that rotates with the open / closed state. */
+.onecalc-home-shell__formula-drill-row--branch {
+  border-left: 1px solid var(--oc-color-border);
+  margin-left: 4px;
+  padding-left: 2px;
+}
+
+.onecalc-home-shell__formula-drill-row--branch > summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--oc-space-2);
+  padding: 2px var(--oc-space-2);
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.onecalc-home-shell__formula-drill-row--branch > summary::before {
+  content: "▾";
+  font-family: var(--oc-font-ui);
+  font-size: 0.7rem;
+  color: var(--oc-color-muted);
+  width: 0.7rem;
+  display: inline-block;
+}
+
+.onecalc-home-shell__formula-drill-row--branch:not([open]) > summary::before {
+  content: "▸";
+}
+
+.onecalc-home-shell__formula-drill-row--branch > summary::-webkit-details-marker {
+  display: none;
+}
+
+.onecalc-home-shell__formula-drill-row--branch > summary:hover {
+  background: rgba(36, 93, 90, 0.06);
+}
+
+.onecalc-home-shell__formula-drill-row-children {
+  margin-left: 0.8rem;
+  padding-left: var(--oc-space-2);
+  border-left: 1px dotted var(--oc-color-border);
+}
+
+/* Diagnostics list inside the drill-down panel. Vertical stack
+   of severity-coloured rows; each row carries the diagnostic's
+   message + (Developer mode) stage and code. */
+.onecalc-home-shell__formula-drill-diagnostics {
+  list-style: none;
+  margin: 0 0 var(--oc-space-3) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.onecalc-home-shell__formula-drill-diagnostic {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: var(--oc-space-2);
+  padding: 4px var(--oc-space-2);
+  border-radius: 4px;
+  font-family: var(--oc-font-ui);
+  font-size: 0.8rem;
+}
+
+.onecalc-home-shell__formula-drill-diagnostic[data-severity="error"] {
+  background: rgba(183, 101, 69, 0.10);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic[data-severity="warning"] {
+  background: rgba(197, 139, 47, 0.10);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic[data-severity="info"] {
+  background: rgba(36, 93, 90, 0.06);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic-severity {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onecalc-home-shell__formula-drill-diagnostic-severity[data-severity="error"] {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic-severity[data-severity="warning"] {
+  color: var(--oc-color-warning);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic-severity[data-severity="info"] {
+  color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__formula-drill-diagnostic-message {
+  font-family: var(--oc-font-mono);
+  font-size: 0.78rem;
+  color: var(--oc-color-ink);
+}
+
+/* Developer-view toggle inside the drill-down panel header.
+   Right-aligned, small, opt-in surface for power users.
+   `aria-pressed` reflects the active mode. */
+.onecalc-home-shell__formula-drill-mode-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--oc-space-2);
+}
+
+.onecalc-home-shell__formula-drill-mode-button {
+  font-family: var(--oc-font-ui);
+  font-size: 0.72rem;
+  padding: 2px 10px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+}
+
+.onecalc-home-shell__formula-drill-mode-button[aria-pressed="true"] {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-card-edge);
+}
+
+.onecalc-home-shell__formula-drill-mode-button:hover {
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-accent);
 }
 
 .onecalc-home-shell__formula-drill-state {
@@ -3787,6 +3980,49 @@ pub const ONECALC_THEME_CSS: &str = r#"
   display: block;
 }
 
+/* WS-14 §5.3 item 8: collapsible formatting panel that lives between
+   the formula drill-down and the result section. Default state is
+   collapsed — only the toggle chip with the one-line summary is
+   visible; clicking the chip expands the body which holds the full
+   `.onecalc-home-shell__formatting-row` controls. */
+.onecalc-home-shell__formatting-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--oc-space-2);
+}
+
+.onecalc-home-shell__formatting-toggle-button {
+  align-self: flex-start;
+  font-family: var(--oc-font-ui);
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 4px 12px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 999px;
+  background: var(--oc-color-panel);
+  color: var(--oc-color-ink);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.onecalc-home-shell__formatting-toggle-button:hover {
+  background: var(--oc-color-surface);
+}
+
+.onecalc-home-shell__formatting-toggle-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 2px;
+}
+
+.onecalc-home-shell__formatting-toggle-button[data-expanded="true"] {
+  background: var(--oc-color-surface);
+  border-color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__formatting-panel-body[data-expanded="false"] {
+  display: none;
+}
+
 .onecalc-home-shell__formatting-row {
   display: flex;
   flex-wrap: wrap;
@@ -3827,7 +4063,12 @@ pub const ONECALC_THEME_CSS: &str = r#"
   border: 1px solid var(--oc-color-border);
   border-radius: 4px;
   background: var(--oc-color-surface);
-  min-width: 8rem;
+  /* Wide enough for custom Excel format codes like
+     `_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)` to be
+     visible without horizontal scrolling — power users paste long
+     codes here; tripling the prior `min-width: 8rem` is the
+     ergonomic default. */
+  min-width: 24rem;
 }
 
 .onecalc-home-shell__formatting-input:focus-visible {
@@ -3849,6 +4090,270 @@ pub const ONECALC_THEME_CSS: &str = r#"
   width: 1rem;
   height: 1rem;
   cursor: pointer;
+}
+
+/* Multi-row formatting body: format / calc-options / CF rules.
+   Each row is the same flex strip as the original single-row layout,
+   stacked vertically inside the panel body. */
+.onecalc-home-shell__formatting-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--oc-space-2);
+}
+
+/* SEAM marker on preset chips and CF rules — inline ⚠ glyph in the
+   warning palette colour. Hover reveals the SEAM id via title /
+   aria-describedby; the badge is small enough not to dominate the
+   chip but visible enough to flag the gap. */
+.onecalc-home-shell__formatting-preset-seam {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.7rem;
+  color: var(--oc-color-warning);
+  cursor: help;
+}
+
+/* Calc-options two-button segmented control. The active button gets
+   the accent fill; the inactive button stays panel-coloured. */
+.onecalc-home-shell__formatting-policy-toggle {
+  display: inline-flex;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.onecalc-home-shell__formatting-policy-button {
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  border: none;
+  background: var(--oc-color-panel);
+  color: var(--oc-color-ink);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.onecalc-home-shell__formatting-policy-button[data-active="true"] {
+  background: var(--oc-color-accent);
+  color: #fffaf4;
+}
+
+/* Locale picker inside the formatting panel's calc-options row.
+   The `<select>` lets the user switch the workspace's ambient
+   format-code triple immediately. The SEAM badge stays alongside
+   to flag that runtime locale tables (month names, separators,
+   currency) are pending upstream — picking a locale only swaps
+   the format-code defaults today. */
+.onecalc-home-shell__formatting-locale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  border: 1px dashed var(--oc-color-border);
+  border-radius: 999px;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__formatting-locale-select {
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  padding: 2px 6px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: var(--oc-color-bg);
+  color: var(--oc-color-ink);
+}
+
+.onecalc-home-shell__formatting-locale-select:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 0;
+}
+
+.onecalc-home-shell__formatting-locale-seam {
+  color: var(--oc-color-warning);
+  font-size: 0.7rem;
+  cursor: help;
+}
+
+.onecalc-home-shell__formatting-policy-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 2px;
+}
+
+/* CF rules list: stacked rule cards + an `+ add rule` button at the
+   bottom. Each card is its own flex row of small fields. */
+.onecalc-home-shell__cf-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--oc-space-2);
+  align-items: flex-start;
+}
+
+.onecalc-home-shell__cf-rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--oc-space-2);
+  padding: 4px var(--oc-space-2);
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+}
+
+.onecalc-home-shell__cf-rule-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.onecalc-home-shell__cf-rule-field-label {
+  color: var(--oc-color-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.onecalc-home-shell__cf-rule-input {
+  font-family: var(--oc-font-mono);
+  font-size: 0.78rem;
+  padding: 2px 6px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: var(--oc-color-bg);
+  min-width: 4rem;
+}
+
+.onecalc-home-shell__cf-rule-input:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 0;
+}
+
+.onecalc-home-shell__cf-rule-seam {
+  color: var(--oc-color-warning);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: help;
+}
+
+.onecalc-home-shell__cf-rule-remove {
+  margin-left: auto;
+  font-size: 0.85rem;
+  border: none;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.onecalc-home-shell__cf-rule-remove:hover {
+  color: var(--oc-color-warm);
+}
+
+/* Typed CF rule sub-form. Sits as a full-width row below the
+   single-line rule header; flex-basis: 100% forces a wrap inside
+   .onecalc-home-shell__cf-rule's wrap container. */
+.onecalc-home-shell__cf-rule-typed-subform {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--oc-space-2);
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: var(--oc-color-bg);
+  border: 1px dashed var(--oc-color-border);
+  border-radius: var(--oc-radius-panel);
+}
+
+.onecalc-home-shell__cf-rule-typed-stop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+}
+
+.onecalc-home-shell__cf-rule-typed-stop-remove {
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.onecalc-home-shell__cf-rule-typed-stop-remove:hover {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__cf-rule-typed-add {
+  font-family: var(--oc-font-ui);
+  font-size: 0.72rem;
+  padding: 2px 10px;
+  border: 1px dashed var(--oc-color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+}
+
+.onecalc-home-shell__cf-rule-typed-add:hover {
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__cf-rule-typed-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__cf-add-button {
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  border: 1px dashed var(--oc-color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+}
+
+.onecalc-home-shell__cf-add-button:hover {
+  color: var(--oc-color-accent);
+  border-color: var(--oc-color-accent);
+}
+
+/* Editor-foot recalculate trigger. Mirrors the F9 keystroke and
+   sits alongside the formula drill-down toggle in the foot row. */
+.onecalc-home-shell__recalculate-button {
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 999px;
+  background: var(--oc-color-panel);
+  color: var(--oc-color-ink);
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.onecalc-home-shell__recalculate-button:hover {
+  background: var(--oc-color-surface);
+  color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__recalculate-button:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: 2px;
 }
 
 .onecalc-home-shell__formatting-presets {
@@ -4023,6 +4528,160 @@ pub const ONECALC_THEME_CSS: &str = r#"
   background: var(--oc-color-accent-soft);
   color: var(--oc-color-accent);
   border-color: var(--oc-color-card-edge);
+}
+
+/* ----- Array result browser (WS-14 §3 item 6) -----------------------------
+   The result hero renders array results as a scrollable, resizable grid.
+   Outer container sets the resize handle; inner scroll container hosts the
+   CSS grid. Headers are sticky (top + left) so addresses stay visible as
+   the user scrolls through large arrays. */
+.onecalc-array-browser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--oc-space-2);
+  width: 100%;
+  align-items: stretch;
+}
+
+.onecalc-array-browser__caption {
+  font-family: var(--oc-font-mono);
+  font-size: 0.85rem;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-array-browser__scroll {
+  display: grid;
+  /* grid-template-columns is set inline by the renderer (depends on
+     preview-col count). */
+  align-content: start;
+  /* User-resizable + scrollable browser. The eye stays on the formula
+     while the user inspects array results; the panel grows / shrinks
+     to match how much they want to see. */
+  resize: both;
+  overflow: auto;
+  min-height: 8rem;
+  min-width: 12rem;
+  max-height: 60vh;
+  max-width: 100%;
+  background: var(--oc-color-surface);
+  border: 1px solid var(--oc-color-card-edge);
+  border-radius: var(--oc-radius-panel);
+  font-family: var(--oc-font-mono);
+  font-size: 0.85rem;
+  /* Default browser height: ~12rem so a small-enough array doesn't
+     dominate the result hero, but large arrays that need browsing get
+     enough vertical real estate. */
+  height: 14rem;
+}
+
+.onecalc-array-browser__header {
+  position: sticky;
+  background: var(--oc-color-panel);
+  color: var(--oc-color-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--oc-color-card-edge);
+  z-index: 1;
+  text-align: center;
+  user-select: none;
+}
+
+.onecalc-array-browser__column-header {
+  top: 0;
+}
+
+.onecalc-array-browser__row-header {
+  left: 0;
+  border-right: 1px solid var(--oc-color-card-edge);
+  border-bottom: 1px solid var(--oc-color-border);
+}
+
+.onecalc-array-browser__corner {
+  top: 0;
+  left: 0;
+  z-index: 2;
+  border-right: 1px solid var(--oc-color-card-edge);
+}
+
+.onecalc-array-browser__cell {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--oc-color-border);
+  /* Long strings wrap inside the cell up to a max-width — prevents a
+     single 10k-char cell from blowing out the grid layout. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 24rem;
+  color: var(--oc-color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-array-browser__cell--empty {
+  background: rgba(36, 93, 90, 0.02);
+}
+
+/* Per-cell CF carrier (W071 + W072): cells become positioned
+   containers so the data-bar overlay can stack underneath the
+   value text. The cell's font / fill colour comes from inline
+   style; this rule only sets up positioning + value layout. */
+.onecalc-array-browser__cell--cf {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.onecalc-array-browser__cell-value {
+  position: relative;
+  z-index: 1;
+}
+
+.onecalc-array-browser__cell-value--hidden {
+  visibility: hidden;
+}
+
+/* Data bar (W072): positioned absolutely behind the cell value,
+   sized via inline `width: N%` from `fill_ratio`. Direction
+   `right` means the bar grows from the right edge (used for
+   negative axes); direction `left` (default) grows from the
+   left edge. Colour comes from inline style. */
+.onecalc-array-browser__data-bar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  z-index: 0;
+  border-radius: 2px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.onecalc-array-browser__data-bar[data-direction="right"] {
+  left: auto;
+  right: 4px;
+}
+
+/* Icon glyph (W072 icon-set rule). Sits ahead of the value
+   in flex order. */
+.onecalc-array-browser__icon {
+  position: relative;
+  z-index: 1;
+  font-size: 0.95rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.onecalc-array-browser__truncation {
+  align-self: flex-start;
+  font-family: var(--oc-font-ui);
+  font-size: 0.72rem;
+  color: var(--oc-color-muted);
+  padding: 2px 8px;
+  border: 1px dashed var(--oc-color-border);
+  border-radius: 999px;
+  background: var(--oc-color-panel);
 }
 "#;
 

@@ -9,9 +9,7 @@
 
 use wasm_bindgen_test::*;
 
-use super::scaffold::{
-    dispatch_input, dispatch_keydown_with_modifiers, mount_home_shell,
-};
+use super::scaffold::{dispatch_input, dispatch_keydown_with_modifiers, mount_home_shell};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -26,9 +24,7 @@ async fn editor_metrics_chip_user_mode_omits_when_textarea_empty() {
     super::scaffold::flush_microtasks(15).await;
 
     assert!(
-        shell
-            .select(".onecalc-home-shell__chip--metrics")
-            .is_none(),
+        shell.select(".onecalc-home-shell__chip--metrics").is_none(),
         "User mode + empty textarea must omit the metrics chip",
     );
 }
@@ -44,14 +40,8 @@ async fn editor_metrics_chip_user_mode_shows_ready_when_no_diagnostics() {
         .select(".onecalc-home-shell__chip--metrics")
         .expect("metrics chip rendered");
     assert_eq!(chip.get_attribute("data-mode").as_deref(), Some("user"));
-    assert_eq!(
-        chip.get_attribute("data-status").as_deref(),
-        Some("ready"),
-    );
-    assert_eq!(
-        chip.text_content().unwrap_or_default().trim(),
-        "ready",
-    );
+    assert_eq!(chip.get_attribute("data-status").as_deref(), Some("ready"),);
+    assert_eq!(chip.text_content().unwrap_or_default().trim(), "ready",);
     assert!(chip
         .class_list()
         .contains("onecalc-home-shell__chip--ready"));
@@ -134,7 +124,10 @@ async fn editor_metrics_chip_developer_mode_shows_full_counts() {
     let chip = shell
         .select(".onecalc-home-shell__chip--metrics")
         .expect("metrics chip rendered");
-    assert_eq!(chip.get_attribute("data-mode").as_deref(), Some("developer"));
+    assert_eq!(
+        chip.get_attribute("data-mode").as_deref(),
+        Some("developer")
+    );
     let text = chip.text_content().unwrap_or_default();
     assert!(text.contains("tokens"));
     assert!(text.contains("functions"));
@@ -165,9 +158,7 @@ async fn result_context_chip_user_mode_omits_seam_badges() {
 
     // Data-seam-id attributes must still be readable for the
     // seam-status board.
-    let seam_fields = chip
-        .query_selector_all("[data-seam-id]")
-        .expect("query ok");
+    let seam_fields = chip.query_selector_all("[data-seam-id]").expect("query ok");
     assert!(
         seam_fields.length() >= 2,
         "data-seam-id attributes must be present even in User mode; got {}",
@@ -191,15 +182,20 @@ async fn result_context_chip_developer_mode_keeps_seam_badges() {
         Some("developer"),
     );
     let chip_text = chip.text_content().unwrap_or_default();
+    // Locale moved to the formatting-panel inner section; the
+    // result-foot chip now shows just `format-family · policy`.
+    // Format reads `General` until the user picks a code; policy
+    // defaults to `live-recalc` (Excel's default-on workbook
+    // behaviour).
     assert!(
-        chip_text.contains("SEAM-OXFUNC-LOCALE-EXPAND"),
-        "Developer-mode context chip must surface SEAM-OXFUNC-LOCALE-EXPAND; \
-         got {chip_text:?}",
+        chip_text.contains("General"),
+        "Developer-mode context chip must surface the live `General` \
+         format-family label when no format code is set; got {chip_text:?}",
     );
     assert!(
-        chip_text.contains("SEAM-OXFUNC-FORMAT-GENERAL"),
-        "Developer-mode context chip must surface SEAM-OXFUNC-FORMAT-GENERAL; \
-         got {chip_text:?}",
+        chip_text.contains("live-recalc"),
+        "Developer-mode context chip must surface the default `live-recalc` \
+         policy; got {chip_text:?}",
     );
 }
 

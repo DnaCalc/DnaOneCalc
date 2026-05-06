@@ -1,3 +1,4 @@
+pub mod ambient_app_context;
 pub mod completion_popup;
 pub mod editor_session;
 pub mod home_shell_view_model;

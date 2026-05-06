@@ -45,10 +45,11 @@ async fn wait_for_squiggle_with_code(
 ) -> Option<web_sys::Element> {
     for _ in 0..30 {
         super::scaffold::flush_microtasks(1).await;
-        let squiggles =
-            shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
+        let squiggles = shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
         for i in 0..squiggles.length() {
-            let Some(node) = squiggles.item(i) else { continue };
+            let Some(node) = squiggles.item(i) else {
+                continue;
+            };
             let Ok(element) = node.dyn_into::<web_sys::Element>() else {
                 continue;
             };
@@ -86,7 +87,9 @@ async fn yyyy_unknown_function_carries_exact_span_and_code() {
         "unknown_function is a SemanticPlan-stage diagnostic",
     );
     assert_eq!(
-        element.get_attribute("data-worksheet-error-class").as_deref(),
+        element
+            .get_attribute("data-worksheet-error-class")
+            .as_deref(),
         Some("#NAME?"),
         "unknown_function carries the #NAME? worksheet error class",
     );
@@ -128,7 +131,9 @@ async fn qqqq_unknown_name_carries_exact_span_and_code() {
         "unknown_name is a Bind-stage diagnostic",
     );
     assert_eq!(
-        element.get_attribute("data-worksheet-error-class").as_deref(),
+        element
+            .get_attribute("data-worksheet-error-class")
+            .as_deref(),
         Some("#NAME?"),
         "unknown_name carries the #NAME? worksheet error class",
     );
@@ -147,10 +152,11 @@ async fn abs_in_w067_formula_does_not_produce_a_diagnostic() {
     // Wait for at least one squiggle so we know diagnostics have run.
     let _ = wait_for_squiggle_with_code(&shell, "unknown_function").await;
 
-    let squiggles =
-        shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
+    let squiggles = shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
     for i in 0..squiggles.length() {
-        let Some(node) = squiggles.item(i) else { continue };
+        let Some(node) = squiggles.item(i) else {
+            continue;
+        };
         let Ok(element) = node.dyn_into::<web_sys::Element>() else {
             continue;
         };
@@ -167,8 +173,7 @@ async fn abs_in_w067_formula_does_not_produce_a_diagnostic() {
         // No squiggle's span may overlap that range.
         let abs_start = 11usize;
         let abs_end = 14usize;
-        let overlaps =
-            !(span_end <= abs_start || span_start >= abs_end);
+        let overlaps = !(span_end <= abs_start || span_start >= abs_end);
         let title = element.get_attribute("title").unwrap_or_default();
         assert!(
             !overlaps,
@@ -198,11 +203,12 @@ async fn w067_formula_squiggles_render_in_dom_order() {
     let _ = wait_for_squiggle_with_code(&shell, "unknown_function").await;
     let _ = wait_for_squiggle_with_code(&shell, "unknown_name").await;
 
-    let squiggles =
-        shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
+    let squiggles = shell.select_all(".onecalc-home-shell__editor-squiggles .squiggle");
     let mut starts: Vec<usize> = Vec::new();
     for i in 0..squiggles.length() {
-        let Some(node) = squiggles.item(i) else { continue };
+        let Some(node) = squiggles.item(i) else {
+            continue;
+        };
         let Ok(element) = node.dyn_into::<web_sys::Element>() else {
             continue;
         };
@@ -221,8 +227,14 @@ async fn w067_formula_squiggles_render_in_dom_order() {
     );
     // The first squiggle is YYYY at 1, the last is QQQQ at 20 (the
     // dedup pass may drop equal-start duplicates but never reorders).
-    assert!(starts.contains(&1), "expected a squiggle starting at 1 (YYYY)");
-    assert!(starts.contains(&20), "expected a squiggle starting at 20 (QQQQ)");
+    assert!(
+        starts.contains(&1),
+        "expected a squiggle starting at 1 (YYYY)"
+    );
+    assert!(
+        starts.contains(&20),
+        "expected a squiggle starting at 20 (QQQQ)"
+    );
 
     shell.tear_down();
 }
