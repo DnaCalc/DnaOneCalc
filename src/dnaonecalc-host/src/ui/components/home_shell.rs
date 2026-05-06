@@ -65,6 +65,78 @@ pub fn HomeShell(
     // Reactive view-model: rebuilds whenever the state signal changes.
     let view_model = Memo::new(move |_| state.with(build_home_shell_view_model));
 
+    // NodeRef on the editor textarea so we can imperatively sync
+    // `value` + `selectionStart/End` from host state after each
+    // reactive flush. Without this, two failure modes appear under
+    // slow recalc:
+    //
+    // 1. `prop:value=textarea_value` writes `textarea.value = X`
+    //    even when `X` is what the textarea already has. Some
+    //    browsers reset the caret to the end of the field on any
+    //    `node.value = …` assignment. The user clicks at offset
+    //    10 → bridge runs → state re-renders → `prop:value`
+    //    re-applies the same string → caret jumps to end.
+    //
+    // 2. The host's `editor_surface_state.selection` is the source
+    //    of truth for where the caret should be after a bridge
+    //    round-trip (bridge result rebuilds it from the prior host
+    //    selection). If the DOM disagrees with the host (cursor
+    //    reset, completion accept that splices text without
+    //    matching caret update, scenario load), we need to
+    //    actively restore.
+    //
+    // The effect below is conservative: it reads the host text +
+    // selection on every state change, compares to the DOM, and
+    // writes only when divergent. Idempotent; cheap when nothing
+    // moved. Skipping the effect when the textarea is unmounted
+    // (NodeRef::get returns None) keeps the SSR-render path inert.
+    let textarea_ref: NodeRef<leptos::html::Textarea> = NodeRef::new();
+    Effect::new(move |_| {
+        // Subscribe to the state signal so the effect re-runs on
+        // every reducer-driven update.
+        let (host_text, host_anchor, host_focus) = state.with(|s| {
+            let active_id = s
+                .workspace_shell
+                .active_formula_space_id
+                .clone()
+                .or_else(|| {
+                    s.active_formula_space_view
+                        .selected_formula_space_id
+                        .clone()
+                });
+            let space = active_id.as_ref().and_then(|id| s.formula_spaces.get(id));
+            let text = space
+                .map(|sp| sp.raw_entered_cell_text.clone())
+                .unwrap_or_default();
+            let anchor = space
+                .map(|sp| sp.editor_surface_state.selection.anchor as u32)
+                .unwrap_or(0);
+            let focus = space
+                .map(|sp| sp.editor_surface_state.selection.focus as u32)
+                .unwrap_or(0);
+            (text, anchor, focus)
+        });
+        let Some(textarea_el) = textarea_ref.get() else {
+            return;
+        };
+        // Sync text only when divergent. On a match this is a
+        // no-op (browser does NOT reset caret because we never
+        // assigned to .value).
+        if textarea_el.value() != host_text {
+            textarea_el.set_value(&host_text);
+        }
+        // Restore selection from host state when the DOM diverges.
+        // After a pure caret-only round-trip (mouse click, arrow
+        // navigation), this is the call that pins the caret back
+        // to where the click landed even if some upstream prop
+        // binding momentarily reset it.
+        let dom_anchor = textarea_el.selection_start().ok().flatten();
+        let dom_focus = textarea_el.selection_end().ok().flatten();
+        if dom_anchor != Some(host_anchor) || dom_focus != Some(host_focus) {
+            let _ = textarea_el.set_selection_range(host_anchor, host_focus);
+        }
+    });
+
     // Function-help hover state. Component-local because hover is
     // a UI concern that doesn't need to persist into the reducer
     // state. Set by the editor-frame `on:mouseover` delegation
@@ -893,7 +965,7 @@ pub fn HomeShell(
                                 spellcheck="false"
                                 autocomplete="off"
                                 aria-label="formula editor"
-                                prop:value=textarea_value
+                                node_ref=textarea_ref
                                 on:keydown=move |ev| on_textarea_keydown.run(ev)
                                 on:focusout=on_textarea_focusout
                                 on:keyup=move |ev: WebKeyboardEvent| {

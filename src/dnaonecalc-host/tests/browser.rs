@@ -63,3 +63,6 @@ mod diagnostic_codes_and_spans;
 
 #[path = "browser/formatting_controls.rs"]
 mod formatting_controls;
+
+#[path = "browser/caret_buffer_sync.rs"]
+mod caret_buffer_sync;
