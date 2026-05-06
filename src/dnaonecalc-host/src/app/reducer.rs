@@ -186,6 +186,45 @@ pub fn close_scenario_breadcrumb(state: &mut OneCalcHostState) -> bool {
     true
 }
 
+/// Open the manage-formulas overlay. Idempotent: returns `false`
+/// when the overlay is already open. Always clears the search
+/// query so the next session starts with the full list visible.
+pub fn open_manage_formulas(state: &mut OneCalcHostState) -> bool {
+    if state.global_ui_chrome.manage_formulas_open {
+        return false;
+    }
+    state.global_ui_chrome.manage_formulas_open = true;
+    state.global_ui_chrome.manage_formulas_search_query.clear();
+    true
+}
+
+/// Close the manage-formulas overlay. No-op when already closed.
+/// Clears the search query on close so re-opening starts fresh.
+pub fn close_manage_formulas(state: &mut OneCalcHostState) -> bool {
+    if !state.global_ui_chrome.manage_formulas_open {
+        return false;
+    }
+    state.global_ui_chrome.manage_formulas_open = false;
+    state.global_ui_chrome.manage_formulas_search_query.clear();
+    true
+}
+
+/// Update the manage-formulas search filter as the user types
+/// into the overlay's input. The renderer subscribes to this so
+/// the row list refilters reactively. Stays a no-op (returns
+/// `false`) when the value is unchanged.
+pub fn set_manage_formulas_search_query(
+    state: &mut OneCalcHostState,
+    query: impl Into<String>,
+) -> bool {
+    let query = query.into();
+    if state.global_ui_chrome.manage_formulas_search_query == query {
+        return false;
+    }
+    state.global_ui_chrome.manage_formulas_search_query = query;
+    true
+}
+
 // -----------------------------------------------------------------
 // Array-browser reducers (zoom, selection, resize, display options)
 // -----------------------------------------------------------------
@@ -986,6 +1025,38 @@ mod tests {
             .formula_spaces
             .insert(FormulaSpaceState::new(formula_space_id, ""));
         state
+    }
+
+    #[test]
+    fn manage_formulas_open_close_round_trip() {
+        let mut state = fresh_state_with_active_space("space-1");
+        assert!(open_manage_formulas(&mut state));
+        assert!(state.global_ui_chrome.manage_formulas_open);
+        // Idempotent on a second open.
+        assert!(!open_manage_formulas(&mut state));
+        // Search query persists while the overlay is open.
+        assert!(set_manage_formulas_search_query(&mut state, "xlookup"));
+        assert_eq!(
+            state.global_ui_chrome.manage_formulas_search_query,
+            "xlookup"
+        );
+        // Closing clears the search query so the next open is fresh.
+        assert!(close_manage_formulas(&mut state));
+        assert!(!state.global_ui_chrome.manage_formulas_open);
+        assert!(state
+            .global_ui_chrome
+            .manage_formulas_search_query
+            .is_empty());
+        // Idempotent on second close.
+        assert!(!close_manage_formulas(&mut state));
+    }
+
+    #[test]
+    fn manage_formulas_search_query_is_idempotent() {
+        let mut state = fresh_state_with_active_space("space-1");
+        assert!(set_manage_formulas_search_query(&mut state, "abc"));
+        assert!(!set_manage_formulas_search_query(&mut state, "abc"));
+        assert!(set_manage_formulas_search_query(&mut state, "abcd"));
     }
 
     #[test]

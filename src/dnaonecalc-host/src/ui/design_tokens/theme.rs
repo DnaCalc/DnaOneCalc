@@ -3005,6 +3005,194 @@ pub const ONECALC_THEME_CSS: &str = r#"
   text-align: center;
 }
 
+/* Manage-formulas overlay — searchable list of every formula in the
+   workspace. Sits at the same modal level as the command palette;
+   only one of the two is visible at a time. The overlay deliberately
+   centers higher than the palette (8vh vs 12vh) since its rows are
+   taller and the user benefits from extra scroll height. */
+.onecalc-home-shell__manage-formulas-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  z-index: 60;
+}
+
+.onecalc-home-shell__manage-formulas {
+  width: min(720px, 96vw);
+  max-height: 80vh;
+  background: var(--oc-color-surface);
+  border-radius: 12px;
+  border: 1px solid var(--oc-color-border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.onecalc-home-shell__manage-formulas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 6px;
+  gap: 12px;
+  border-bottom: 1px solid var(--oc-color-border);
+}
+
+.onecalc-home-shell__manage-formulas-title {
+  margin: 0;
+  font-family: var(--oc-font-ui);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__manage-formulas-close {
+  border: none;
+  background: transparent;
+  color: var(--oc-color-muted);
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.onecalc-home-shell__manage-formulas-close:hover {
+  color: var(--oc-color-warm);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.onecalc-home-shell__manage-formulas-search {
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--oc-color-border);
+}
+
+.onecalc-home-shell__manage-formulas-search-input {
+  width: 100%;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: var(--oc-font-ui);
+  font-size: 0.95rem;
+  background: var(--oc-color-bg);
+  color: inherit;
+  outline: none;
+}
+
+.onecalc-home-shell__manage-formulas-search-input:focus-visible {
+  border-color: var(--oc-color-accent);
+  box-shadow: 0 0 0 2px var(--oc-color-accent-soft);
+}
+
+.onecalc-home-shell__manage-formulas-rows {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.onecalc-home-shell__manage-formulas-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--oc-color-border);
+}
+
+.onecalc-home-shell__manage-formulas-row:last-of-type {
+  border-bottom: none;
+}
+
+.onecalc-home-shell__manage-formulas-row[data-is-active="true"] {
+  background: var(--oc-color-accent-soft);
+}
+
+.onecalc-home-shell__manage-formulas-row-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.onecalc-home-shell__manage-formulas-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__manage-formulas-row-name-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__manage-formulas-row-pin {
+  color: var(--oc-color-warm);
+  font-size: 0.85rem;
+}
+
+.onecalc-home-shell__manage-formulas-row-dirty {
+  color: var(--oc-color-warm);
+  font-size: 0.6rem;
+}
+
+.onecalc-home-shell__manage-formulas-row-preview {
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.onecalc-home-shell__manage-formulas-row-preview[data-empty="true"] {
+  font-style: italic;
+}
+
+.onecalc-home-shell__manage-formulas-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.onecalc-home-shell__manage-formulas-row-action {
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: var(--oc-color-surface);
+  font-family: var(--oc-font-ui);
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.onecalc-home-shell__manage-formulas-row-action:hover:not(:disabled) {
+  background: var(--oc-color-accent-soft);
+  border-color: var(--oc-color-accent);
+}
+
+.onecalc-home-shell__manage-formulas-row-action:disabled {
+  color: var(--oc-color-muted);
+  cursor: default;
+  opacity: 0.65;
+}
+
+.onecalc-home-shell__manage-formulas-empty {
+  padding: 18px 16px;
+  color: var(--oc-color-muted);
+  font-style: italic;
+  text-align: center;
+}
+
 /* Tab strip — WS-14 §1 minimum-viable surface for switching between
    open formulas. Sits between the titlebar and the editor caption.
    Hidden when only one formula is open (the breadcrumb names it). */

@@ -42,10 +42,10 @@ use crate::services::home_shell_view_model::{
     ConditionalFormattingRuleView, ContextChipField, DataBarDirectionView, DiagnosticSquiggle,
     EditorMetricsChip, EntryModePill, FormattingControlsView, FormulaDrillDiagnosticRow,
     FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView,
-    FormulaTabChip, FormulaTabStripView, FunctionHelpCardView, NumberFormatPreset, ResultClassPill,
-    ResultContextChip, ResultKind, ResultView, ScenarioBreadcrumbAction,
-    ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry, ScenarioBreadcrumbView,
-    ScenarioPolicyView, SignatureHelpView, StatusView,
+    FormulaTabChip, FormulaTabStripView, FunctionHelpCardView, ManageFormulasRow,
+    ManageFormulasView, NumberFormatPreset, ResultClassPill, ResultContextChip, ResultKind,
+    ResultView, ScenarioBreadcrumbAction, ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry,
+    ScenarioBreadcrumbView, ScenarioPolicyView, SignatureHelpView, StatusView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 #[cfg(target_arch = "wasm32")]
@@ -496,6 +496,7 @@ pub fn HomeShell(
     let result_context = move || view_model.get().and_then(|vm| vm.result_context);
     let formula_tab_strip = move || view_model.get().map(|vm| vm.formula_tab_strip);
     let command_palette = move || view_model.get().map(|vm| vm.command_palette);
+    let manage_formulas = move || view_model.get().map(|vm| vm.manage_formulas);
     let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
     let signature_help = move || view_model.get().and_then(|vm| vm.signature_help);
     let function_help_card = move || view_model.get().and_then(|vm| vm.function_help_card);
@@ -777,6 +778,70 @@ pub fn HomeShell(
             crate::app::case_lifecycle::cancel_formula_rename(state);
         });
     });
+    // Manage-formulas overlay callbacks. The overlay is a single
+    // surface for browsing / searching every formula in the
+    // workspace and acting on each one without paging through the
+    // breadcrumb dropdown. All actions either re-use existing
+    // reducers or compose them; the overlay is purely a view + a
+    // search-filter on the same data.
+    let on_close_manage_formulas = Callback::new(move |()| {
+        state.update(|state| {
+            let _ = crate::app::reducer::close_manage_formulas(state);
+        });
+    });
+    let on_manage_formulas_search = Callback::new(move |query: String| {
+        state.update(|state| {
+            let _ = crate::app::reducer::set_manage_formulas_search_query(state, query);
+        });
+    });
+    let on_manage_formulas_open = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::reopen_formula_space(state, &formula_space_id);
+            let _ = crate::app::reducer::close_manage_formulas(state);
+        });
+    });
+    let on_manage_formulas_rename = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            // Switch to the formula first so the inline-rename input
+            // appears on the active tab — otherwise the rename target
+            // would be off-screen.
+            let _ = crate::app::case_lifecycle::reopen_formula_space(state, &formula_space_id);
+            let _ = crate::app::case_lifecycle::begin_formula_rename(state, &formula_space_id);
+            let _ = crate::app::reducer::close_manage_formulas(state);
+        });
+    });
+    let on_manage_formulas_toggle_pin = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            if state.workspace_shell.pinned_formula_space_ids.contains(
+                &crate::domain::ids::FormulaSpaceId::new(formula_space_id.clone()),
+            ) {
+                let _ = crate::app::case_lifecycle::unpin_formula_space(state, &formula_space_id);
+            } else {
+                let _ = crate::app::case_lifecycle::pin_formula_space(state, &formula_space_id);
+            }
+        });
+    });
+    let on_manage_formulas_clone = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            // Reopen first if it's a recent (clone needs the source
+            // to live in `formula_spaces`); reopen is idempotent for
+            // already-open ids.
+            let _ = crate::app::case_lifecycle::reopen_formula_space(state, &formula_space_id);
+            let _ = crate::app::case_lifecycle::duplicate_formula_space(state, &formula_space_id);
+            let _ = crate::app::reducer::close_manage_formulas(state);
+        });
+    });
+    let on_manage_formulas_close = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::close_formula_space(state, &formula_space_id);
+        });
+    });
+    let on_manage_formulas_forget = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ =
+                crate::app::case_lifecycle::forget_recent_formula_space(state, &formula_space_id);
+        });
+    });
     // Command-palette callbacks. Type-to-filter, arrow keys to
     // move selection, Enter to dispatch. Esc / outside-click /
     // a second Ctrl+K closes the overlay.
@@ -830,15 +895,16 @@ pub fn HomeShell(
                                 );
                             }
                         }
-                        // SaveAs / Open / ManageScenarios are
-                        // surfaced for discoverability today but
-                        // dispatch through the breadcrumb's own
-                        // async paths — invoke from here is a
-                        // follow-up. Console-log so the user sees
-                        // the click was received.
-                        ScenarioBreadcrumbActionId::SaveAs
-                        | ScenarioBreadcrumbActionId::Open
-                        | ScenarioBreadcrumbActionId::ManageScenarios => {
+                        ScenarioBreadcrumbActionId::ManageScenarios => {
+                            let _ = crate::app::reducer::open_manage_formulas(state);
+                        }
+                        // SaveAs / Open dispatch through the breadcrumb's
+                        // own async paths (file picker / write); the
+                        // palette mirrors them for discoverability but
+                        // the file-IO routing belongs in the breadcrumb
+                        // handler. Console-log so the user sees the
+                        // click was received.
+                        ScenarioBreadcrumbActionId::SaveAs | ScenarioBreadcrumbActionId::Open => {
                             #[cfg(target_arch = "wasm32")]
                             web_sys::console::log_1(
                                 &format!(
@@ -1002,21 +1068,18 @@ pub fn HomeShell(
                 close_dropdown();
             }
             ScenarioBreadcrumbActionId::ManageScenarios => {
-                // "Manage formulas…" — pending. The intent (per WS-14
-                // plan §6.2) is a full-screen / modal management
-                // surface for the saved-formula workspace:
-                //   • list every saved formula (name, last-edited
-                //     timestamp, pinned-flag, attached compare bundle)
-                //   • bulk operations: pin / unpin, rename, duplicate,
-                //     delete, export to .dnafml
-                //   • search / filter by name or text content
-                //   • drag-reorder for the recent / pinned list
-                // Today the inline tab strip + breadcrumb dropdown
-                // covers single-formula switching; this menu item is
-                // the entry point for the harder "I have 30 saved
-                // formulas, find the one with `=XLOOKUP` in it" case.
-                // Tracked under `SEAM-ONECALC-SCENARIO-PERSIST`.
-                web_sys::console::log_1(&"[onecalc] manage formulas: pending UI slice".into());
+                // Open the manage-formulas overlay (the searchable
+                // browse-everything-in-the-workspace surface). Closing
+                // the dropdown happens implicitly: the overlay's
+                // backdrop and Esc handler call `close_manage_formulas`,
+                // and the breadcrumb dropdown closes via the same
+                // outside-click path the overlay's backdrop already
+                // covers. Bulk operations + drag-reorder are open
+                // follow-ups; the row-by-row v1 covers the searchable
+                // workspace browser the WS-14 plan called for.
+                state.update(|state| {
+                    let _ = crate::app::reducer::open_manage_formulas(state);
+                });
                 close_dropdown();
             }
         }
@@ -1428,6 +1491,18 @@ pub fn HomeShell(
                 on_command_palette_dispatch,
                 state,
             )}
+
+            {move || render_manage_formulas_overlay(
+                manage_formulas(),
+                on_close_manage_formulas,
+                on_manage_formulas_search,
+                on_manage_formulas_open,
+                on_manage_formulas_rename,
+                on_manage_formulas_toggle_pin,
+                on_manage_formulas_clone,
+                on_manage_formulas_close,
+                on_manage_formulas_forget,
+            )}
         </div>
     }
 }
@@ -1625,6 +1700,277 @@ fn render_command_palette_row(
             {detail_view}
             {chord_view}
         </button>
+    }
+    .into_any()
+}
+
+/// Render the manage-formulas overlay. Mounted below the home
+/// shell as a centered modal with a search input + scrollable
+/// row list. Closed when the view-model reports
+/// `is_open == false`; the renderer short-circuits to an empty
+/// span in that case.
+///
+/// Each row carries:
+///   * display name (with active marker), pinned star, dirty dot,
+///   * a muted formula-preview line (first ~80 chars, whitespace
+///     collapsed),
+///   * a per-row toolbar: Open/Active, Rename, Pin/Unpin, Clone,
+///     Close (open) or Forget (recent).
+///
+/// Outside-click on the backdrop closes the overlay; Esc inside
+/// closes too.
+#[allow(clippy::too_many_arguments)]
+fn render_manage_formulas_overlay(
+    view: Option<ManageFormulasView>,
+    on_close: Callback<()>,
+    on_search: Callback<String>,
+    on_open_formula: Callback<String>,
+    on_rename: Callback<String>,
+    on_toggle_pin: Callback<String>,
+    on_clone: Callback<String>,
+    on_close_formula: Callback<String>,
+    on_forget: Callback<String>,
+) -> AnyView {
+    let Some(view) = view else {
+        return view! { <></> }.into_any();
+    };
+    if !view.is_open {
+        return view! { <></> }.into_any();
+    }
+    let total_count = view.total_count;
+    let filtered_count = view.rows.len();
+    let search_query = view.search_query.clone();
+    let close_for_backdrop = on_close;
+    let close_for_keydown = on_close;
+    let on_backdrop_click = move |_: WebMouseEvent| close_for_backdrop.run(());
+    let on_keydown = move |ev: WebKeyboardEvent| {
+        if ev.key() == "Escape" {
+            ev.prevent_default();
+            close_for_keydown.run(());
+        }
+    };
+    let rows: Vec<AnyView> = view
+        .rows
+        .into_iter()
+        .map(|row| {
+            render_manage_formulas_row(
+                row,
+                on_open_formula,
+                on_rename,
+                on_toggle_pin,
+                on_clone,
+                on_close_formula,
+                on_forget,
+            )
+        })
+        .collect();
+    let count_label = if !search_query.is_empty() && filtered_count != total_count {
+        format!("{filtered_count} of {total_count}")
+    } else {
+        total_count.to_string()
+    };
+    let empty_state: AnyView = if rows.is_empty() {
+        let message = if search_query.is_empty() {
+            "No formulas yet. Press Ctrl+N or click + to start one."
+        } else {
+            "No formulas match your search."
+        };
+        view! {
+            <div class="onecalc-home-shell__manage-formulas-empty">{message}</div>
+        }
+        .into_any()
+    } else {
+        view! { <></> }.into_any()
+    };
+    view! {
+        <div
+            class="onecalc-home-shell__manage-formulas-backdrop"
+            role="presentation"
+            on:click=on_backdrop_click
+            on:keydown=on_keydown
+        >
+            <div
+                class="onecalc-home-shell__manage-formulas"
+                role="dialog"
+                aria-label="manage formulas"
+                tabindex="-1"
+                on:click=move |ev: WebMouseEvent| ev.stop_propagation()
+            >
+                <header class="onecalc-home-shell__manage-formulas-header">
+                    <h2 class="onecalc-home-shell__manage-formulas-title">
+                        {format!("Manage formulas · {count_label}")}
+                    </h2>
+                    <button
+                        type="button"
+                        class="onecalc-home-shell__manage-formulas-close"
+                        title="Close (Esc)"
+                        aria-label="close manage formulas"
+                        on:click=move |_| on_close.run(())
+                    >
+                        "✕"
+                    </button>
+                </header>
+                <div class="onecalc-home-shell__manage-formulas-search">
+                    <input
+                        type="text"
+                        class="onecalc-home-shell__manage-formulas-search-input"
+                        placeholder="Search by name or formula text…"
+                        aria-label="search formulas"
+                        prop:value=search_query
+                        autofocus
+                        on:input=move |ev| {
+                            let target = ev
+                                .target()
+                                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
+                            if let Some(input) = target {
+                                on_search.run(input.value());
+                            }
+                        }
+                    />
+                </div>
+                <div
+                    class="onecalc-home-shell__manage-formulas-rows"
+                    role="list"
+                    aria-label="formulas in workspace"
+                >
+                    {rows}
+                    {empty_state}
+                </div>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_manage_formulas_row(
+    row: ManageFormulasRow,
+    on_open_formula: Callback<String>,
+    on_rename: Callback<String>,
+    on_toggle_pin: Callback<String>,
+    on_clone: Callback<String>,
+    on_close_formula: Callback<String>,
+    on_forget: Callback<String>,
+) -> AnyView {
+    let id_attr = row.formula_space_id.clone();
+    let id_for_open = row.formula_space_id.clone();
+    let id_for_rename = row.formula_space_id.clone();
+    let id_for_pin = row.formula_space_id.clone();
+    let id_for_clone = row.formula_space_id.clone();
+    let id_for_close_or_forget = row.formula_space_id.clone();
+    let display_name = row.display_name.clone();
+    let formula_preview = row.formula_preview.clone();
+    let active_attr = if row.is_active { "true" } else { "false" };
+    let pinned_attr = if row.is_pinned { "true" } else { "false" };
+    let open_attr = if row.is_open { "true" } else { "false" };
+    let dirty_attr = if row.is_dirty { "true" } else { "false" };
+    let pin_label = if row.is_pinned { "Unpin" } else { "Pin" };
+    let pin_glyph = if row.is_pinned { "★" } else { "☆" };
+    let open_label = if row.is_active {
+        "Active"
+    } else if row.is_open {
+        "Switch"
+    } else {
+        "Open"
+    };
+    let close_or_forget_label = if row.is_open { "Close" } else { "Forget" };
+    let close_or_forget_run: Callback<String> = if row.is_open {
+        on_close_formula
+    } else {
+        on_forget
+    };
+    let preview_view: AnyView = if formula_preview.is_empty() {
+        view! {
+            <span class="onecalc-home-shell__manage-formulas-row-preview" data-empty="true">
+                "(empty formula)"
+            </span>
+        }
+        .into_any()
+    } else {
+        view! {
+            <span class="onecalc-home-shell__manage-formulas-row-preview">{formula_preview}</span>
+        }
+        .into_any()
+    };
+    let pin_marker: AnyView = if row.is_pinned {
+        view! {
+            <span class="onecalc-home-shell__manage-formulas-row-pin" aria-hidden="true">"★"</span>
+        }
+        .into_any()
+    } else {
+        view! { <></> }.into_any()
+    };
+    let dirty_marker: AnyView = if row.is_dirty {
+        view! {
+            <span class="onecalc-home-shell__manage-formulas-row-dirty" aria-hidden="true">"●"</span>
+        }
+        .into_any()
+    } else {
+        view! { <></> }.into_any()
+    };
+    view! {
+        <div
+            class="onecalc-home-shell__manage-formulas-row"
+            role="listitem"
+            data-formula-space-id=id_attr
+            data-is-active=active_attr
+            data-is-pinned=pinned_attr
+            data-is-open=open_attr
+            data-is-dirty=dirty_attr
+        >
+            <div class="onecalc-home-shell__manage-formulas-row-info">
+                <div class="onecalc-home-shell__manage-formulas-row-name">
+                    {pin_marker}
+                    <span class="onecalc-home-shell__manage-formulas-row-name-text">{display_name}</span>
+                    {dirty_marker}
+                </div>
+                {preview_view}
+            </div>
+            <div class="onecalc-home-shell__manage-formulas-row-actions" role="group">
+                <button
+                    type="button"
+                    class="onecalc-home-shell__manage-formulas-row-action"
+                    data-action="open"
+                    disabled=row.is_active
+                    on:click=move |_| on_open_formula.run(id_for_open.clone())
+                >
+                    {open_label}
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-home-shell__manage-formulas-row-action"
+                    data-action="rename"
+                    on:click=move |_| on_rename.run(id_for_rename.clone())
+                >
+                    "Rename"
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-home-shell__manage-formulas-row-action"
+                    data-action="pin"
+                    title=pin_label
+                    on:click=move |_| on_toggle_pin.run(id_for_pin.clone())
+                >
+                    {pin_glyph}
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-home-shell__manage-formulas-row-action"
+                    data-action="clone"
+                    on:click=move |_| on_clone.run(id_for_clone.clone())
+                >
+                    "Clone"
+                </button>
+                <button
+                    type="button"
+                    class="onecalc-home-shell__manage-formulas-row-action"
+                    data-action="close-or-forget"
+                    on:click=move |_| close_or_forget_run.run(id_for_close_or_forget.clone())
+                >
+                    {close_or_forget_label}
+                </button>
+            </div>
+        </div>
     }
     .into_any()
 }

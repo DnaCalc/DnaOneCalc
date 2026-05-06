@@ -220,6 +220,16 @@ pub fn unpin_formula_space(state: &mut OneCalcHostState, formula_space_id: &str)
     state.workspace_shell.pinned_formula_space_ids.remove(&id)
 }
 
+/// Pin the formula with the given id. Used by the
+/// manage-formulas overlay's per-row pin button — that surface
+/// can target a non-active formula, so the active-only helper
+/// `pin_active_formula_space` doesn't fit. Returns `true` when
+/// the pin was newly added; `false` when already pinned (no-op).
+pub fn pin_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
+    let id = FormulaSpaceId::new(formula_space_id.to_string());
+    state.workspace_shell.pinned_formula_space_ids.insert(id)
+}
+
 pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
     let id = FormulaSpaceId::new(formula_space_id.to_string());
     let Some(closed_formula_space) = state.formula_spaces.spaces.remove(&id) else {
@@ -314,6 +324,31 @@ pub fn reopen_formula_space(state: &mut OneCalcHostState, formula_space_id: &str
         .insert(id.clone(), record.last_active_mode);
     state.workspace_shell.navigation_selection =
         crate::state::WorkspaceNavigationSelection::FormulaSpace(id);
+    true
+}
+
+/// Forget a closed formula entirely — drops it from
+/// `recent_formula_spaces` and `recent_formula_space_order`. Used
+/// by the manage-formulas overlay's per-row "Forget" action so the
+/// user can prune recents they don't want surfaced anymore. No-op
+/// (returns `false`) when the id isn't in the recents list, since
+/// open formulas use `close_formula_space` instead.
+pub fn forget_recent_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
+    let id = FormulaSpaceId::new(formula_space_id.to_string());
+    if state
+        .workspace_shell
+        .recent_formula_spaces
+        .remove(&id)
+        .is_none()
+    {
+        return false;
+    }
+    state
+        .workspace_shell
+        .recent_formula_space_order
+        .retain(|candidate| candidate != &id);
+    // A pinned-then-forgotten formula has nothing to pin to anymore.
+    state.workspace_shell.pinned_formula_space_ids.remove(&id);
     true
 }
 
@@ -633,6 +668,70 @@ mod tests {
             .as_ref()
             .unwrap();
         assert!(active_id.as_str().starts_with("untitled-"));
+    }
+
+    #[test]
+    fn forget_recent_drops_the_record_from_recents() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(close_formula_space(&mut state, "space-1"));
+        assert!(state
+            .workspace_shell
+            .recent_formula_spaces
+            .contains_key(&FormulaSpaceId::new("space-1".to_string())));
+
+        assert!(forget_recent_formula_space(&mut state, "space-1"));
+        assert!(!state
+            .workspace_shell
+            .recent_formula_spaces
+            .contains_key(&FormulaSpaceId::new("space-1".to_string())));
+        assert!(!state
+            .workspace_shell
+            .recent_formula_space_order
+            .iter()
+            .any(|id| id.as_str() == "space-1"));
+    }
+
+    /// Defensive: if a formula is somehow pinned AND in recents
+    /// (a future workflow could let that happen), forgetting the
+    /// recent should also clear the pin so the user doesn't see a
+    /// pinned ghost in the breadcrumb after they "forget" it.
+    #[test]
+    fn forget_recent_clears_a_pinned_recent_too() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(close_formula_space(&mut state, "space-1"));
+        // Inject a manual pin on the closed id to model the
+        // hypothetical workflow.
+        state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .insert(FormulaSpaceId::new("space-1".to_string()));
+
+        assert!(forget_recent_formula_space(&mut state, "space-1"));
+        assert!(!state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .contains(&FormulaSpaceId::new("space-1".to_string())));
+    }
+
+    #[test]
+    fn forget_recent_returns_false_for_unknown_or_open_id() {
+        let mut state = fresh_state_with_space("space-1");
+        // Open formulas aren't recents — the caller should use
+        // close_formula_space instead.
+        assert!(!forget_recent_formula_space(&mut state, "space-1"));
+        // Unknown id is also a no-op.
+        assert!(!forget_recent_formula_space(&mut state, "does-not-exist"));
+    }
+
+    #[test]
+    fn pin_formula_space_inserts_idempotently() {
+        let mut state = fresh_state_with_space("space-1");
+        assert!(pin_formula_space(&mut state, "space-1"));
+        assert!(!pin_formula_space(&mut state, "space-1"));
+        assert!(state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .contains(&FormulaSpaceId::new("space-1".to_string())));
     }
 
     #[test]

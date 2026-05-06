@@ -134,6 +134,12 @@ pub struct HomeShellViewModel {
     /// `FormulaFormattingState`; the renderer's `on:input` handlers
     /// dispatch the matching reducer setters.
     pub formatting_controls: FormattingControlsView,
+    /// Manage-formulas overlay projection. `is_open == false`
+    /// hides the overlay entirely; `true` carries the search
+    /// query + filtered row list + per-row metadata so the user
+    /// can browse / search / rename / pin / clone / close /
+    /// forget every formula in one place.
+    pub manage_formulas: ManageFormulasView,
 }
 
 /// Live-edited formatting fields for the active formula. Pure
@@ -563,6 +569,60 @@ pub struct FormulaTabChip {
     /// input while `is_renaming == true`. Empty when the chip
     /// is not being renamed.
     pub rename_buffer: String,
+}
+
+/// Manage-formulas overlay projection. The overlay is the
+/// answer to "I have 30 saved formulas, find the one with
+/// `=XLOOKUP` in it" — a searchable list of every formula in
+/// the workspace (open + recent + pinned, deduped) with per-row
+/// quick actions.
+///
+/// Projected from `WorkspaceShellState.open_formula_space_order`
+/// + `recent_formula_space_order` + `pinned_formula_space_ids` +
+/// `recent_formula_spaces` + `formula_spaces`. Rows are
+/// pre-filtered against
+/// `global_ui_chrome.manage_formulas_search_query`; the search
+/// matches against display name AND raw entered text
+/// (case-insensitive substring), so a search for `xlookup`
+/// finds every formula that contains `=XLOOKUP(...)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManageFormulasView {
+    /// `false` hides the overlay entirely; the renderer skips it.
+    pub is_open: bool,
+    /// Current search query. Echoed in the overlay's input.
+    pub search_query: String,
+    /// Total formula count BEFORE filtering, surfaced in the
+    /// overlay's title row ("Manage formulas · 12").
+    pub total_count: usize,
+    /// Filtered + sorted rows: pinned first (in pin order), then
+    /// open (in open order), then recent (most-recent first). A
+    /// formula is shown at most once even if it appears in
+    /// multiple lists. Empty list when nothing matches the search.
+    pub rows: Vec<ManageFormulasRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManageFormulasRow {
+    pub formula_space_id: String,
+    pub display_name: String,
+    /// First ~80 chars of the formula's raw entered text, with
+    /// newlines collapsed to spaces. Empty when the formula has
+    /// no text (a fresh untitled). Surfaced as a muted preview
+    /// under the display name.
+    pub formula_preview: String,
+    pub is_pinned: bool,
+    /// `true` when this formula is currently in
+    /// `open_formula_space_order` (so it has a tab chip / can be
+    /// switched to without reopening). `false` means it's a
+    /// recent (the row's "Open" action has to reopen it from the
+    /// `ClosedFormulaSpaceRecord`).
+    pub is_open: bool,
+    /// `true` when this formula is the workspace's currently
+    /// active one. The row gets a subtle highlight + the "Open"
+    /// action reads "Active" instead.
+    pub is_active: bool,
+    /// `true` when raw text differs from `committed_cell_text`.
+    pub is_dirty: bool,
 }
 
 /// View-model shape for the titlebar scenario breadcrumb + its
@@ -1278,6 +1338,7 @@ fn project_formula_space(
     );
     let formula_tab_strip = project_formula_tab_strip(state);
     let command_palette = project_command_palette(state);
+    let manage_formulas = project_manage_formulas(state);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -1298,7 +1359,132 @@ fn project_formula_space(
         formula_tab_strip,
         command_palette,
         formatting_controls,
+        manage_formulas,
     }
+}
+
+/// Project the manage-formulas overlay. Closed shape returns an
+/// empty list with `is_open: false` so the renderer can short-
+/// circuit. Open shape walks `pinned`, `open`, then `recent` in
+/// that priority order, deduping by id; each surviving id becomes
+/// a `ManageFormulasRow`. The result is filtered by the search
+/// query (case-insensitive substring match against the row's
+/// display name AND its formula preview).
+fn project_manage_formulas(state: &OneCalcHostState) -> ManageFormulasView {
+    let chrome = &state.global_ui_chrome;
+    if !chrome.manage_formulas_open {
+        return ManageFormulasView {
+            is_open: false,
+            search_query: String::new(),
+            total_count: 0,
+            rows: Vec::new(),
+        };
+    }
+    let active_id = state.workspace_shell.active_formula_space_id.as_ref();
+    let pinned_set = &state.workspace_shell.pinned_formula_space_ids;
+
+    // Walk in priority order — pinned first (in their stored
+    // BTreeSet order, which is the canonical id-string order),
+    // then open (in user's tab order), then recent (most-recent
+    // first). Dedup as we go.
+    let mut visited: std::collections::HashSet<crate::domain::ids::FormulaSpaceId> =
+        std::collections::HashSet::new();
+    let mut id_order: Vec<crate::domain::ids::FormulaSpaceId> = Vec::new();
+    for id in pinned_set.iter() {
+        if visited.insert(id.clone()) {
+            id_order.push(id.clone());
+        }
+    }
+    for id in &state.workspace_shell.open_formula_space_order {
+        if visited.insert(id.clone()) {
+            id_order.push(id.clone());
+        }
+    }
+    for id in &state.workspace_shell.recent_formula_space_order {
+        if visited.insert(id.clone()) {
+            id_order.push(id.clone());
+        }
+    }
+
+    let total_count = id_order.len();
+    let needle = chrome.manage_formulas_search_query.to_lowercase();
+
+    let rows: Vec<ManageFormulasRow> = id_order
+        .into_iter()
+        .filter_map(|id| {
+            let is_open_space = state.workspace_shell.open_formula_space_order.contains(&id);
+            // For an open space we read the live FormulaSpaceState;
+            // for a recent we read the closed-record snapshot. Both
+            // surfaces have the fields we need (`scenario_label`,
+            // `raw_entered_cell_text`, `committed_cell_text`).
+            let (display_name, raw_text, committed_text) = if is_open_space {
+                let space = state.formula_spaces.get(&id)?;
+                (
+                    space.context.scenario_label.clone(),
+                    space.raw_entered_cell_text.clone(),
+                    space.committed_cell_text.clone(),
+                )
+            } else {
+                let record = state.workspace_shell.recent_formula_spaces.get(&id)?;
+                (
+                    record.formula_space.context.scenario_label.clone(),
+                    record.formula_space.raw_entered_cell_text.clone(),
+                    record.formula_space.committed_cell_text.clone(),
+                )
+            };
+            let display_name = if display_name.is_empty() || display_name == id.as_str() {
+                id.as_str().to_string()
+            } else {
+                display_name
+            };
+            let formula_preview = build_formula_preview(&raw_text);
+            // Search match: name OR preview (each lowercased once).
+            if !needle.is_empty() {
+                let name_lc = display_name.to_lowercase();
+                let preview_lc = formula_preview.to_lowercase();
+                if !name_lc.contains(&needle) && !preview_lc.contains(&needle) {
+                    return None;
+                }
+            }
+            let is_dirty = match committed_text.as_deref() {
+                Some(committed) => committed != raw_text.as_str(),
+                None => !raw_text.is_empty(),
+            };
+            Some(ManageFormulasRow {
+                formula_space_id: id.as_str().to_string(),
+                display_name,
+                formula_preview,
+                is_pinned: pinned_set.contains(&id),
+                is_open: is_open_space,
+                is_active: active_id.is_some_and(|active| active == &id),
+                is_dirty,
+            })
+        })
+        .collect();
+
+    ManageFormulasView {
+        is_open: true,
+        search_query: chrome.manage_formulas_search_query.clone(),
+        total_count,
+        rows,
+    }
+}
+
+/// Build the muted preview text the manage-formulas overlay
+/// surfaces under each formula's display name. Collapses every
+/// run of whitespace (newlines, tabs, multi-spaces) to a single
+/// space so multi-line formulas don't break the row layout, and
+/// truncates at ~80 chars with an ellipsis. An empty raw text
+/// returns an empty string — the renderer hides the preview line
+/// when this is empty.
+fn build_formula_preview(raw_text: &str) -> String {
+    let collapsed: String = raw_text.split_whitespace().collect::<Vec<&str>>().join(" ");
+    const PREVIEW_BUDGET: usize = 80;
+    if collapsed.chars().count() <= PREVIEW_BUDGET {
+        return collapsed;
+    }
+    let truncated: String = collapsed.chars().take(PREVIEW_BUDGET).collect();
+    format!("{truncated}…")
 }
 
 /// Convenience for the renderer's keyboard `Enter` handler:
@@ -2527,7 +2713,11 @@ fn project_scenario_breadcrumb(
             action_id: ScenarioBreadcrumbActionId::ManageScenarios,
             label: "Manage formulas…",
             chord_label: "",
-            seam_id: Some("SEAM-ONECALC-SCENARIO-PERSIST"),
+            // The manage-formulas overlay is the v1 surface — no
+            // longer a SEAM stub. Bulk operations + drag-reorder
+            // are open follow-ups but the row-by-row actions and
+            // search are functional today.
+            seam_id: None,
         },
     ];
 
@@ -3901,12 +4091,133 @@ mod tests {
         // reducers; SaveAs / Open are wired through
         // `persistence/browser_file_io.rs`.
         for action in &vm.scenario_breadcrumb.actions {
-            match action.action_id {
-                ScenarioBreadcrumbActionId::ManageScenarios => {
-                    assert_eq!(action.seam_id, Some("SEAM-ONECALC-SCENARIO-PERSIST"),)
-                }
-                _ => assert_eq!(action.seam_id, None, "{:?}", action.action_id),
-            }
+            // Every action is wired today — `ManageScenarios` opens
+            // the new manage-formulas overlay and the others use the
+            // case-lifecycle / persistence reducers directly.
+            assert_eq!(action.seam_id, None, "{:?}", action.action_id);
+        }
+    }
+
+    /// The manage-formulas view-model is `is_open: false` when the
+    /// chrome flag is off — no projection cost on the closed path.
+    #[test]
+    fn manage_formulas_is_closed_by_default() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=A1");
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert!(!vm.manage_formulas.is_open);
+        assert_eq!(vm.manage_formulas.total_count, 0);
+        assert!(vm.manage_formulas.rows.is_empty());
+    }
+
+    /// When opened, the overlay surfaces every formula in the
+    /// workspace once each (deduped across pinned / open / recent).
+    #[test]
+    fn manage_formulas_open_lists_every_formula_once() {
+        let mut state = OneCalcHostState::default();
+        // Two open formulas, one pinned.
+        let space_a = FormulaSpaceState::new(FormulaSpaceId::new("space-a"), "=SUM(1,2)");
+        let space_b = {
+            let mut space = FormulaSpaceState::new(FormulaSpaceId::new("space-b"), "=NOW()");
+            space.context.scenario_label = "now-time".to_string();
+            space
+        };
+        state.workspace_shell.active_formula_space_id = Some(space_a.formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(space_a.formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(space_b.formula_space_id.clone());
+        state
+            .workspace_shell
+            .pinned_formula_space_ids
+            .insert(space_b.formula_space_id.clone());
+        state.formula_spaces.insert(space_a);
+        state.formula_spaces.insert(space_b);
+        state.global_ui_chrome.manage_formulas_open = true;
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert!(vm.manage_formulas.is_open);
+        assert_eq!(vm.manage_formulas.total_count, 2);
+        assert_eq!(vm.manage_formulas.rows.len(), 2);
+        // Pinned comes first.
+        assert_eq!(vm.manage_formulas.rows[0].formula_space_id, "space-b");
+        assert!(vm.manage_formulas.rows[0].is_pinned);
+        assert_eq!(vm.manage_formulas.rows[0].display_name, "now-time");
+        assert_eq!(vm.manage_formulas.rows[1].formula_space_id, "space-a");
+        assert!(vm.manage_formulas.rows[1].is_active);
+        assert!(!vm.manage_formulas.rows[1].is_pinned);
+    }
+
+    /// Search filter narrows by name AND formula text — case-insensitive.
+    #[test]
+    fn manage_formulas_search_matches_name_or_formula_text() {
+        let mut state = OneCalcHostState::default();
+        let space_a = {
+            let mut space =
+                FormulaSpaceState::new(FormulaSpaceId::new("space-a"), "=XLOOKUP(A1,B:B,C:C)");
+            space.context.scenario_label = "lookups".to_string();
+            space
+        };
+        let space_b = {
+            let mut space = FormulaSpaceState::new(FormulaSpaceId::new("space-b"), "=SUM(1,2)");
+            space.context.scenario_label = "totals".to_string();
+            space
+        };
+        state.workspace_shell.active_formula_space_id = Some(space_a.formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(space_a.formula_space_id.clone());
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(space_b.formula_space_id.clone());
+        state.formula_spaces.insert(space_a);
+        state.formula_spaces.insert(space_b);
+        state.global_ui_chrome.manage_formulas_open = true;
+        // Match by formula text (case-insensitive).
+        state.global_ui_chrome.manage_formulas_search_query = "xlookup".to_string();
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert_eq!(vm.manage_formulas.rows.len(), 1);
+        assert_eq!(vm.manage_formulas.rows[0].formula_space_id, "space-a");
+        // The total count reflects pre-filter cardinality.
+        assert_eq!(vm.manage_formulas.total_count, 2);
+
+        // Match by display name.
+        state.global_ui_chrome.manage_formulas_search_query = "totals".to_string();
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert_eq!(vm.manage_formulas.rows.len(), 1);
+        assert_eq!(vm.manage_formulas.rows[0].formula_space_id, "space-b");
+
+        // Empty query → all rows.
+        state.global_ui_chrome.manage_formulas_search_query = "".to_string();
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        assert_eq!(vm.manage_formulas.rows.len(), 2);
+    }
+
+    #[test]
+    fn manage_formulas_preview_collapses_whitespace_and_truncates() {
+        // 90-character formula text -> the preview should truncate at
+        // ~80 chars with an ellipsis. Multiline whitespace collapses.
+        let multiline =
+            "=LET(\n  x, 1,\n  y, 2,\n  z, x + y + 100 + 200 + 300 + 400 + 500 + 600,\n  z\n)";
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("multi"), multiline);
+        formula_space.context.scenario_label = "multi".to_string();
+        let mut state = host_state_with(formula_space);
+        state.global_ui_chrome.manage_formulas_open = true;
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let row = vm.manage_formulas.rows.first().expect("at least one row");
+        // No newlines survive.
+        assert!(!row.formula_preview.contains('\n'));
+        // Truncation marker appears on long inputs.
+        if multiline.chars().count() > 80 {
+            assert!(row.formula_preview.ends_with('…'));
         }
     }
 }

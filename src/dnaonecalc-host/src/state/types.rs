@@ -781,6 +781,20 @@ pub struct GlobalUiChromeState {
     /// per-formula transient state (zoom, selection, resize
     /// overrides) lives on `FormulaSpaceState.array_browser`.
     pub array_browser_display: ArrayBrowserDisplaySettings,
+    /// Manage-formulas overlay lifecycle. `false` is closed;
+    /// flipped on by the breadcrumb dropdown's "Manage formulas…"
+    /// action. The overlay lists every open + pinned + recent
+    /// formula in one searchable surface so the user can find /
+    /// rename / pin / clone / close formulas without paging
+    /// through the breadcrumb dropdown one at a time.
+    pub manage_formulas_open: bool,
+    /// Filter text typed into the manage-formulas search input.
+    /// Reset to empty whenever the overlay closes so the next
+    /// open starts fresh. Matched case-insensitively against
+    /// each formula's display name AND its raw entered text — a
+    /// search for `xlookup` finds every formula that contains
+    /// `=XLOOKUP(...)` regardless of the formula's name.
+    pub manage_formulas_search_query: String,
 }
 
 /// Workspace-level array-browser display knobs. These apply
