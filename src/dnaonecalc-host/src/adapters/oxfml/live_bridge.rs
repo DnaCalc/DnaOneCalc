@@ -22,7 +22,8 @@ use oxfml_core::{BindContext, FormulaChannelKind};
 use super::bridge::{
     FormulaEditRequest, FormulaEditResult, FormulaFormattingCfDataBarDirection,
     FormulaFormattingCfRank, FormulaFormattingCfThreshold, FormulaFormattingCfTypedRule,
-    FormulaFormattingRequest, OxfmlEditorBridge, OxfmlEditorBridgeError, ScenarioPolicyRequest,
+    FormulaFormattingRequest, OxfmlEditorBridge, OxfmlEditorBridgeError, RecalcModeRequest,
+    ScenarioPolicyRequest,
 };
 use super::types::{
     worksheet_error_literal, ArrayCellValue, BindSummary, EditorDocument, EvalSummary, EvalValue,
@@ -84,32 +85,43 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
             None,
         );
         let interaction = service.interact_at_cursor(&edit_result.document, request.cursor_offset);
-        // Pre-MVP locale: en-US, 1900 calendar. The publication-context
-        // formatter inside OxFml short-circuits to "no formatted text"
-        // when `locale_ctx` is `None`, so we always pass the en-US
-        // context here even when the user hasn't opened the format
-        // panel — that way a CURRENCY / Date / Percent format code
-        // applies the moment it's typed without needing the locale UI
-        // to land first. Real locale switching (multi-locale month /
-        // weekday tables, currency, decimal separator) is deferred
-        // behind `docs/HANDOFF_OXFML_LOCALE_EXPANSION.md`
-        // (`SEAM-OXFML-LOCALE-EXPAND`).
-        let locale_ctx = oxfml_en_us_locale_context();
-        let (now_serial, random_value) = scenario_seeds(request.scenario_policy);
-        let typed_context = TypedContextQueryBundle::new(
-            None,
-            None,
-            Some(&locale_ctx),
-            Some(now_serial),
-            Some(random_value),
-        );
-        let mut runtime_request = RuntimeFormulaRequest::new(source, typed_context);
-        if let Some(formatting) = request.formatting_request.as_ref() {
-            if let Some(context) = build_publication_context(formatting) {
-                runtime_request = runtime_request.with_verification_publication_context(context);
+
+        // Decide whether to run the runtime-evaluation pass. The
+        // runtime pass is the dominant cost on a heavy formula
+        // (`HANDOFF_OXFUNC_REDUCE_HOTLOOP_PERF.md`,
+        // `HANDOFF_OXFML_LAMBDA_INVOCATION_PERF.md`); skipping it
+        // is the host's lever for keeping the editor responsive.
+        // - `skip_runtime_evaluation` is set per-event by the host
+        //   (caret-only navigation skips, text-input doesn't).
+        // - `RecalcModeRequest::Manual` skips on every event — only
+        //   an explicit Calculate / F9 surfaces a runtime pass.
+        let should_run_runtime = !request.skip_runtime_evaluation
+            && !matches!(request.recalc_mode, RecalcModeRequest::Manual);
+
+        let runtime_result = if should_run_runtime {
+            // Pre-MVP locale: en-US, 1900 calendar. See
+            // `docs/HANDOFF_OXFML_LOCALE_EXPANSION.md`
+            // (`SEAM-OXFML-LOCALE-EXPAND`).
+            let locale_ctx = oxfml_en_us_locale_context();
+            let (now_serial, random_value) = scenario_seeds(request.scenario_policy);
+            let typed_context = TypedContextQueryBundle::new(
+                None,
+                None,
+                Some(&locale_ctx),
+                Some(now_serial),
+                Some(random_value),
+            );
+            let mut runtime_request = RuntimeFormulaRequest::new(source, typed_context);
+            if let Some(formatting) = request.formatting_request.as_ref() {
+                if let Some(context) = build_publication_context(formatting) {
+                    runtime_request =
+                        runtime_request.with_verification_publication_context(context);
+                }
             }
-        }
-        let runtime_result = RuntimeEnvironment::new().execute(runtime_request).ok();
+            RuntimeEnvironment::new().execute(runtime_request).ok()
+        } else {
+            None
+        };
 
         let document = build_editor_document(
             &request.formula_stable_id,
@@ -672,7 +684,9 @@ fn bridge_threshold_to_upstream(
 fn scenario_seeds(policy: ScenarioPolicyRequest) -> (f64, f64) {
     match policy {
         ScenarioPolicyRequest::Deterministic => (46000.0, 0.5),
-        ScenarioPolicyRequest::LiveRecalc => (current_excel_serial(), current_random_value()),
+        ScenarioPolicyRequest::LiveRecalc | ScenarioPolicyRequest::ManualRecalc => {
+            (current_excel_serial(), current_random_value())
+        }
     }
 }
 

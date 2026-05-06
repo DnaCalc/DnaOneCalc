@@ -503,15 +503,16 @@ pub fn HomeShell(
     // Manual recalculate trigger. Wired both to the F9 key
     // (handled in `on_textarea_keydown`) and to a small button in
     // the editor-foot row. In Deterministic policy this re-runs
-    // the bridge against the same fixed seeds (useful for re-
-    // rendering after non-formula state changes); in LiveRecalc
-    // the bridge picks fresh seeds so volatile functions advance.
+    // the bridge against the same fixed seeds; in LiveRecalc the
+    // bridge picks fresh seeds so volatile functions advance. In
+    // ManualRecalc this is the *only* path that runs the runtime
+    // pass — the keystroke-driven bridge skips it.
     let editor_bridge_for_recalc = editor_bridge.clone();
     let on_recalculate = Callback::new(move |()| {
         let bridge = editor_bridge_for_recalc.clone();
         state.update(|state| {
             if let Some(bridge) = bridge.as_ref() {
-                let _ = crate::services::live_edit::refresh_active_formula_space(
+                let _ = crate::services::live_edit::force_runtime_recalc_on_active_formula_space(
                     bridge.as_ref(),
                     state,
                 );
@@ -1553,16 +1554,21 @@ fn render_locale_picker(
     .into_any()
 }
 
-/// Two-button segmented control: Deterministic | LiveRecalc.
+/// Three-button segmented control: Deterministic | Live | Manual.
 /// Clicking the inactive button switches the active formula's
 /// scenario policy; the active button is highlighted via the
-/// `[data-active="true"]` selector.
+/// `[data-active="true"]` selector. Manual recalc is the user's
+/// lever for keeping the editor responsive when the formula is
+/// expensive (large REDUCE / MAKEARRAY / LAMBDA workloads); typing
+/// runs parse / bind / popups every keystroke but skips the
+/// runtime-evaluation pass until F9 / Calculate.
 fn render_scenario_policy_toggle(
     current: ScenarioPolicyView,
     on_set: Callback<crate::persistence::ScenarioPolicy>,
 ) -> AnyView {
     let is_deterministic = matches!(current, ScenarioPolicyView::Deterministic);
     let is_live = matches!(current, ScenarioPolicyView::LiveRecalc);
+    let is_manual = matches!(current, ScenarioPolicyView::ManualRecalc);
     view! {
         <div
             class="onecalc-home-shell__formatting-policy-toggle"
@@ -1590,6 +1596,17 @@ fn render_scenario_policy_toggle(
                 on:click=move |_| on_set.run(crate::persistence::ScenarioPolicy::LiveRecalc)
             >
                 "Live"
+            </button>
+            <button
+                type="button"
+                class="onecalc-home-shell__formatting-policy-button"
+                data-policy="manual"
+                data-active=if is_manual { "true" } else { "false" }
+                aria-pressed=if is_manual { "true" } else { "false" }
+                title="Skip runtime evaluation on text edits; recalc on F9 / Calculate only"
+                on:click=move |_| on_set.run(crate::persistence::ScenarioPolicy::ManualRecalc)
+            >
+                "Manual"
             </button>
         </div>
     }
@@ -3143,7 +3160,9 @@ fn synthesize_caret_sync_event(textarea: &HtmlTextAreaElement) -> EditorInputEve
             .ok()
             .flatten()
             .map(|offset| offset as usize),
-        input_kind: EditorInputKind::Other,
+        // Caret-sync — the bridge will skip the runtime-evaluation
+        // pass. Popups still refresh.
+        input_kind: EditorInputKind::CaretSync,
         inserted_text: None,
     }
 }

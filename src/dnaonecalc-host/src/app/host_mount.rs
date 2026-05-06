@@ -48,6 +48,8 @@ mod tests {
                 analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
                 formatting_request: None,
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
+                skip_runtime_evaluation: false,
+                recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
             })
             .is_ok());
         assert!(web
@@ -59,6 +61,8 @@ mod tests {
                 analysis_stage: crate::adapters::oxfml::EditorAnalysisStage::SyntaxAndBind,
                 formatting_request: None,
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
+                skip_runtime_evaluation: false,
+                recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
             })
             .is_ok());
     }

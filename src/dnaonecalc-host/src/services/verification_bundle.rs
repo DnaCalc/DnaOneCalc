@@ -1634,6 +1634,8 @@ fn run_oxfml_case(
             analysis_stage: EditorAnalysisStage::FullSemanticPlan,
             formatting_request: None,
             scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
+            skip_runtime_evaluation: false,
+            recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
         })
         .map_err(|error| {
             format!(

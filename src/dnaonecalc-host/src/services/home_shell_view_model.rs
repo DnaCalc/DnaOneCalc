@@ -186,6 +186,10 @@ pub struct NumberFormatPreset {
 pub enum ScenarioPolicyView {
     Deterministic,
     LiveRecalc,
+    /// Runtime evaluation gated on Calculate / F9. Mirrors
+    /// `ScenarioPolicy::ManualRecalc`. Surfaced as a third
+    /// segmented-control button alongside Deterministic / Live.
+    ManualRecalc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +223,7 @@ impl FormattingControlsView {
         let scenario_policy = match formatting.scenario_policy {
             crate::persistence::ScenarioPolicy::Deterministic => ScenarioPolicyView::Deterministic,
             crate::persistence::ScenarioPolicy::LiveRecalc => ScenarioPolicyView::LiveRecalc,
+            crate::persistence::ScenarioPolicy::ManualRecalc => ScenarioPolicyView::ManualRecalc,
         };
         let conditional_formatting_rules = formatting
             .conditional_formatting_rules
@@ -1504,6 +1509,7 @@ fn project_result_context(
     let policy_label = match formula_space.formatting.scenario_policy {
         crate::persistence::ScenarioPolicy::Deterministic => "deterministic",
         crate::persistence::ScenarioPolicy::LiveRecalc => "live-recalc",
+        crate::persistence::ScenarioPolicy::ManualRecalc => "manual-recalc",
     };
     ResultContextChip {
         format: ContextChipField::Live(format_label),

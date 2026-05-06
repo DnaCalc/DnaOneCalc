@@ -35,6 +35,8 @@ impl EditorSessionService {
             analysis_stage: intent.analysis_stage,
             formatting_request: intent.formatting_request,
             scenario_policy: intent.scenario_policy,
+            skip_runtime_evaluation: intent.skip_runtime_evaluation,
+            recalc_mode: intent.recalc_mode,
         };
         let result = bridge
             .apply_formula_edit(request)
@@ -348,6 +350,8 @@ mod tests {
                 analysis_stage: EditorAnalysisStage::SyntaxAndBind,
                 formatting_request: None,
                 scenario_policy: crate::adapters::oxfml::ScenarioPolicyRequest::Deterministic,
+                skip_runtime_evaluation: false,
+                recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
             },
         )
         .expect("edit intent should update via bridge");

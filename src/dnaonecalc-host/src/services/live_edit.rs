@@ -5,7 +5,7 @@ use crate::adapters::oxfml::{
     FormulaFormattingCfIconSetRuleOptions, FormulaFormattingCfRank,
     FormulaFormattingCfRankRuleOptions, FormulaFormattingCfRule, FormulaFormattingCfThreshold,
     FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, ScenarioPolicyRequest,
+    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::app::reducer::{
@@ -34,11 +34,13 @@ pub fn apply_live_editor_input(
 ) -> Result<bool, LiveEditError> {
     let formula_space_id =
         active_formula_space_id(state).ok_or(LiveEditError::NoActiveFormulaSpace)?;
+    let input_kind = input_event.input_kind;
     let changed = apply_editor_input_to_active_formula_space(state, input_event);
     if !changed {
         return Ok(false);
     }
-    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id)?;
+    let skip_runtime = !input_kind.mutates_text();
+    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, skip_runtime)?;
     Ok(true)
 }
 
@@ -70,7 +72,7 @@ pub fn apply_live_editor_command(
     ) {
         return Ok(true);
     }
-    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id)?;
+    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, false)?;
     Ok(true)
 }
 
@@ -93,7 +95,28 @@ pub fn refresh_active_formula_space(
     let Some(formula_space_id) = active_formula_space_id(state) else {
         return Ok(false);
     };
-    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id)?;
+    refresh_active_formula_space_from_bridge(bridge, state, &formula_space_id, false)?;
+    Ok(true)
+}
+
+/// Force a runtime-evaluation pass on the active formula even when
+/// the recalc mode is `Manual`. Hooked up to F9 / Calculate. Returns
+/// `Ok(true)` when the bridge ran, `Ok(false)` for no active space,
+/// `Err` only on bridge failure.
+pub fn force_runtime_recalc_on_active_formula_space(
+    bridge: &dyn OxfmlEditorBridge,
+    state: &mut OneCalcHostState,
+) -> Result<bool, LiveEditError> {
+    let Some(formula_space_id) = active_formula_space_id(state) else {
+        return Ok(false);
+    };
+    refresh_active_formula_space_from_bridge_with_overrides(
+        bridge,
+        state,
+        &formula_space_id,
+        false,
+        true,
+    )?;
     Ok(true)
 }
 
@@ -112,12 +135,33 @@ fn refresh_active_formula_space_from_bridge(
     bridge: &dyn OxfmlEditorBridge,
     state: &mut OneCalcHostState,
     formula_space_id: &FormulaSpaceId,
+    skip_runtime_evaluation: bool,
+) -> Result<(), LiveEditError> {
+    refresh_active_formula_space_from_bridge_with_overrides(
+        bridge,
+        state,
+        formula_space_id,
+        skip_runtime_evaluation,
+        false,
+    )
+}
+
+/// Inner refresh path. `skip_runtime_evaluation` is the per-event
+/// flag (true for caret-only events). `force_runtime` overrides the
+/// per-formula recalc mode — used by F9 / Calculate to bypass
+/// `ManualRecalc` for one round-trip.
+fn refresh_active_formula_space_from_bridge_with_overrides(
+    bridge: &dyn OxfmlEditorBridge,
+    state: &mut OneCalcHostState,
+    formula_space_id: &FormulaSpaceId,
+    skip_runtime_evaluation: bool,
+    force_runtime: bool,
 ) -> Result<(), LiveEditError> {
     let formula_space = state
         .formula_spaces
         .get(formula_space_id)
         .ok_or_else(|| LiveEditError::UnknownFormulaSpace(formula_space_id.clone()))?;
-    let intent = build_live_edit_intent(formula_space);
+    let intent = build_live_edit_intent(formula_space, skip_runtime_evaluation, force_runtime);
     EditorSessionService::handle_formula_edit_intent(bridge, &mut state.formula_spaces, intent)
         .map_err(|error| match error {
             EditorSessionError::UnknownFormulaSpace(id) => LiveEditError::UnknownFormulaSpace(id),
@@ -311,7 +355,11 @@ fn sync_completion_popup_after_bridge_refresh(
     );
 }
 
-fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEditIntent {
+fn build_live_edit_intent(
+    formula_space: &FormulaSpaceState,
+    skip_runtime_evaluation: bool,
+    force_runtime: bool,
+) -> ApplyFormulaEditIntent {
     let formula_stable_id = formula_space
         .editor_document
         .as_ref()
@@ -325,13 +373,17 @@ fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEdit
     // not `unknown_function` (SemanticPlan), which is a fidelity
     // gap the user notices on day one.
     //
-    // Cost: one extra phase per keystroke, dominated by catalog
-    // lookup for the small number of function calls in a typical
-    // single-formula scenario. Acceptable at the OneCalc scale; if
-    // perf ever becomes a concern, the right fix is a debounced
-    // upgrade — keep `SyntaxAndBind` on every input event and run
-    // `FullSemanticPlan` after a quiet interval — rather than
-    // dropping the SemanticPlan diagnostics.
+    // Runtime-pass gating happens through `skip_runtime_evaluation`
+    // (per-event, set on caret-only navigation) and `recalc_mode`
+    // (per-formula, `Manual` skips runtime on every event). The
+    // bridge runs parse / bind / popup / signature-help every time
+    // either way — only the value-evaluation pass is gated.
+    let recalc_mode = if force_runtime {
+        // F9 / Calculate force a recalc even when in Manual mode.
+        RecalcModeRequest::Auto
+    } else {
+        recalc_mode_request_for(formula_space)
+    };
     ApplyFormulaEditIntent {
         formula_space_id: formula_space.formula_space_id.clone(),
         formula_stable_id,
@@ -340,6 +392,8 @@ fn build_live_edit_intent(formula_space: &FormulaSpaceState) -> ApplyFormulaEdit
         analysis_stage: EditorAnalysisStage::FullSemanticPlan,
         formatting_request: formatting_request_for(formula_space),
         scenario_policy: scenario_policy_request_for(formula_space),
+        skip_runtime_evaluation,
+        recalc_mode,
     }
 }
 
@@ -348,6 +402,15 @@ fn scenario_policy_request_for(formula_space: &FormulaSpaceState) -> ScenarioPol
     match formula_space.formatting.scenario_policy {
         ScenarioPolicy::Deterministic => ScenarioPolicyRequest::Deterministic,
         ScenarioPolicy::LiveRecalc => ScenarioPolicyRequest::LiveRecalc,
+        ScenarioPolicy::ManualRecalc => ScenarioPolicyRequest::ManualRecalc,
+    }
+}
+
+fn recalc_mode_request_for(formula_space: &FormulaSpaceState) -> RecalcModeRequest {
+    use crate::persistence::ScenarioPolicy;
+    match formula_space.formatting.scenario_policy {
+        ScenarioPolicy::Deterministic | ScenarioPolicy::LiveRecalc => RecalcModeRequest::Auto,
+        ScenarioPolicy::ManualRecalc => RecalcModeRequest::Manual,
     }
 }
 

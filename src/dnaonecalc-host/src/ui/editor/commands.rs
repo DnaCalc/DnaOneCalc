@@ -42,7 +42,22 @@ pub enum EditorInputKind {
     DeleteBackward,
     DeleteForward,
     InsertFromPaste,
+    /// Synthetic event the host emits when the caret moves without
+    /// the text changing (mouse click, arrow key, Home / End,
+    /// PageUp / PageDown). The bridge skips runtime evaluation for
+    /// these — the formula's value cannot have changed, so popups
+    /// + signature help refresh against the new caret position
+    /// without paying the runtime cost.
+    CaretSync,
     Other,
+}
+
+impl EditorInputKind {
+    /// Whether this input kind changes the formula text. Caret-only
+    /// events return `false`; all other variants return `true`.
+    pub fn mutates_text(self) -> bool {
+        !matches!(self, Self::CaretSync)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

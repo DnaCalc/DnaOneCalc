@@ -17,6 +17,42 @@ pub struct FormulaEditRequest {
     /// supplies fixed `now_serial` / `random_value` seeds
     /// (Deterministic) or fresh values per request (LiveRecalc).
     pub scenario_policy: ScenarioPolicyRequest,
+    /// When `true`, the bridge runs parse / bind / completion /
+    /// signature-help / function-help (the "interactive" lane) and
+    /// **skips** the runtime-evaluation pass that produces values,
+    /// walks, summaries, and effective display text. Used for
+    /// caret-only navigation events (mouse click, arrow keys) where
+    /// the user expects popups to refresh against the new caret
+    /// position but the formula's value cannot have changed.
+    /// Defaults to `false` — every text-input keystroke and every
+    /// formatting-panel knob still triggers a full runtime pass.
+    /// The interactive lane reuses the cached green-tree when
+    /// `previous_green_tree_key` matches, so the cost of a
+    /// caret-sync round-trip is bounded by `interact_at_cursor`.
+    pub skip_runtime_evaluation: bool,
+    /// Calc-options recalc policy. Drives whether the runtime
+    /// evaluation runs at all on text-input events
+    /// (`Auto` — current behaviour) or only when the user
+    /// explicitly asks for it via Calculate / F9
+    /// (`Manual` — quiet typing of large formulas). Independent of
+    /// `skip_runtime_evaluation`, which is per-event; this is a
+    /// per-formula opt-in.
+    pub recalc_mode: RecalcModeRequest,
+}
+
+/// Mirror of `crate::persistence::ScenarioRecalcMode` at the bridge
+/// boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RecalcModeRequest {
+    /// Default: every event that changes the formula text triggers
+    /// a runtime pass. Caret-only events still skip runtime via
+    /// `skip_runtime_evaluation`.
+    #[default]
+    Auto,
+    /// Runtime evaluation is gated on an explicit Calculate / F9
+    /// request. Text edits skip the runtime pass entirely; the
+    /// editor still gets parse / bind / popups every event.
+    Manual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -127,13 +163,20 @@ impl Eq for FormulaFormattingCfThreshold {}
 
 /// Mirror of `crate::persistence::ScenarioPolicy` at the bridge
 /// boundary. Kept as its own type so the bridge module does not
-/// take a hard dependency on `crate::persistence`.
+/// take a hard dependency on `crate::persistence`. Drives volatile-
+/// function seed handling. The `ManualRecalc` variant maps to
+/// `RecalcModeRequest::Manual` at the bridge call site; the seed
+/// behaviour for ManualRecalc matches `LiveRecalc` (fresh seeds
+/// when the user explicitly asks for a recalc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioPolicyRequest {
     Deterministic,
     /// Default: matches `ScenarioPolicy::LiveRecalc`.
     #[default]
     LiveRecalc,
+    /// Runtime gated on Calculate; matches
+    /// `ScenarioPolicy::ManualRecalc`.
+    ManualRecalc,
 }
 
 // `Eq` cannot be derived: `EditorDocument.value_presentation.published_value`

@@ -1,5 +1,5 @@
 use crate::adapters::oxfml::{
-    EditorAnalysisStage, FormulaFormattingRequest, ScenarioPolicyRequest,
+    EditorAnalysisStage, FormulaFormattingRequest, RecalcModeRequest, ScenarioPolicyRequest,
 };
 use crate::domain::ids::FormulaSpaceId;
 
@@ -26,4 +26,17 @@ pub struct ApplyFormulaEditIntent {
     /// formula's `FormulaFormattingState.scenario_policy`. Drives
     /// `now_serial` / `random_value` seeding in the bridge.
     pub scenario_policy: ScenarioPolicyRequest,
+    /// When `true`, skip the runtime-evaluation pass and run only
+    /// parse / bind / popup / signature-help / function-help. The
+    /// resulting `EditorDocument` carries the prior runtime fields
+    /// from cache (or `None` for fresh formulas) — popups + caret
+    /// state refresh, value / walk / display do not change. Set on
+    /// caret-only navigation (mouse click, arrow keys, Home / End,
+    /// PageUp / PageDown).
+    pub skip_runtime_evaluation: bool,
+    /// Per-formula recalc mode. `Auto` runs the runtime on every
+    /// text-input event (subject to `skip_runtime_evaluation`);
+    /// `Manual` gates the runtime on an explicit Calculate / F9
+    /// request, decoupling typing latency from formula complexity.
+    pub recalc_mode: RecalcModeRequest,
 }

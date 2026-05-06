@@ -265,16 +265,38 @@ pub enum CfThreshold {
 
 impl Eq for CfThreshold {}
 
+/// Per-formula recalc + seeding policy. Three states the user
+/// picks via the formatting-panel segmented control:
+///
+/// - `Deterministic` — pin volatile-function seeds (`=NOW()`,
+///   `=RAND()`, `=RANDARRAY()`) so the formula re-runs identically
+///   on every keystroke. The runtime pass still runs on every text
+///   event; the value is stable. Authoring-friendly default for
+///   formulas the user wants to reproduce verbatim.
+/// - `LiveRecalc` — fresh seeds per bridge round-trip. Runtime
+///   runs on every text event. Matches Excel's default-on workbook
+///   behaviour (`=NOW()` advances per keystroke).
+/// - `ManualRecalc` — runtime evaluation skipped on text events;
+///   the formula re-runs only on an explicit Calculate / F9
+///   request. Seeds refresh at that moment. Right choice for
+///   expensive formulas (REDUCE / MAKEARRAY / large LAMBDA) where
+///   typing latency would otherwise be dominated by re-evaluation
+///   cost. Until OxFml's lambda invoker hoists invariant work
+///   (`HANDOFF_OXFML_LAMBDA_INVOCATION_PERF.md`) and OxFunc's
+///   helpers grow lazy iteration
+///   (`HANDOFF_OXFUNC_REDUCE_HOTLOOP_PERF.md`), this is the user's
+///   primary lever for keeping the editor responsive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioPolicy {
     Deterministic,
     /// Default: volatile functions (`=NOW()`, `=RAND()`,
     /// `=RANDARRAY()`) re-evaluate each bridge round-trip.
     /// Matches Excel's default-on workbook behaviour.
-    /// Deterministic is the explicit "pin seeds for reproducible
-    /// authoring" mode the user toggles into.
     #[default]
     LiveRecalc,
+    /// Runtime evaluation is gated on Calculate / F9. Text edits
+    /// run parse / bind / popup refresh only.
+    ManualRecalc,
 }
 
 impl ScenarioPolicy {
@@ -282,6 +304,7 @@ impl ScenarioPolicy {
         match self {
             Self::Deterministic => "Deterministic",
             Self::LiveRecalc => "LiveRecalc",
+            Self::ManualRecalc => "ManualRecalc",
         }
     }
 
@@ -289,6 +312,7 @@ impl ScenarioPolicy {
         match s {
             "Deterministic" => Some(Self::Deterministic),
             "LiveRecalc" => Some(Self::LiveRecalc),
+            "ManualRecalc" => Some(Self::ManualRecalc),
             _ => None,
         }
     }
