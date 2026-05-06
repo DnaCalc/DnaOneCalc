@@ -85,6 +85,17 @@ pub fn duplicate_formula_space(
     duplicate.committed_cell_text = source.committed_cell_text.clone();
     duplicate.proofed_cell_text = source.proofed_cell_text.clone();
     duplicate.expanded_editor = source.expanded_editor;
+    // Per `WS14_DESIGN_BACKLOG_2026-05-04.md` §1, the clone copies
+    // formatting (number-format code, font / fill colours, locale,
+    // CF rules, scenario policy) and the drill-down expansion
+    // state so the new formula opens with the same authoring
+    // surface the user was looking at. Bridge-derived fields
+    // (`editor_document`, `editor_box_metrics`, completion popup,
+    // etc.) stay at their `FormulaSpaceState::new` defaults — the
+    // first bridge round-trip on the new id refreshes them.
+    duplicate.formatting = source.formatting.clone();
+    duplicate.formula_drill_open = source.formula_drill_open;
+    duplicate.formatting_panel_open = source.formatting_panel_open;
 
     state.formula_spaces.insert(duplicate);
     state
@@ -105,6 +116,49 @@ pub fn duplicate_formula_space(
     state.workspace_shell.navigation_selection =
         crate::state::WorkspaceNavigationSelection::FormulaSpace(new_id.clone());
     Some(new_id)
+}
+
+/// Convenience wrapper around [`duplicate_formula_space`] that
+/// targets the workspace's *active* formula. Returns the new id
+/// or `None` when there is no active formula. Per WS14 §1
+/// "Clone vs. duplicate vs. save-as": the term Clone is what the
+/// user surfaces (breadcrumb dropdown action label); internally
+/// this re-uses the existing duplicate machinery.
+pub fn clone_active_formula_space(state: &mut OneCalcHostState) -> Option<FormulaSpaceId> {
+    let active_id = state.workspace_shell.active_formula_space_id.clone()?;
+    duplicate_formula_space(state, active_id.as_str())
+}
+
+/// Pin the workspace's *active* formula. Idempotent — returns
+/// `true` on the first pin and `false` when the formula was
+/// already pinned (or there is no active formula). Per
+/// `workspace_shell.pinned_formula_space_ids` semantics, pinned
+/// ids survive workspace-level cleanup and surface in the
+/// scenario-breadcrumb dropdown's "Pinned" section.
+pub fn pin_active_formula_space(state: &mut OneCalcHostState) -> bool {
+    let Some(active_id) = state.workspace_shell.active_formula_space_id.clone() else {
+        return false;
+    };
+    if state
+        .workspace_shell
+        .pinned_formula_space_ids
+        .contains(&active_id)
+    {
+        return false;
+    }
+    state
+        .workspace_shell
+        .pinned_formula_space_ids
+        .insert(active_id);
+    true
+}
+
+/// Remove the formula with the given id from the workspace's
+/// pinned set. Returns `true` when the pin was present, `false`
+/// when the formula wasn't pinned (no-op).
+pub fn unpin_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {
+    let id = FormulaSpaceId::new(formula_space_id.to_string());
+    state.workspace_shell.pinned_formula_space_ids.remove(&id)
 }
 
 pub fn close_formula_space(state: &mut OneCalcHostState, formula_space_id: &str) -> bool {

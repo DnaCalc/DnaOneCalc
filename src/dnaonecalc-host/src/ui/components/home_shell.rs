@@ -60,7 +60,28 @@ pub fn HomeShell(
     initial_state: OneCalcHostState,
     #[prop(default = None)] editor_bridge: Option<Arc<dyn OxfmlEditorBridge + Send + Sync>>,
 ) -> impl IntoView {
+    // Hydrate from `localStorage["dnaonecalc.workspace.v1"]` before
+    // the state signal sees its first subscriber, so the user's
+    // pinned ids and last-edited formula land in `initial_state`
+    // *before* the reactive view-model first runs. On non-wasm
+    // targets this is a no-op (the SSR build doesn't have
+    // localStorage); the same call site keeps both branches
+    // visually identical.
+    let mut initial_state = initial_state;
+    crate::persistence::hydrate_state_from_local_storage(&mut initial_state);
+
     let state: RwSignal<OneCalcHostState> = RwSignal::new(initial_state);
+
+    // Auto-save the workspace envelope to localStorage on every
+    // state change. The serialise + write path is cheap (<1 ms for
+    // a typical workspace) and fires inside the browser's main
+    // thread, so any heavier persistence mechanism would have to
+    // schedule itself anyway. Storage failures (quota, disabled
+    // site data) log to console without taking the rest of the app
+    // down.
+    Effect::new(move |_| {
+        state.with(crate::persistence::save_workspace_to_local_storage);
+    });
 
     // Reactive view-model: rebuilds whenever the state signal changes.
     let view_model = Memo::new(move |_| state.with(build_home_shell_view_model));
@@ -390,7 +411,12 @@ pub fn HomeShell(
             .unwrap_or_default()
     };
     let editor_metrics = move || view_model.get().map(|vm| vm.editor_metrics);
-    let result_context = move || view_model.get().map(|vm| vm.result_context);
+    // The view-model returns `Option<ResultContextChip>` directly
+    // (the chip collapses on default-state formulas — see
+    // `project_result_context`). Flatten through `and_then` so the
+    // renderer's `Option<ResultContextChip>` parameter has a single
+    // None for "no active formula" or "default formula".
+    let result_context = move || view_model.get().and_then(|vm| vm.result_context);
     let completion_popup = move || view_model.get().and_then(|vm| vm.completion_popup);
     let signature_help = move || view_model.get().and_then(|vm| vm.signature_help);
     let function_help_card = move || view_model.get().and_then(|vm| vm.function_help_card);
@@ -606,6 +632,25 @@ pub fn HomeShell(
             let _ = close_scenario_breadcrumb(state);
         });
     });
+    // Click on a Recent / Pinned row → switch to that formula. The
+    // dropdown closes after the switch so the user gets visible
+    // feedback. `reopen_formula_space` handles both the
+    // open-but-not-active case (just flip active id) and the
+    // closed-and-recent case (re-mount from `recent_formula_spaces`).
+    let on_scenario_entry_select = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::reopen_formula_space(state, &formula_space_id);
+            let _ = close_scenario_breadcrumb(state);
+        });
+    });
+    // Pin glyph on a Recent / Pinned row → toggle the pin without
+    // switching the active formula. Stops click propagation in the
+    // renderer so the row's select handler doesn't also fire.
+    let on_scenario_entry_pin_toggle = Callback::new(move |formula_space_id: String| {
+        state.update(|state| {
+            let _ = crate::app::case_lifecycle::toggle_pin_formula_space(state, &formula_space_id);
+        });
+    });
     // Scenario action dispatcher (slice 1b). NewScenario / Duplicate
     // run synchronously through their existing reducers. SaveAs
     // projects the active formula to the persisted `Scenario` shape,
@@ -632,8 +677,20 @@ pub fn HomeShell(
             }
             ScenarioBreadcrumbActionId::Duplicate => {
                 state.update(|state| {
+                    let _ = crate::app::case_lifecycle::clone_active_formula_space(state);
+                });
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::PinActive => {
+                state.update(|state| {
+                    let _ = crate::app::case_lifecycle::pin_active_formula_space(state);
+                });
+                close_dropdown();
+            }
+            ScenarioBreadcrumbActionId::UnpinActive => {
+                state.update(|state| {
                     if let Some(active_id) = state.workspace_shell.active_formula_space_id.clone() {
-                        let _ = crate::app::case_lifecycle::duplicate_formula_space(
+                        let _ = crate::app::case_lifecycle::unpin_formula_space(
                             state,
                             active_id.as_str(),
                         );
@@ -905,6 +962,8 @@ pub fn HomeShell(
                     on_scenario_breadcrumb_toggle,
                     on_scenario_breadcrumb_close,
                     on_scenario_action,
+                    on_scenario_entry_select,
+                    on_scenario_entry_pin_toggle,
                 )}
                 <span class="onecalc-home-shell__titlebar-hint" aria-hidden="true">
                     "Ctrl+P · command palette"
@@ -1138,6 +1197,8 @@ fn render_scenario_breadcrumb(
     on_toggle: Callback<()>,
     on_close: Callback<()>,
     on_action: Callback<ScenarioBreadcrumbActionId>,
+    on_entry_select: Callback<String>,
+    on_entry_pin_toggle: Callback<String>,
 ) -> AnyView {
     let Some(breadcrumb) = breadcrumb else {
         return view! { <span class="onecalc-home-shell__breadcrumb-wrap" /> }.into_any();
@@ -1191,11 +1252,11 @@ fn render_scenario_breadcrumb(
             >
                 <div class="onecalc-home-shell__scenario-menu-section" data-section="recent">
                     <div class="onecalc-home-shell__scenario-menu-heading">"Recent"</div>
-                    {render_scenario_menu_entries(recent, "recent")}
+                    {render_scenario_menu_entries(recent, "recent", on_entry_select, on_entry_pin_toggle)}
                 </div>
                 <div class="onecalc-home-shell__scenario-menu-section" data-section="pinned">
                     <div class="onecalc-home-shell__scenario-menu-heading">"Pinned"</div>
-                    {render_scenario_menu_entries(pinned, "pinned")}
+                    {render_scenario_menu_entries(pinned, "pinned", on_entry_select, on_entry_pin_toggle)}
                 </div>
                 <div class="onecalc-home-shell__scenario-menu-section" data-section="actions">
                     <div class="onecalc-home-shell__scenario-menu-heading">"Actions"</div>
@@ -1210,6 +1271,8 @@ fn render_scenario_breadcrumb(
 fn render_scenario_menu_entries(
     entries: Vec<ScenarioBreadcrumbEntry>,
     section: &'static str,
+    on_entry_select: Callback<String>,
+    on_entry_pin_toggle: Callback<String>,
 ) -> AnyView {
     if entries.is_empty() {
         return view! {
@@ -1226,7 +1289,7 @@ fn render_scenario_menu_entries(
         }
         .into_any();
     }
-    let buttons: Vec<_> = entries
+    let rows: Vec<_> = entries
         .into_iter()
         .map(|entry| {
             let is_active_attr = if entry.is_active { "true" } else { "false" };
@@ -1234,28 +1297,61 @@ fn render_scenario_menu_entries(
             let formula_space_id = entry.formula_space_id.clone();
             let display_name = entry.display_name.clone();
             let meta = entry.meta.clone();
+            // Click row → switch to this formula. Click pin glyph
+            // → toggle pin without switching. The two actions are
+            // separate buttons to keep the click target unambiguous
+            // (the pin glyph stops propagation so the row's click
+            // handler doesn't also fire).
+            let id_for_select = formula_space_id.clone();
+            let id_for_pin = formula_space_id.clone();
+            let pin_title = if entry.is_pinned { "Unpin" } else { "Pin" };
+            let pin_glyph = if entry.is_pinned { "★" } else { "☆" };
+            let id_for_outer = formula_space_id.clone();
             view! {
-                <button
-                    type="button"
-                    class="onecalc-home-shell__scenario-menu-item"
-                    role="menuitem"
-                    data-formula-space-id=formula_space_id
+                <div
+                    class="onecalc-home-shell__scenario-menu-row"
+                    data-formula-space-id=id_for_outer
                     data-is-active=is_active_attr
                     data-is-pinned=is_pinned_attr
                     data-section=section
                 >
-                    <span class="onecalc-home-shell__scenario-menu-item-name">
-                        {display_name}
-                    </span>
-                    <span class="onecalc-home-shell__scenario-menu-item-meta">
-                        {meta}
-                    </span>
-                </button>
+                    <button
+                        type="button"
+                        class="onecalc-home-shell__scenario-menu-item"
+                        role="menuitem"
+                        data-formula-space-id=formula_space_id
+                        data-is-active=is_active_attr
+                        data-is-pinned=is_pinned_attr
+                        data-section=section
+                        on:click=move |_| on_entry_select.run(id_for_select.clone())
+                    >
+                        <span class="onecalc-home-shell__scenario-menu-item-name">
+                            {display_name}
+                        </span>
+                        <span class="onecalc-home-shell__scenario-menu-item-meta">
+                            {meta}
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        class="onecalc-home-shell__scenario-menu-pin"
+                        data-action="pin-toggle"
+                        data-is-pinned=is_pinned_attr
+                        title=pin_title
+                        aria-label=pin_title
+                        on:click=move |ev| {
+                            ev.stop_propagation();
+                            on_entry_pin_toggle.run(id_for_pin.clone());
+                        }
+                    >
+                        {pin_glyph}
+                    </button>
+                </div>
             }
             .into_any()
         })
         .collect();
-    view! { <>{buttons}</> }.into_any()
+    view! { <>{rows}</> }.into_any()
 }
 
 fn render_scenario_menu_actions(

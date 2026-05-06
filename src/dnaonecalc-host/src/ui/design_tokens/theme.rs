@@ -3025,6 +3025,60 @@ pub const ONECALC_THEME_CSS: &str = r#"
   background: rgba(79, 123, 87, 0.12);
 }
 
+/* Pin glyph is now rendered as a sibling button so the row click
+   target stays distinct from the pin toggle. The legacy ::after
+   indicator is suppressed when the row is rendered through the
+   `<div class="onecalc-home-shell__scenario-menu-row">` wrapper.
+   Kept on bare items (not in a row) for minor surfaces that still
+   render a flat list. */
+
+.onecalc-home-shell__scenario-menu-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+}
+
+.onecalc-home-shell__scenario-menu-row .onecalc-home-shell__scenario-menu-item {
+  flex: 1 1 auto;
+}
+
+/* Inside the row the per-item ::after pin indicator is replaced by
+   the pin-toggle button — suppress the indicator to avoid a
+   double-pin visual. */
+.onecalc-home-shell__scenario-menu-row
+  .onecalc-home-shell__scenario-menu-item[data-is-pinned="true"]::after {
+  content: none;
+}
+
+.onecalc-home-shell__scenario-menu-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oc-color-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.onecalc-home-shell__scenario-menu-pin:hover {
+  background: var(--oc-color-accent-soft);
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__scenario-menu-pin[data-is-pinned="true"] {
+  color: var(--oc-color-warm);
+}
+
+.onecalc-home-shell__scenario-menu-pin:focus-visible {
+  outline: 2px solid var(--oc-color-accent);
+  outline-offset: -2px;
+}
+
 .onecalc-home-shell__scenario-menu-item[data-is-pinned="true"]::after {
   content: "📌";
   font-size: 11px;

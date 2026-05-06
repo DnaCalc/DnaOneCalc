@@ -58,11 +58,17 @@ pub struct HomeShellViewModel {
     /// the editor document (zeros when there is no document yet).
     pub editor_metrics: EditorMetricsChip,
     /// Active-context summary rendered at the result-foot chip:
-    /// `locale · format · policy`. Each field is either `Live(value)` or
-    /// `SeamPending {value, seam_id}` — the renderer surfaces the SEAM id
-    /// inline so the chip is honest about which knobs are wired today
-    /// and which still need backend work (per WS-14 plan §11).
-    pub result_context: ResultContextChip,
+    /// `format · policy`. `None` when the formula is in the
+    /// default state (General number format, `LiveRecalc` policy,
+    /// no CF rules) — the result-foot collapses entirely on
+    /// "nothing to say", freeing vertical space for the result
+    /// hero. `Some` whenever any of the three diverges from
+    /// default OR when the policy is `ManualRecalc` (always
+    /// surfaced so the user has a visible reminder that typing
+    /// isn't triggering recalc). Per WS-14 §5 ("result-foot
+    /// rethink"): rather than always-on chrome, the foot is
+    /// progressive — visible only when it carries information.
+    pub result_context: Option<ResultContextChip>,
     /// Completion popup overlay. `None` when the popup is `Hidden` OR
     /// when the editor-box metrics have not yet been measured (the
     /// browser adapter populates them on the first input event; until
@@ -513,7 +519,17 @@ pub enum ScenarioBreadcrumbActionId {
     NewScenario,
     SaveAs,
     Open,
+    /// Renamed from "Duplicate" in the renderer — the user-visible
+    /// label is "Clone" per WS-14 §1's "Clone vs. duplicate vs.
+    /// save-as" decision. The action id keeps the legacy name for
+    /// stability in tests and persisted shells.
     Duplicate,
+    /// Pin the active formula. Only surfaced when the active
+    /// formula is *not* already pinned.
+    PinActive,
+    /// Unpin the active formula. Only surfaced when the active
+    /// formula *is* pinned.
+    UnpinActive,
     ManageScenarios,
 }
 
@@ -524,6 +540,8 @@ impl ScenarioBreadcrumbActionId {
             Self::SaveAs => "save-as",
             Self::Open => "open",
             Self::Duplicate => "duplicate",
+            Self::PinActive => "pin-active",
+            Self::UnpinActive => "unpin-active",
             Self::ManageScenarios => "manage-scenarios",
         }
     }
@@ -1490,31 +1508,48 @@ fn project_editor_metrics(
     }
 }
 
-/// Build the result-foot active-context chip. The locale field
-/// moved to the formatting panel (its inner section); the
-/// result-foot stays focused on the two indicators the user
-/// glances at while the result is on screen — what format
-/// family the result is rendered as, and whether the formula's
-/// volatile functions are live or pinned.
+/// Build the result-foot active-context chip. The chip is
+/// progressive (per WS-14 §5 "result-foot rethink"): the foot
+/// collapses entirely when the formula is in default state
+/// (General format, `LiveRecalc` policy, no CF rules), and
+/// surfaces only when the user has authored something worth
+/// glancing at — or when policy is `ManualRecalc` (always shown
+/// because the user needs a visual reminder that typing isn't
+/// triggering recalc).
 fn project_result_context(
     formula_space: &FormulaSpaceState,
     _ambient: &crate::state::AmbientAppContext,
-) -> ResultContextChip {
+) -> Option<ResultContextChip> {
     let format_code = formula_space.formatting.number_format_code.trim();
-    let format_label = if format_code.is_empty() {
-        "General".to_string()
-    } else {
+    let has_format = !format_code.is_empty();
+    let has_cf_rules = !formula_space
+        .formatting
+        .conditional_formatting_rules
+        .is_empty();
+    let policy = formula_space.formatting.scenario_policy;
+    let is_manual_recalc = matches!(policy, crate::persistence::ScenarioPolicy::ManualRecalc,);
+    let is_default_policy = matches!(policy, crate::persistence::ScenarioPolicy::LiveRecalc);
+    // Collapse the chip when nothing is set and the policy is at
+    // its default. ManualRecalc forces visibility regardless,
+    // because the user needs to see "your typing isn't running
+    // the formula" while it's in effect.
+    if !has_format && !has_cf_rules && is_default_policy && !is_manual_recalc {
+        return None;
+    }
+    let format_label = if has_format {
         classify_format_family_label(format_code)
+    } else {
+        "General".to_string()
     };
-    let policy_label = match formula_space.formatting.scenario_policy {
+    let policy_label = match policy {
         crate::persistence::ScenarioPolicy::Deterministic => "deterministic",
         crate::persistence::ScenarioPolicy::LiveRecalc => "live-recalc",
         crate::persistence::ScenarioPolicy::ManualRecalc => "manual-recalc",
     };
-    ResultContextChip {
+    Some(ResultContextChip {
         format: ContextChipField::Live(format_label),
         policy: ContextChipField::Live(policy_label.to_string()),
-    }
+    })
 }
 
 /// Crude inverse of the format-preset table: pick the closest
@@ -2024,6 +2059,31 @@ fn project_scenario_breadcrumb(
     #[cfg(not(target_arch = "wasm32"))]
     let save_as_label = "Save as…";
 
+    // Pin / Unpin is conditional on whether the active formula is
+    // already pinned. Pinning is workspace-level (survives close);
+    // pinned ids persist into `workspace.json` once persistence
+    // ships. Until then the in-memory toggle is the visible
+    // affordance.
+    let active_is_pinned = state
+        .workspace_shell
+        .active_formula_space_id
+        .as_ref()
+        .is_some_and(|id| state.workspace_shell.pinned_formula_space_ids.contains(id));
+    let pin_action = if active_is_pinned {
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::UnpinActive,
+            label: "Unpin",
+            chord_label: "",
+            seam_id: None,
+        }
+    } else {
+        ScenarioBreadcrumbAction {
+            action_id: ScenarioBreadcrumbActionId::PinActive,
+            label: "Pin",
+            chord_label: "",
+            seam_id: None,
+        }
+    };
     let actions = vec![
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::NewScenario,
@@ -2045,10 +2105,13 @@ fn project_scenario_breadcrumb(
         },
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::Duplicate,
-            label: "Duplicate",
+            // User-visible label per WS-14 §1; the action id keeps
+            // the legacy `Duplicate` for stability.
+            label: "Clone",
             chord_label: "",
             seam_id: None,
         },
+        pin_action,
         ScenarioBreadcrumbAction {
             action_id: ScenarioBreadcrumbActionId::ManageScenarios,
             label: "Manage formulas…",
@@ -2594,19 +2657,19 @@ mod tests {
     }
 
     #[test]
-    fn result_context_default_format_is_general_locale_seam_policy_live() {
-        // Empty `number_format_code` ⇒ format chip reads "General"
-        // *live* (no SEAM); policy default is `live-recalc` (Excel's
-        // default-on workbook behaviour); locale stays SEAM-pending
-        // behind the locale-expansion handoff because non-en-US
-        // tables aren't rendered yet.
+    fn result_context_collapses_when_formula_is_at_default() {
+        // Per WS-14 §5 ("result-foot rethink"): when nothing is
+        // authored beyond defaults (no format code, no CF rules,
+        // policy at `LiveRecalc`), the result-foot collapses
+        // entirely. The view-model returns `None` so the renderer
+        // skips the chrome.
         let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "");
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
-        assert_eq!(vm.result_context.format.value(), "General");
-        assert_eq!(vm.result_context.format.seam_id(), None);
-        assert_eq!(vm.result_context.policy.value(), "live-recalc");
-        assert_eq!(vm.result_context.policy.seam_id(), None);
+        assert!(
+            vm.result_context.is_none(),
+            "default formula must collapse the result-foot",
+        );
         // Locale moved to the formatting panel; check it surfaces
         // there with the expected SEAM marker until the locale-
         // expansion handoff lands.
@@ -2624,17 +2687,28 @@ mod tests {
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
         // The chip shows the matched preset family label, not the raw code.
-        assert_eq!(vm.result_context.format.value(), "Currency");
-        assert_eq!(vm.result_context.format.seam_id(), None);
+        let context = vm
+            .result_context
+            .as_ref()
+            .expect("non-default formatting surfaces the chip");
+        assert_eq!(context.format.value(), "Currency");
+        assert_eq!(context.format.seam_id(), None);
     }
 
     #[test]
-    fn result_context_policy_reflects_live_recalc_when_set() {
+    fn result_context_always_shows_when_manual_recalc() {
+        // ManualRecalc forces the chip to be visible regardless
+        // of format code state — the user needs the visual
+        // reminder that typing isn't running the runtime pass.
         let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=NOW()");
-        formula_space.formatting.scenario_policy = crate::persistence::ScenarioPolicy::LiveRecalc;
+        formula_space.formatting.scenario_policy = crate::persistence::ScenarioPolicy::ManualRecalc;
         let state = host_state_with(formula_space);
         let vm = build_home_shell_view_model(&state).expect("active formula space");
-        assert_eq!(vm.result_context.policy.value(), "live-recalc");
+        let context = vm
+            .result_context
+            .as_ref()
+            .expect("ManualRecalc always shows the chip");
+        assert_eq!(context.policy.value(), "manual-recalc");
     }
 
     // -----------------------------------------------------------------
@@ -3395,6 +3469,9 @@ mod tests {
             .iter()
             .map(|action| action.action_id)
             .collect();
+        // The active formula on a fresh state is unpinned, so the
+        // dropdown surfaces `PinActive` (toggling to `UnpinActive`
+        // when pinned).
         assert_eq!(
             action_ids,
             vec![
@@ -3402,13 +3479,15 @@ mod tests {
                 ScenarioBreadcrumbActionId::SaveAs,
                 ScenarioBreadcrumbActionId::Open,
                 ScenarioBreadcrumbActionId::Duplicate,
+                ScenarioBreadcrumbActionId::PinActive,
                 ScenarioBreadcrumbActionId::ManageScenarios,
             ],
         );
         // After slice 1b, the only action that still carries a SEAM
         // marker is `ManageScenarios` (the manage-formulas page is
-        // not yet built). NewScenario / Duplicate use existing
-        // in-memory reducers; SaveAs / Open are wired through
+        // not yet built). Other actions (`NewScenario`, `Duplicate`,
+        // `PinActive` / `UnpinActive`) use existing in-memory
+        // reducers; SaveAs / Open are wired through
         // `persistence/browser_file_io.rs`.
         for action in &vm.scenario_breadcrumb.actions {
             match action.action_id {

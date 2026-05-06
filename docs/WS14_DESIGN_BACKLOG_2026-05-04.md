@@ -280,25 +280,42 @@ W068 follow-on lanes.
 
 ---
 
-## 5. Result-foot rethink
+## 5. Result-foot rethink — LANDED (2026-05-05)
 
 The user said: "rethink the design a little bit — I like
 bottom area below result, just not sure what goes there —
 maybe it is not needed."
 
-Current state after this turn:
-- Locale moved into the formatting panel (inner section).
-- Result-foot keeps just `format-family · policy`.
+**Decision:** progressive — collapse on default, surface on
+divergence, *always* surface in `ManualRecalc`.
 
-Options for the future:
-- **Drop the result-foot entirely** when the formula is empty
-  or in default state (chip area collapses, frees vertical
-  space).
-- **Add a "last calculated at" timestamp** in `live-recalc`
-  policy as a quiet status indicator.
-- **Keep as-is** — two chips is minimal enough.
+`project_result_context` returns `Option<ResultContextChip>`:
 
-Pre-MVP decision: keep as-is (format + policy). Revisit once
-the typed-payload UI for visualization rules lands and the
-formatting panel gets larger — at that point the result-foot
-might genuinely become redundant.
+- `None` (chip + chrome collapse) when:
+  - format code empty (General)
+  - no CF rules
+  - policy is `LiveRecalc` (the default)
+
+  In this state the result-foot disappears entirely and the
+  result hero gets its vertical space back. This matches the
+  "maybe it is not needed" instinct — when nothing's
+  configured, nothing's worth saying.
+
+- `Some(...)` whenever any of the three diverges. The user has
+  authored a format / a CF rule / a non-default policy, so the
+  chip gives them visible state.
+
+- `Some(...)` always when policy is `ManualRecalc`, regardless
+  of format / CF state. ManualRecalc is the user's lever for
+  decoupling typing latency from formula complexity (see §1
+  for the full perf chain). The `manual-recalc` chip stays on
+  screen as a reminder that text edits aren't running the
+  runtime — the user reaches for F9 / Calculate when they want
+  a fresh value.
+
+Future enhancements (still optional):
+
+- **Add a "last calculated at" timestamp** when the formula's
+  cached value is older than N seconds — gentle reminder in
+  `ManualRecalc` mode that the visible value is stale. Not
+  yet implemented; the chip alone has been enough.

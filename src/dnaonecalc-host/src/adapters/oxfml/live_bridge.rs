@@ -34,6 +34,66 @@ use super::types::{
 #[derive(Debug, Default)]
 pub struct LiveOxfmlBridge {
     cached_documents: Mutex<BTreeMap<String, UpstreamEditorDocument>>,
+    /// Per-formula cache of the most recent fully-computed
+    /// `EditorDocument` keyed by the request's
+    /// `(entered_text, cursor_offset, formatting_request,
+    /// scenario_policy, recalc_mode, skip_runtime_evaluation)`
+    /// tuple. When the next request arrives with an identical
+    /// fingerprint AND the runtime-evaluation pass would not
+    /// change anything (volatile-free formulas, deterministic
+    /// seeds, or skip-runtime mode), the bridge returns the
+    /// cached document without re-running parse / bind / popups
+    /// / runtime. Skipped automatically for `LiveRecalc` since
+    /// volatile functions advance per round-trip.
+    last_result: Mutex<BTreeMap<String, CachedFormulaEditResult>>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedFormulaEditResult {
+    fingerprint: FormulaEditFingerprint,
+    document: EditorDocument,
+}
+
+/// Hashable fingerprint of a `FormulaEditRequest` minus the
+/// fields that don't affect the output (`formula_stable_id` is
+/// the cache key; `previous_green_tree_key` is an upstream
+/// optimisation hint, not part of the result).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FormulaEditFingerprint {
+    entered_text: String,
+    cursor_offset: usize,
+    analysis_stage: super::types::EditorAnalysisStage,
+    formatting_request: Option<FormulaFormattingRequest>,
+    scenario_policy: ScenarioPolicyRequest,
+    skip_runtime_evaluation: bool,
+    recalc_mode: RecalcModeRequest,
+}
+
+impl FormulaEditFingerprint {
+    fn from_request(request: &FormulaEditRequest) -> Self {
+        Self {
+            entered_text: request.entered_text.clone(),
+            cursor_offset: request.cursor_offset,
+            analysis_stage: request.analysis_stage,
+            formatting_request: request.formatting_request.clone(),
+            scenario_policy: request.scenario_policy,
+            skip_runtime_evaluation: request.skip_runtime_evaluation,
+            recalc_mode: request.recalc_mode,
+        }
+    }
+
+    /// Whether a cached result with the same fingerprint can be
+    /// returned without re-running the bridge. `LiveRecalc` runs
+    /// volatile functions per round-trip, so a cached value would
+    /// be wrong (the user expects `=NOW()` to advance every time).
+    /// `Deterministic` and `ManualRecalc` use pinned / on-demand
+    /// seeds and are safe to cache.
+    fn is_cacheable(&self) -> bool {
+        match self.scenario_policy {
+            ScenarioPolicyRequest::LiveRecalc => false,
+            ScenarioPolicyRequest::Deterministic | ScenarioPolicyRequest::ManualRecalc => true,
+        }
+    }
 }
 
 // Function-list ownership lives in OxFunc. After W068 (function help)
@@ -56,6 +116,24 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
         &self,
         request: FormulaEditRequest,
     ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+        let fingerprint = FormulaEditFingerprint::from_request(&request);
+
+        // Input-equality short-circuit. When the request is identical
+        // to the most recent successful one for this formula AND the
+        // scenario policy doesn't depend on per-call randomness /
+        // wall-clock seeds, return the cached document. This is the
+        // fastest possible path — no parse, no bind, no popup
+        // computation, no runtime — for the case the user hits often:
+        // a redundant on:input firing for the same state, the same
+        // event flowing through twice via formatting-knob refresh
+        // chains, etc. `LiveRecalc` is excluded because `=NOW()` /
+        // `=RAND()` should advance per round-trip.
+        if fingerprint.is_cacheable() {
+            if let Some(cached) = self.cached_result(&request.formula_stable_id, &fingerprint)? {
+                return Ok(FormulaEditResult { document: cached });
+            }
+        }
+
         let source = FormulaSourceRecord::new(
             request.formula_stable_id.clone(),
             1,
@@ -128,6 +206,13 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
             &interaction,
             runtime_result.as_ref(),
         );
+        if fingerprint.is_cacheable() {
+            self.cache_result(
+                request.formula_stable_id.clone(),
+                fingerprint,
+                document.clone(),
+            )?;
+        }
         self.cache_document(request.formula_stable_id, interaction.document)?;
 
         Ok(FormulaEditResult { document })
@@ -158,6 +243,42 @@ impl LiveOxfmlBridge {
             OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
         })?;
         cached_documents.insert(formula_stable_id, document);
+        Ok(())
+    }
+
+    /// Returns the cached `EditorDocument` for `formula_stable_id`
+    /// when its fingerprint matches the supplied one. `None` when
+    /// no entry exists or the fingerprint differs.
+    fn cached_result(
+        &self,
+        formula_stable_id: &str,
+        fingerprint: &FormulaEditFingerprint,
+    ) -> Result<Option<EditorDocument>, OxfmlEditorBridgeError> {
+        let last_result = self.last_result.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
+        })?;
+        Ok(last_result
+            .get(formula_stable_id)
+            .filter(|cached| &cached.fingerprint == fingerprint)
+            .map(|cached| cached.document.clone()))
+    }
+
+    fn cache_result(
+        &self,
+        formula_stable_id: String,
+        fingerprint: FormulaEditFingerprint,
+        document: EditorDocument,
+    ) -> Result<(), OxfmlEditorBridgeError> {
+        let mut last_result = self.last_result.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
+        })?;
+        last_result.insert(
+            formula_stable_id,
+            CachedFormulaEditResult {
+                fingerprint,
+                document,
+            },
+        );
         Ok(())
     }
 }

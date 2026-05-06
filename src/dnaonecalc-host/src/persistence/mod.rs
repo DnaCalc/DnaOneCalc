@@ -10,6 +10,7 @@
 
 pub mod formula_file;
 pub mod scenario_projection;
+pub mod workspace_storage;
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser_file_io;
@@ -23,6 +24,10 @@ pub use formula_file::{
 pub use scenario_projection::{
     apply_loaded_scenario_to_formula_space, apply_loaded_scenario_with_diagnostics,
     formula_space_to_scenario,
+};
+pub use workspace_storage::{
+    deserialize_workspace, hydrate_state_from_local_storage, save_workspace_to_local_storage,
+    serialize_workspace, WorkspaceJson, WorkspaceLoadError, WORKSPACE_STORAGE_KEY,
 };
 
 #[cfg(target_arch = "wasm32")]
