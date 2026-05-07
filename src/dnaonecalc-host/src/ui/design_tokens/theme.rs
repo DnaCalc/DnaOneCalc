@@ -5101,6 +5101,10 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-array-browser__column-header {
   top: 0;
+  /* Vertical separator between column headers — matches the
+     `border-right` on cells so a column boundary draws as a
+     single continuous line from header through every cell. */
+  border-right: 1px solid var(--oc-color-card-edge);
   cursor: pointer;
 }
 
@@ -5116,6 +5120,7 @@ pub const ONECALC_THEME_CSS: &str = r#"
   left: 0;
   z-index: 2;
   border-right: 1px solid var(--oc-color-card-edge);
+  border-bottom: 1px solid var(--oc-color-border);
   cursor: pointer;
 }
 
@@ -5127,7 +5132,14 @@ pub const ONECALC_THEME_CSS: &str = r#"
 
 .onecalc-array-browser__cell {
   padding: 4px 8px;
+  /* Excel-style grid: each cell paints its bottom + right edge.
+     The container's outer border supplies the very top + left
+     edges. With this shape the grid renders correctly whether
+     row/column headers are visible or not — without `border-right`
+     the headers-off case collapsed into horizontal stripes with
+     no visible column separation. */
   border-bottom: 1px solid var(--oc-color-border);
+  border-right: 1px solid var(--oc-color-border);
   /* Long strings wrap inside the cell up to a max-width — prevents a
      single 10k-char cell from blowing out the grid layout. */
   white-space: pre-wrap;
