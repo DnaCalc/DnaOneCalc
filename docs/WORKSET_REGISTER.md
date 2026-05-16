@@ -331,3 +331,31 @@ It does mean:
    settings page and seam status board, Value Panel component and cross-mode
    integration, Workbench Parity Matrix and trace consumption, Excel parity
    test harness
+
+### WS-15 VBA Integration
+1. purpose:
+   integrate OxVba as a direct runtime-hosting surface for DnaOneCalc workspaces
+   and formula spaces: associate OxVba projects, inject the DnaOneCalc
+   `Application` root object, discover admitted public module functions as UDF
+   candidates, register those functions with OxFml, and invoke them from
+   DnaOneCalc formulas through the registered-external provider path.
+2. depends_on:
+   `WS-08`, `WS-11`, `WS-12`
+3. parent_spec_sections:
+   `4`, `5.3`, `6`, `7.3`, `9.1`, `12`, `14.4`, `16`, `17.2`
+4. upstream_dependencies:
+   `OxVba`, `OxFml`, `OxFunc`, `OxReplay`
+5. closure_condition:
+   a desktop DnaOneCalc workspace can associate one or more OxVba projects,
+   expose the first DnaOneCalc host root object (`Application.Version`), admit
+   Excel-observed typed scalar public module functions as registered UDFs through
+   OxFml, call them from formulas, compare the same UDF cases against retained
+   Excel evidence through OxXlPlay/OxReplay, persist and replay the association
+   state honestly, and surface unresolved OxVba/OxFml/OxFunc/OxXlPlay/OxReplay
+   seam pressure explicitly.
+6. initial_epic_lanes:
+   runtime host module and association persistence, DnaOneCalc host root object
+   bridge, OxVba project load/session lifecycle, UDF discovery and admission
+   policy, typed UDF invocation and value conversion, OxFml registered-external
+   registration bridge, OxXlPlay/OxReplay Excel-oracle harness, capability/
+   evidence/diagnostics integration, upstream pressure handoffs

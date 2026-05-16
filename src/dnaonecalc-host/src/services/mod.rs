@@ -10,5 +10,6 @@ pub mod live_edit;
 pub mod programmatic_testing;
 pub mod retained_artifacts;
 pub mod spreadsheet_xml;
+pub mod vba_host;
 pub mod verification_bundle;
 pub mod wall_clock;

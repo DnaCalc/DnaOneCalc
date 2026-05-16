@@ -1655,20 +1655,23 @@ This keeps the extension lane honest while preserving the portability goal.
 The extension surface should be split explicitly into:
 1. `DNA OneCalc` native-extension ABI v0,
 2. `DNA OneCalc` RTD host/runtime path,
-3. later `OxVba` add-in or toolchain integration as design input and co-development pressure.
+3. `DNA OneCalc` OxVba direct runtime hosting,
+4. later `OxVba` add-in or toolchain integration as design input and co-development pressure.
 
 `OxVba` role:
 1. OxVba is currently best treated as an embedded host runtime and later add-in toolchain, not as an already-shipped add-in producer,
-2. `.basproj` already defines `Library` and `Addin` output kinds in a normative-draft project model,
-3. current host-export discovery and embedded-host execution are the real current floor,
-4. XLL generation is still planned rather than implemented,
-5. Linux shared-library support should therefore be pursued first through the OneCalc portable native-extension ABI, not by pretending the OxVba add-in toolchain is already portable and complete.
+2. `.basproj` already defines `HostModule`, `Library`, `Addin`, and related output kinds in a normative-draft project model,
+3. current host-export discovery, host UDF catalog shape, and embedded-host execution are the real current floor,
+4. DnaOneCalc may now pursue direct OxVba runtime hosting separately from XLL/add-in packaging,
+5. XLL generation is still a separate packaging/toolchain lane,
+6. Linux shared-library support should therefore be pursued first through the OneCalc portable native-extension ABI, not by pretending the OxVba add-in toolchain is already portable and complete.
 
 Platform honesty table:
 1. Windows desktop supports the admitted `.xll` packaging over the frozen ABI subset,
 2. Linux desktop supports the same admitted ABI through `.so` packaging,
 3. browser/WASM should begin with no native extension loading claim at all,
-4. `OxVba`-driven add-in generation remains a separate upstream pressure lane until the upstream toolchain is executable and documented as such.
+4. `OxVba` direct runtime hosting is a desktop host capability whose first admitted root object is DnaOneCalc `Application.Version`,
+5. `OxVba`-driven add-in generation remains a separate upstream pressure lane until the upstream toolchain is executable and documented as such.
 
 Current upstream reference slice for the extension lane:
 1. `..\\..\\OxFml\docs\spec\formula-language\OXFML_REGISTERED_EXTERNAL_PROVIDER_AND_CALL_REGISTER_ID_BOUNDARY.md`,
@@ -1686,6 +1689,51 @@ Important current limitation:
 1. the relevant `OxVba` docs are still mostly draft-grade rather than a frozen downstream contract,
 2. `DNA OneCalc` should therefore treat the current `OxVba` surface as design input and co-development pressure rather than as a fully frozen consumer ABI,
 3. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host supplies explicit cross-platform replacements.
+
+### 12.0.1 OxVba Direct Runtime Hosting Floor
+The first OxVba integration lane is direct runtime hosting, not XLL packaging and
+not COM Automation Add-In compatibility.
+
+The first DnaOneCalc host module should:
+1. associate one or more OxVba projects with a workspace or formula space,
+2. load those projects through OxVba's direct-host/project APIs,
+3. inject a DnaOneCalc host root object named `Application`,
+4. expose only `Application.Version` in the first tier,
+5. consume OxVba's host UDF catalog for public procedural functions,
+6. classify each public function as admitted, rejected, or deferred for formula
+   use based on an explicit typed boundary between OxFml/OxFunc values and VBA
+   parameter/return types,
+7. publish admitted functions into OxFml's runtime library-context surface with
+   `runtime_boundary_kind = vba_host_callback`,
+8. invoke admitted functions through the OxFml host-function provider path and
+   OxVba host UDF invocation surface,
+9. compare admitted type-mapping rows against retained Excel VBA UDF evidence
+   captured through OxXlPlay and consumed through OxReplay,
+10. record project association, descriptor, capability, type-map, oracle, and
+   invocation evidence in retained runs.
+
+First admission floor:
+1. public functions in public procedural modules only,
+2. typed scalar arguments and typed scalar return values only where Excel VBA
+   UDF behavior has been observed or the row is explicitly marked provisional,
+3. single-threaded VBA-compatible execution,
+4. no host side effects from worksheet-style UDF calls,
+5. deterministic name-collision rejection across built-ins and enabled VBA
+   projects,
+6. visible rejection reasons for discovered but non-admitted functions,
+7. no broad local coercion table that is not backed by Excel-observed behavior or
+   an explicit upstream seam contract.
+
+Current seam caveat:
+1. OxVba's current host UDF surface exists, but its May 2026 host-program work
+   identifies remaining context-delivery and descriptor-source gaps,
+2. DnaOneCalc must treat those gaps as explicit upstream pressure rather than
+   silently depending on behavior that OxVba has not evidenced yet,
+3. OxXlPlay and OxReplay need a retained Excel-oracle path for VBA UDF type
+   behavior before DnaOneCalc widens the admitted type matrix.
+
+Detailed local requirements for this lane live in
+`docs/worksets/WS-15_vba_integration.md`.
 
 ### 12.1 First ABI Contract Shape
 The first OneCalc native-extension ABI should minimally define:
@@ -1846,7 +1894,7 @@ This section summarizes the current honest floor that `DNA OneCalc` should desig
 3. Windows `.xll` packaging and Linux `.so` packaging should preserve the same admitted ABI and behavior,
 4. the admitted surface freezes `XLOPER12` only and the `Excel12(...)` host-call subset needed for `xlfRegister` Form 1, `xlfEvaluate`, `xlUDF`, and `xlfRtd`,
 5. `DNA OneCalc` supports host-loaded function registration and RTD under that admitted subset, without thereby admitting worksheet `REGISTER.ID` / `CALL` semantics,
-6. OxVba's real current floor remains embedded host runtime execution with host-provided root objects and partial host-export discovery, so `DNA OneCalc` should treat OxVba as design input and co-development pressure rather than as a shipped add-in toolchain,
+6. OxVba's real current floor includes embedded host runtime execution with host-provided root objects, host UDF catalog shape, and partial direct-host invocation, so `DNA OneCalc` should treat OxVba direct hosting as an executable integration lane while still treating the add-in toolchain as co-development pressure rather than as shipped packaging,
 7. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host explicitly supplies cross-platform replacements,
 8. the Linux RTD activation model remains an admitted design task inside the current scope rather than a reason to weaken the frozen ABI direction.
 
