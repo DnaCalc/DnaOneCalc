@@ -51,6 +51,7 @@ mod tests {
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
                 language_tag: "en-US".to_string(),
+                formal_input_bindings: Vec::new(),
                 trace_mode: crate::adapters::oxfml::TraceModeRequest::ValueOnly,
             })
             .is_ok());
@@ -66,6 +67,7 @@ mod tests {
                 skip_runtime_evaluation: false,
                 recalc_mode: crate::adapters::oxfml::RecalcModeRequest::Auto,
                 language_tag: "en-US".to_string(),
+                formal_input_bindings: Vec::new(),
                 trace_mode: crate::adapters::oxfml::TraceModeRequest::ValueOnly,
             })
             .is_ok());

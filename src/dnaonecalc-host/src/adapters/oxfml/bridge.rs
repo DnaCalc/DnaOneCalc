@@ -1,6 +1,6 @@
-use super::types::{EditorAnalysisStage, EditorDocument};
+use super::types::{EditorAnalysisStage, EditorDocument, EvalValue};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FormulaEditRequest {
     pub formula_stable_id: String,
     pub entered_text: String,
@@ -47,6 +47,9 @@ pub struct FormulaEditRequest {
     /// names, decimal / thousands separators, currency symbol, and
     /// the `General` rendering for the active formula.
     pub language_tag: String,
+    /// Bounded OneCalc formula-input bindings. These are single-formula
+    /// context facts, not workbook defined-name semantics.
+    pub formal_input_bindings: Vec<FormulaInputBindingRequest>,
     /// Trace-mode request that drives whether the runtime emits
     /// per-prepared-call detail (rich walk tree, evaluation
     /// timeline, argument summaries) or only the final value. The
@@ -59,6 +62,14 @@ pub struct FormulaEditRequest {
     /// cheap-trace cost and opening the drill gets the rich tree
     /// on the next round-trip.
     pub trace_mode: TraceModeRequest,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormulaInputBindingRequest {
+    pub label: String,
+    pub reference_descriptor: String,
+    pub reference_handle: Option<String>,
+    pub value: EvalValue,
 }
 
 /// Mirror of `oxfml_core::eval::EvaluationTraceMode` at the

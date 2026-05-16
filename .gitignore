@@ -5,6 +5,7 @@ target/
 dist/
 node_modules/
 .tools/
+.claude/
 .DS_Store
 Thumbs.db
 

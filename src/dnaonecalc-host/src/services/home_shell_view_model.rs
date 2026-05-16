@@ -17,7 +17,12 @@
 //! Reference: `docs/WS14_PRE_MVP_PATH.md` §4 Step 2.
 
 use crate::adapters::oxfml::{worksheet_error_literal, EvalValue, LiveDiagnosticSeverity};
+use crate::services::capability_snapshot::build_capability_ledger_snapshot;
 use crate::services::completion_popup::{CompletionPopupKind, CompletionPopupState};
+use crate::services::function_semantic_profile::{
+    project_function_semantic_profile, FunctionSemanticProfileRow,
+};
+use crate::state::CapabilityLedgerSnapshot;
 use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource, ViewMode};
 use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
@@ -93,6 +98,10 @@ pub struct HomeShellViewModel {
     /// view-model only carries the *content*; the actual tooltip is
     /// shown after a 400 ms hover over the matching `.syn-fn` span.
     pub function_help_card: Option<FunctionHelpCardView>,
+    /// Developer/X-Ray capability context for the active formula
+    /// and current workspace. User mode renders only summaries;
+    /// Developer mode can render raw version strings and keys.
+    pub capability_context: CapabilityContextView,
     /// First progressive-disclosure drill-down: the formula
     /// walk-tree panel rendered between the editor-foot and the
     /// result-caption when the user toggles it open with Ctrl+D.
@@ -140,6 +149,34 @@ pub struct HomeShellViewModel {
     /// can browse / search / rename / pin / clone / close /
     /// forget every formula in one place.
     pub manage_formulas: ManageFormulasView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityContextView {
+    pub snapshot: CapabilityLedgerSnapshot,
+    pub function_profiles: Vec<FunctionSemanticProfileRow>,
+    pub value_capability_facts: Vec<ValueCapabilityFact>,
+    pub formula_inputs: Vec<FormulaInputBindingView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueCapabilityFact {
+    pub fact_kind: ValueCapabilityFactKind,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueCapabilityFactKind {
+    ProducerCanProvide,
+    ExercisedThisRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaInputBindingView {
+    pub label: String,
+    pub reference_descriptor: String,
+    pub reference_handle: Option<String>,
+    pub value_preview: String,
 }
 
 /// Live-edited formatting fields for the active formula. Pure
@@ -1329,6 +1366,7 @@ fn project_formula_space(
     let completion_popup = project_completion_popup(formula_space);
     let signature_help = project_signature_help(formula_space, completion_popup.is_some());
     let function_help_card = project_function_help_card(formula_space);
+    let capability_context = project_capability_context(formula_space, state);
     let formula_drill = project_formula_drill(formula_space);
     let scenario_breadcrumb = project_scenario_breadcrumb(formula_space, state);
     let formatting_controls = FormattingControlsView::from_state(
@@ -1351,6 +1389,7 @@ fn project_formula_space(
         completion_popup,
         signature_help,
         function_help_card,
+        capability_context,
         formula_drill,
         view_mode,
         result_view,
@@ -1360,6 +1399,67 @@ fn project_formula_space(
         command_palette,
         formatting_controls,
         manage_formulas,
+    }
+}
+
+fn project_capability_context(
+    formula_space: &FormulaSpaceState,
+    state: &OneCalcHostState,
+) -> CapabilityContextView {
+    let document = formula_space.editor_document.as_ref();
+    let function_profiles =
+        project_function_semantic_profile(&formula_space.raw_entered_cell_text, document);
+    let mut value_capability_facts = Vec::new();
+    if let Some(value_presentation) = document.and_then(|doc| doc.value_presentation.as_ref()) {
+        value_capability_facts.extend(value_presentation.producer_capability_set_keys.iter().map(
+            |key| ValueCapabilityFact {
+                fact_kind: ValueCapabilityFactKind::ProducerCanProvide,
+                key: key.clone(),
+            },
+        ));
+        value_capability_facts.extend(value_presentation.exercised_capability_keys.iter().map(
+            |key| ValueCapabilityFact {
+                fact_kind: ValueCapabilityFactKind::ExercisedThisRun,
+                key: key.clone(),
+            },
+        ));
+    }
+
+    CapabilityContextView {
+        snapshot: build_capability_ledger_snapshot(state),
+        function_profiles,
+        value_capability_facts,
+        formula_inputs: formula_space
+            .formula_input_bindings
+            .iter()
+            .map(|binding| FormulaInputBindingView {
+                label: binding.label.clone(),
+                reference_descriptor: binding.reference_descriptor.clone(),
+                reference_handle: binding.reference_handle.clone(),
+                value_preview: eval_value_preview(&binding.value),
+            })
+            .collect(),
+    }
+}
+
+fn eval_value_preview(value: &EvalValue) -> String {
+    match value {
+        EvalValue::Number(number) => format!("{number}"),
+        EvalValue::Text(text) => text.to_string_lossy(),
+        EvalValue::Logical(value) => {
+            if *value {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
+        }
+        EvalValue::Error(code) => worksheet_error_literal(*code).to_string(),
+        EvalValue::Array(array) => {
+            let shape = array.shape();
+            format!("Array[{} x {}]", shape.rows, shape.cols)
+        }
+        EvalValue::Reference(reference) => reference.target.clone(),
+        EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
     }
 }
 
@@ -2809,6 +2909,10 @@ mod tests {
             effective_font_color: None,
             effective_fill_color: None,
             array_cell_format: None,
+            semantic_kernel_metadata_version: None,
+            arg_admission_metadata_version: None,
+            producer_capability_set_keys: Vec::new(),
+            exercised_capability_keys: Vec::new(),
         });
     }
 
@@ -4219,5 +4323,62 @@ mod tests {
         if multiline.chars().count() > 80 {
             assert!(row.formula_preview.ends_with('…'));
         }
+    }
+
+    #[test]
+    fn capability_context_projects_sum_semantic_profile() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("sum-profile"), "=SUM(1,2,3)");
+        let mut document = sample_editor_document("=SUM(1,2,3)");
+        document.editor_syntax_snapshot = crate::test_support::make_editor_syntax_snapshot(
+            "sum-profile",
+            "green-sum",
+            vec![
+                crate::test_support::make_editor_token("=", 0),
+                crate::test_support::make_editor_token("SUM", 1),
+            ],
+        );
+        attach_number_value_presentation(&mut document, 6.0, "6");
+        formula_space.editor_document = Some(document);
+        let state = host_state_with(formula_space);
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let sum = vm
+            .capability_context
+            .function_profiles
+            .iter()
+            .find(|row| row.surface_name == "SUM")
+            .expect("SUM profile row");
+
+        assert!(sum.reduction_sensitive);
+        assert_eq!(
+            sum.numerical_reduction_policy.as_deref(),
+            Some("SequentialLeftFold")
+        );
+        assert!(!vm
+            .capability_context
+            .snapshot
+            .oxfunc_metadata
+            .semantic_kernel_metadata_versions
+            .is_empty());
+    }
+
+    #[test]
+    fn capability_context_projects_formula_inputs() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("inputs"), "=Rate*10");
+        formula_space.formula_input_bindings.push(
+            crate::state::FormulaInputBindingState::scalar_number("Rate", 0.2),
+        );
+        let state = host_state_with(formula_space);
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+
+        assert_eq!(vm.capability_context.formula_inputs.len(), 1);
+        assert_eq!(vm.capability_context.formula_inputs[0].label, "Rate");
+        assert_eq!(
+            vm.capability_context.formula_inputs[0].reference_descriptor,
+            "name:Rate"
+        );
+        assert_eq!(vm.capability_context.formula_inputs[0].value_preview, "0.2");
     }
 }

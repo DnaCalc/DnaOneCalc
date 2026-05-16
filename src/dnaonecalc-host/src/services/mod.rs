@@ -1,6 +1,9 @@
 pub mod ambient_app_context;
+pub mod capability_snapshot;
 pub mod completion_popup;
 pub mod editor_session;
+pub mod formal_inputs;
+pub mod function_semantic_profile;
 pub mod home_shell_view_model;
 pub mod live_edit;
 pub mod programmatic_testing;

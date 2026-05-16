@@ -37,15 +37,16 @@ use crate::app::reducer::{
 };
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
-    build_home_shell_view_model, ArrayCellFormatView, BridgeHealth, CommandPaletteEntry,
-    CommandPaletteEntryKind, CommandPaletteView, CompletionPopupItemView, CompletionPopupView,
-    ConditionalFormattingRuleView, ContextChipField, DataBarDirectionView, DiagnosticSquiggle,
-    EditorMetricsChip, EntryModePill, FormattingControlsView, FormulaDrillDiagnosticRow,
-    FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState, FormulaDrillView,
-    FormulaTabChip, FormulaTabStripView, FunctionHelpCardView, ManageFormulasRow,
+    build_home_shell_view_model, ArrayCellFormatView, BridgeHealth, CapabilityContextView,
+    CommandPaletteEntry, CommandPaletteEntryKind, CommandPaletteView, CompletionPopupItemView,
+    CompletionPopupView, ConditionalFormattingRuleView, ContextChipField, DataBarDirectionView,
+    DiagnosticSquiggle, EditorMetricsChip, EntryModePill, FormattingControlsView,
+    FormulaDrillDiagnosticRow, FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState,
+    FormulaDrillView, FormulaTabChip, FormulaTabStripView, FunctionHelpCardView, ManageFormulasRow,
     ManageFormulasView, NumberFormatPreset, ResultClassPill, ResultContextChip, ResultKind,
     ResultView, ScenarioBreadcrumbAction, ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry,
     ScenarioBreadcrumbView, ScenarioPolicyView, SignatureHelpView, StatusView,
+    ValueCapabilityFactKind,
 };
 use crate::services::live_edit::apply_live_editor_input;
 #[cfg(target_arch = "wasm32")]
@@ -503,6 +504,7 @@ pub fn HomeShell(
     let hover_target_for_render = hover_target;
     let function_help_hover = move || hover_target_for_render.get();
     let formula_drill = move || view_model.get().map(|vm| vm.formula_drill);
+    let capability_context = move || view_model.get().map(|vm| vm.capability_context);
     let result_view = move || view_model.get().map(|vm| vm.result_view);
     let status_view = move || view_model.get().map(|vm| vm.status);
     let scenario_breadcrumb = move || view_model.get().map(|vm| vm.scenario_breadcrumb);
@@ -1459,6 +1461,7 @@ pub fn HomeShell(
                     <section class="onecalc-home-shell__formula-drill-section">
                         {move || render_formula_drill_panel(
                             formula_drill(),
+                            capability_context(),
                             view_mode(),
                             on_view_mode_toggle,
                         )}
@@ -5520,6 +5523,7 @@ fn render_formula_drill_toggle(
 /// phase-strip rendering branches on `view_mode`.
 fn render_formula_drill_panel(
     drill: Option<FormulaDrillView>,
+    capability_context: Option<CapabilityContextView>,
     view_mode: ViewMode,
     on_view_mode_toggle: Callback<()>,
 ) -> AnyView {
@@ -5557,6 +5561,8 @@ fn render_formula_drill_panel(
             }
             ViewMode::User => render_formula_drill_phase_strip_user(&drill.phase_summaries),
         };
+        let capability_context_view =
+            render_capability_context_panel(capability_context, view_mode);
         let view_toggle = render_drill_view_mode_toggle(view_mode, on_view_mode_toggle);
         view! {
             {view_toggle}
@@ -5570,6 +5576,7 @@ fn render_formula_drill_panel(
                 {nodes_view}
             </div>
             {phase_strip}
+            {capability_context_view}
         }
         .into_any()
     };
@@ -5586,6 +5593,117 @@ fn render_formula_drill_panel(
         >
             {body}
         </div>
+    }
+    .into_any()
+}
+
+fn render_capability_context_panel(
+    capability_context: Option<CapabilityContextView>,
+    view_mode: ViewMode,
+) -> AnyView {
+    let Some(context) = capability_context else {
+        return view! { <span></span> }.into_any();
+    };
+
+    let profile_rows: Vec<AnyView> = context
+        .function_profiles
+        .iter()
+        .map(|row| {
+            let policies = match view_mode {
+                ViewMode::Developer => format!(
+                    "{}{}{}",
+                    row.numerical_reduction_policy
+                        .as_deref()
+                        .unwrap_or("no reduction policy"),
+                    if row.error_algebra.is_some() { " · " } else { "" },
+                    row.error_algebra.as_deref().unwrap_or("")
+                ),
+                ViewMode::User => {
+                    if row.reduction_sensitive || row.error_collapse_sensitive {
+                        "semantic profile active".to_string()
+                    } else {
+                        "ordinary function profile".to_string()
+                    }
+                }
+            };
+            let version = match view_mode {
+                ViewMode::Developer => row.semantic_kernel_metadata_version.clone(),
+                ViewMode::User => row.function_id.clone(),
+            };
+            view! {
+                <li class="onecalc-home-shell__capability-row" data-function=row.surface_name.clone()>
+                    <span class="onecalc-home-shell__capability-name">{row.surface_name.clone()}</span>
+                    <span class="onecalc-home-shell__capability-detail">{policies}</span>
+                    <span class="onecalc-home-shell__capability-version">{version}</span>
+                </li>
+            }
+            .into_any()
+        })
+        .collect();
+
+    let value_rows: Vec<AnyView> = context
+        .value_capability_facts
+        .iter()
+        .map(|fact| {
+            let kind = match fact.fact_kind {
+                ValueCapabilityFactKind::ProducerCanProvide => "producer",
+                ValueCapabilityFactKind::ExercisedThisRun => "exercised",
+            };
+            view! {
+                <li class="onecalc-home-shell__capability-row" data-capability-kind=kind>
+                    <span class="onecalc-home-shell__capability-name">{kind}</span>
+                    <span class="onecalc-home-shell__capability-detail">{fact.key.clone()}</span>
+                </li>
+            }
+            .into_any()
+        })
+        .collect();
+
+    let input_rows: Vec<AnyView> = context
+        .formula_inputs
+        .iter()
+        .map(|input| {
+            view! {
+                <li class="onecalc-home-shell__capability-row" data-input=input.label.clone()>
+                    <span class="onecalc-home-shell__capability-name">{input.label.clone()}</span>
+                    <span class="onecalc-home-shell__capability-detail">{input.reference_descriptor.clone()}</span>
+                    <span class="onecalc-home-shell__capability-version">{input.value_preview.clone()}</span>
+                </li>
+            }
+            .into_any()
+        })
+        .collect();
+
+    let mode_attr = view_mode.slug();
+    let snapshot_id = context.snapshot.capability_snapshot_id.clone();
+    let oxfunc_version_count = context
+        .snapshot
+        .oxfunc_metadata
+        .semantic_kernel_metadata_versions
+        .len();
+    view! {
+        <section
+            class="onecalc-home-shell__capability-context"
+            data-view-mode=mode_attr
+            data-snapshot-id=snapshot_id.clone()
+            aria-label="Capability context"
+        >
+            <div class="onecalc-home-shell__capability-heading">
+                <span>"capability context"</span>
+                <span class="onecalc-home-shell__capability-summary">
+                    {format!("{oxfunc_version_count} OxFunc metadata version set(s)")}
+                </span>
+            </div>
+            <ul class="onecalc-home-shell__capability-list" data-section="functions">
+                {profile_rows}
+            </ul>
+            <ul class="onecalc-home-shell__capability-list" data-section="value-capabilities">
+                {value_rows}
+            </ul>
+            <ul class="onecalc-home-shell__capability-list" data-section="formula-inputs">
+                {input_rows}
+            </ul>
+        </section>
     }
     .into_any()
 }

@@ -6,7 +6,7 @@ use oxfml_core::consumer::editor::{
     EditorInteractionResult as UpstreamEditorInteractionResult,
 };
 use oxfml_core::consumer::runtime::{
-    RuntimeEnvironment, RuntimeFormulaRequest, RuntimeFormulaResult,
+    RuntimeEnvironment, RuntimeFormalInputBinding, RuntimeFormulaRequest, RuntimeFormulaResult,
 };
 use oxfml_core::format::{oxfml_en_us_locale_context, oxfml_locale_context};
 use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
@@ -23,8 +23,8 @@ use oxfunc_core::locale_format::{format_profile, LocaleProfileId, WorkbookDateSy
 use super::bridge::{
     FormulaEditRequest, FormulaEditResult, FormulaFormattingCfDataBarDirection,
     FormulaFormattingCfRank, FormulaFormattingCfThreshold, FormulaFormattingCfTypedRule,
-    FormulaFormattingRequest, OxfmlEditorBridge, OxfmlEditorBridgeError, RecalcModeRequest,
-    ScenarioPolicyRequest,
+    FormulaFormattingRequest, FormulaInputBindingRequest, OxfmlEditorBridge,
+    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
 };
 use super::types::{
     worksheet_error_literal, ArrayCellValue, BindSummary, EditorDocument, EvalSummary, EvalValue,
@@ -68,6 +68,7 @@ struct FormulaEditFingerprint {
     scenario_policy: ScenarioPolicyRequest,
     skip_runtime_evaluation: bool,
     recalc_mode: RecalcModeRequest,
+    formal_input_bindings: Vec<String>,
     // Trace mode is part of the cache key — a `ValueOnly` cached
     // pass cannot satisfy a subsequent `PreparedCalls` request
     // (the rich walk tree requires the per-step trace, which the
@@ -85,6 +86,11 @@ impl FormulaEditFingerprint {
             scenario_policy: request.scenario_policy,
             skip_runtime_evaluation: request.skip_runtime_evaluation,
             recalc_mode: request.recalc_mode,
+            formal_input_bindings: request
+                .formal_input_bindings
+                .iter()
+                .map(formal_input_binding_fingerprint)
+                .collect(),
             trace_mode: request.trace_mode,
         }
     }
@@ -229,7 +235,12 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                 }
             };
             runtime_request = runtime_request.with_trace_mode(upstream_trace_mode);
-            RuntimeEnvironment::new().execute(runtime_request).ok()
+            RuntimeEnvironment::new()
+                .with_formal_input_bindings(runtime_formal_input_bindings(
+                    &request.formal_input_bindings,
+                ))
+                .execute(runtime_request)
+                .ok()
         } else {
             None
         };
@@ -250,6 +261,33 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
 
         Ok(FormulaEditResult { document })
     }
+}
+
+fn formal_input_binding_fingerprint(binding: &FormulaInputBindingRequest) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        binding.label,
+        binding.reference_descriptor,
+        binding.reference_handle.as_deref().unwrap_or(""),
+        eval_value_fingerprint(&binding.value)
+    )
+}
+
+fn eval_value_fingerprint(value: &EvalValue) -> String {
+    format!("{value:?}")
+}
+
+fn runtime_formal_input_bindings(
+    bindings: &[FormulaInputBindingRequest],
+) -> Vec<RuntimeFormalInputBinding> {
+    bindings
+        .iter()
+        .map(|binding| RuntimeFormalInputBinding {
+            reference_handle: binding.reference_handle.clone(),
+            reference_descriptor: binding.reference_descriptor.clone(),
+            binding: oxfml_core::DefinedNameBinding::Value(binding.value.clone()),
+        })
+        .collect()
 }
 
 impl LiveOxfmlBridge {
@@ -570,6 +608,22 @@ fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresenta
         effective_font_color,
         effective_fill_color,
         array_cell_format,
+        semantic_kernel_metadata_version: result
+            .prepared_formula_identity
+            .semantic_kernel_metadata_version
+            .clone(),
+        arg_admission_metadata_version: result
+            .prepared_formula_identity
+            .arg_admission_metadata_version
+            .clone(),
+        producer_capability_set_keys: result
+            .returned_value_surface
+            .producer_capability_set_keys
+            .clone(),
+        exercised_capability_keys: result
+            .returned_value_surface
+            .exercised_capability_keys
+            .clone(),
     }
 }
 

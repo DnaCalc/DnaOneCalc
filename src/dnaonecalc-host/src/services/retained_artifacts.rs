@@ -1,4 +1,5 @@
 use crate::domain::ids::FormulaSpaceId;
+use crate::services::capability_snapshot::build_capability_ledger_snapshot;
 use crate::services::programmatic_testing::{
     build_programmatic_artifact_catalog_entry, ProgrammaticArtifactCatalogEntry,
     ProgrammaticComparisonStatus,
@@ -32,6 +33,7 @@ pub fn import_programmatic_artifact(
     state: &mut OneCalcHostState,
     request: RetainedArtifactImportRequest,
 ) {
+    let snapshot = build_capability_ledger_snapshot(state);
     let record = RetainedArtifactRecord {
         artifact_id: request.catalog_entry.artifact_id.clone(),
         case_id: request.catalog_entry.case_id,
@@ -52,6 +54,15 @@ pub fn import_programmatic_artifact(
         replay_explain_records: Vec::new(),
         oxfml_effective_display_summary: None,
         excel_effective_display_text: None,
+        capability_snapshot_id: Some(snapshot.capability_snapshot_id),
+        oxfunc_semantic_kernel_metadata_versions: snapshot
+            .oxfunc_metadata
+            .semantic_kernel_metadata_versions,
+        oxfunc_arg_admission_metadata_versions: snapshot
+            .oxfunc_metadata
+            .arg_admission_metadata_versions,
+        producer_capability_set_keys: Vec::new(),
+        exercised_capability_keys: Vec::new(),
     };
 
     state
@@ -195,6 +206,7 @@ pub fn import_verification_bundle_report_json(
                 .push(formula_space_id.clone());
         }
 
+        let snapshot = build_capability_ledger_snapshot(state);
         let artifact_id = case_report.artifact_catalog_entry.artifact_id.clone();
         let record = RetainedArtifactRecord {
             artifact_id: artifact_id.clone(),
@@ -225,6 +237,15 @@ pub fn import_verification_bundle_report_json(
                 .excel_summary
                 .as_ref()
                 .and_then(|summary| summary.effective_display_text.clone()),
+            capability_snapshot_id: Some(snapshot.capability_snapshot_id),
+            oxfunc_semantic_kernel_metadata_versions: snapshot
+                .oxfunc_metadata
+                .semantic_kernel_metadata_versions,
+            oxfunc_arg_admission_metadata_versions: snapshot
+                .oxfunc_metadata
+                .arg_admission_metadata_versions,
+            producer_capability_set_keys: Vec::new(),
+            exercised_capability_keys: Vec::new(),
         };
         state
             .retained_artifacts

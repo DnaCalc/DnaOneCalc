@@ -1,6 +1,6 @@
 use crate::adapters::oxfml::{
-    EditorDocument, FormulaEditRequest, FormulaValuePresentation, OxfmlEditorBridge,
-    OxfmlEditorBridgeError,
+    EditorDocument, FormulaEditRequest, FormulaInputBindingRequest, FormulaValuePresentation,
+    OxfmlEditorBridge, OxfmlEditorBridgeError,
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
@@ -53,6 +53,16 @@ impl EditorSessionService {
             skip_runtime_evaluation,
             recalc_mode: intent.recalc_mode,
             language_tag: intent.language_tag,
+            formal_input_bindings: formula_space
+                .formula_input_bindings
+                .iter()
+                .map(|binding| FormulaInputBindingRequest {
+                    label: binding.label.clone(),
+                    reference_descriptor: binding.reference_descriptor.clone(),
+                    reference_handle: binding.reference_handle.clone(),
+                    value: binding.value.clone(),
+                })
+                .collect(),
             trace_mode: intent.trace_mode,
         };
         // Wall-clock the bridge round-trip so the host can detect

@@ -235,6 +235,15 @@ pub struct FormulaValuePresentation {
     /// `docs/HANDOFF_OXFML_CF_ARRAY_PER_CELL.md` and
     /// `docs/HANDOFF_OXFML_CF_AGGREGATE_VISUALIZATION_RULES.md`).
     pub array_cell_format: Option<ArrayCellFormatGrid>,
+    /// OxFunc kernel/admission metadata versions carried by OxFml's
+    /// prepared formula identity. These are replay and invalidation
+    /// signals, not display text.
+    pub semantic_kernel_metadata_version: Option<String>,
+    pub arg_admission_metadata_version: Option<String>,
+    /// Rich/sparse producer capability facts from OxFml's returned
+    /// value surface. Empty means this run emitted no capability facts.
+    pub producer_capability_set_keys: Vec<String>,
+    pub exercised_capability_keys: Vec<String>,
 }
 
 /// Host-side mirror of `oxfunc_value_types::NumberFormatHint`. Kept as

@@ -1642,6 +1642,7 @@ fn run_oxfml_case(
             // bridge's interactive response (parse / bind / popup),
             // not the runtime locale used for the verification report.
             language_tag: String::new(),
+            formal_input_bindings: Vec::new(),
             // Verification surfaces a per-prepared-call walk in the
             // workbench artifacts, so it needs the rich trace.
             trace_mode: crate::adapters::oxfml::TraceModeRequest::PreparedCalls,
@@ -3277,6 +3278,10 @@ fn serialize_replay_projection(
         "candidate_result_id": projection.candidate_result_id,
         "commit_decision_kind": projection.commit_decision_kind,
         "trace_event_kinds": projection.trace_event_kinds,
+        "semantic_kernel_metadata_version": projection.semantic_kernel_metadata_version,
+        "arg_admission_metadata_version": projection.arg_admission_metadata_version,
+        "producer_capability_set_keys": projection.producer_capability_set_keys,
+        "exercised_capability_keys": projection.exercised_capability_keys,
         "comparison_views": serialize_comparison_views(
             projection.comparison_views.as_deref().unwrap_or(&[]),
             projection.verification_publication_surface.as_ref(),
@@ -3610,6 +3615,10 @@ fn materialize_synthetic_compare_ready_projection(
         "source_case_ids": [],
         "source_fixture_family": Value::Null,
         "source_schema_id": Value::Null,
+        "semantic_kernel_metadata_version": Value::Null,
+        "arg_admission_metadata_version": Value::Null,
+        "producer_capability_set_keys": [],
+        "exercised_capability_keys": [],
         "trace_event_kinds": ["AcceptedCandidateResultBuilt", "CommitRejected", "RejectIssued"],
         "typed_query_bundle_spec": Value::Null,
         "verification_publication_surface": {
@@ -4415,6 +4424,69 @@ fn absolute_path(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod consumer_shape_tests {
     use super::*;
+
+    #[test]
+    fn serialize_replay_projection_preserves_oxfunc_metadata_and_capability_facts() {
+        let projection = oxfml_core::consumer::replay::ReplayProjectionResult {
+            source_artifact_family: "runtime_formula_result".to_string(),
+            source_schema_id: None,
+            source_fixture_family: None,
+            source_case_id: Some("metadata-case".to_string()),
+            source_case_ids: Vec::new(),
+            shared_scenario_alias: None,
+            formula_stable_id: "formula:metadata".to_string(),
+            session_id: None,
+            library_context_snapshot_ref: None,
+            typed_query_bundle_spec: None,
+            registry_pin: None,
+            witness_id: None,
+            witness_lifecycle_state: None,
+            retention_policy_id: None,
+            source_bundle_ref: None,
+            reduction_manifest_ref: None,
+            phase: None,
+            candidate_result_id: None,
+            commit_decision_kind: None,
+            execution_outcome_surface: None,
+            trace_event_kinds: Vec::new(),
+            comparison_views: None,
+            verification_publication_surface: None,
+            first_host_replay_capture_packet: None,
+            semantic_kernel_metadata_version: Some(
+                "semantic_kernel_metadata.v1;reduction_sensitive=true".to_string(),
+            ),
+            arg_admission_metadata_version: Some(
+                "arg_admission_metadata.v1;existing_arg_preparation=values_only_pre_adapter"
+                    .to_string(),
+            ),
+            producer_capability_set_keys: vec![
+                "Materialisable(target_class=published_fallback_text)".to_string(),
+            ],
+            exercised_capability_keys: vec![
+                "Materialisable(target_class=published_fallback_text)".to_string()
+            ],
+            prepared_formula_identity: None,
+        };
+
+        let serialized = serialize_replay_projection(&projection, true);
+
+        assert_eq!(
+            serialized["semantic_kernel_metadata_version"],
+            json!("semantic_kernel_metadata.v1;reduction_sensitive=true")
+        );
+        assert_eq!(
+            serialized["arg_admission_metadata_version"],
+            json!("arg_admission_metadata.v1;existing_arg_preparation=values_only_pre_adapter")
+        );
+        assert_eq!(
+            serialized["producer_capability_set_keys"],
+            json!(["Materialisable(target_class=published_fallback_text)"])
+        );
+        assert_eq!(
+            serialized["exercised_capability_keys"],
+            json!(["Materialisable(target_class=published_fallback_text)"])
+        );
+    }
 
     #[test]
     fn replay_display_comparison_summary_prefers_effective_display_family() {

@@ -8,8 +8,9 @@ pub use bridge::{
     FormulaFormattingCfDataBarDirection, FormulaFormattingCfDataBarRuleOptions,
     FormulaFormattingCfIconSetRuleOptions, FormulaFormattingCfRank,
     FormulaFormattingCfRankRuleOptions, FormulaFormattingCfRule, FormulaFormattingCfThreshold,
-    FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
+    FormulaFormattingCfTypedRule, FormulaFormattingRequest, FormulaInputBindingRequest,
+    OxfmlEditorBridge, OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
+    TraceModeRequest,
 };
 pub use live_bridge::LiveOxfmlBridge;
 pub use types::{

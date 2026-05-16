@@ -2,14 +2,16 @@ mod types;
 
 pub use types::{
     ActiveFormulaSpaceViewState, AmbientAppContext, AppMode, ArrayBlockSelection,
-    ArrayBrowserDisplaySettings, ArrayBrowserSessionState, CapabilityAndEnvironmentState,
-    CapabilityDiffTarget, ClosedFormulaSpaceRecord, CompletionHelpState, ExtensionSurfaceState,
+    ArrayBrowserDisplaySettings, ArrayBrowserSessionState, BlockedModeFact,
+    CapabilityAndEnvironmentState, CapabilityDiffTarget, CapabilityLedgerSnapshot,
+    ClosedFormulaSpaceRecord, CompletionHelpState, DependencyIdentity, ExtensionSurfaceState,
     FormulaArrayPreviewState, FormulaAverageRuleOptions, FormulaColorScaleRuleOptions,
     FormulaColorScaleStop, FormulaConditionalFormattingRank, FormulaConditionalFormattingRule,
     FormulaConditionalFormattingThreshold, FormulaConditionalFormattingTypedRule,
     FormulaDataBarDirection, FormulaDataBarRuleOptions, FormulaFormattingState,
-    FormulaIconSetRuleOptions, FormulaRankRuleOptions, FormulaSpaceCollectionState,
-    FormulaSpaceContextState, FormulaSpaceState, GlobalUiChromeState, OneCalcHostState,
-    OpenFormulaSpaceRecord, ProjectionTruthSource, RetainedArtifactOpenState,
-    RetainedArtifactRecord, ViewMode, WorkspaceNavigationSelection, WorkspaceShellState,
+    FormulaIconSetRuleOptions, FormulaInputBindingState, FormulaRankRuleOptions,
+    FormulaSpaceCollectionState, FormulaSpaceContextState, FormulaSpaceState, GlobalUiChromeState,
+    ModeAvailabilityFact, OneCalcHostState, OpenFormulaSpaceRecord, OxFuncMetadataSnapshot,
+    ProjectionTruthSource, RetainedArtifactOpenState, RetainedArtifactRecord, ViewMode,
+    WorkspaceNavigationSelection, WorkspaceShellState,
 };

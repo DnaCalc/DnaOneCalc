@@ -11,3 +11,6 @@ mod typing;
 
 #[path = "scenarios/completion.rs"]
 mod completion;
+
+#[path = "scenarios/runtime_metadata.rs"]
+mod runtime_metadata;

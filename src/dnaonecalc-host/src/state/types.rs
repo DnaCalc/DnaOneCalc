@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::adapters::oxfml::EditorDocument;
+use crate::adapters::oxfml::{EditorDocument, EvalValue};
 use crate::domain::ids::FormulaSpaceId;
 use crate::extensions::{
     default_extension_provider_catalog, default_extension_rtd_host,
@@ -244,6 +244,7 @@ pub struct FormulaSpaceState {
     pub latest_evaluation_summary: Option<String>,
     pub effective_display_summary: Option<String>,
     pub context: FormulaSpaceContextState,
+    pub formula_input_bindings: Vec<FormulaInputBindingState>,
     pub array_preview: Option<FormulaArrayPreviewState>,
     pub committed_cell_text: Option<String>,
     pub proofed_cell_text: Option<String>,
@@ -582,6 +583,7 @@ impl FormulaSpaceState {
                 scenario_label,
                 ..Default::default()
             },
+            formula_input_bindings: Vec::new(),
             array_preview: None,
             committed_cell_text: None,
             proofed_cell_text: None,
@@ -643,6 +645,29 @@ pub struct FormulaSpaceContextState {
     pub truth_source: ProjectionTruthSource,
     pub trace_summary: Option<String>,
     pub blocked_reason: Option<String>,
+}
+
+/// Bounded OneCalc formula input. This is a single-formula context
+/// binding, not workbook defined-name or worksheet dependency
+/// semantics. V1 admits scalar values only.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormulaInputBindingState {
+    pub label: String,
+    pub reference_descriptor: String,
+    pub reference_handle: Option<String>,
+    pub value: EvalValue,
+}
+
+impl FormulaInputBindingState {
+    pub fn scalar_number(label: impl Into<String>, value: f64) -> Self {
+        let label = label.into();
+        Self {
+            reference_descriptor: format!("name:{label}"),
+            label,
+            reference_handle: None,
+            value: EvalValue::Number(value),
+        }
+    }
 }
 
 impl Default for FormulaSpaceContextState {
@@ -716,19 +741,139 @@ pub struct RetainedArtifactRecord {
     pub replay_explain_records: Vec<OxReplayExplainRecord>,
     pub oxfml_effective_display_summary: Option<String>,
     pub excel_effective_display_text: Option<String>,
+    pub capability_snapshot_id: Option<String>,
+    pub oxfunc_semantic_kernel_metadata_versions: Vec<String>,
+    pub oxfunc_arg_admission_metadata_versions: Vec<String>,
+    pub producer_capability_set_keys: Vec<String>,
+    pub exercised_capability_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityAndEnvironmentState {
     pub selected_diff_target: CapabilityDiffTarget,
+    pub current_snapshot: CapabilityLedgerSnapshot,
 }
 
 impl Default for CapabilityAndEnvironmentState {
     fn default() -> Self {
         Self {
             selected_diff_target: CapabilityDiffTarget::WorkspaceBaseline,
+            current_snapshot: CapabilityLedgerSnapshot::default_current(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityLedgerSnapshot {
+    pub capability_snapshot_id: String,
+    pub schema_version: String,
+    pub emitted_at: String,
+    pub host_profile: String,
+    pub runtime_class: String,
+    pub dependency_set: Vec<DependencyIdentity>,
+    pub oxfunc_metadata: OxFuncMetadataSnapshot,
+    pub rich_value_capabilities: Vec<String>,
+    pub mode_availability: Vec<ModeAvailabilityFact>,
+    pub blocked_modes: Vec<BlockedModeFact>,
+    pub active_seams: Vec<String>,
+}
+
+impl CapabilityLedgerSnapshot {
+    pub fn default_current() -> Self {
+        Self {
+            capability_snapshot_id: "onecalc-capability-current-process".to_string(),
+            schema_version: "onecalc.capability-ledger.v1".to_string(),
+            emitted_at: "runtime-default".to_string(),
+            host_profile: "onecalc-direct-host".to_string(),
+            runtime_class: if cfg!(target_arch = "wasm32") {
+                "browser-wasm".to_string()
+            } else {
+                "native-host".to_string()
+            },
+            dependency_set: vec![
+                DependencyIdentity {
+                    repo: "OxFml".to_string(),
+                    crate_name: "oxfml_core".to_string(),
+                    source: "path-dependency".to_string(),
+                },
+                DependencyIdentity {
+                    repo: "OxFunc".to_string(),
+                    crate_name: "oxfunc_core".to_string(),
+                    source: "path-dependency".to_string(),
+                },
+            ],
+            oxfunc_metadata: OxFuncMetadataSnapshot::default(),
+            rich_value_capabilities: Vec::new(),
+            mode_availability: vec![
+                ModeAvailabilityFact::available("DNA-only"),
+                ModeAvailabilityFact::available("Replay"),
+                ModeAvailabilityFact::blocked("Excel-observed", "requires OxXlPlay live capture"),
+                ModeAvailabilityFact::blocked(
+                    "Twin compare",
+                    "requires retained Excel observation",
+                ),
+            ],
+            blocked_modes: vec![
+                BlockedModeFact {
+                    mode: "Excel-observed".to_string(),
+                    reason: "requires OxXlPlay live capture".to_string(),
+                },
+                BlockedModeFact {
+                    mode: "Twin compare".to_string(),
+                    reason: "requires retained Excel observation".to_string(),
+                },
+            ],
+            active_seams: vec![
+                "SEAM-ONECALC-CAPABILITY-SNAPSHOT".to_string(),
+                "SEAM-OXFML-RICH-VALUE-PUBLICATION".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyIdentity {
+    pub repo: String,
+    pub crate_name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OxFuncMetadataSnapshot {
+    pub semantic_kernel_metadata_versions: Vec<String>,
+    pub arg_admission_metadata_versions: Vec<String>,
+    pub producer_capability_vocab: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeAvailabilityFact {
+    pub mode: String,
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+impl ModeAvailabilityFact {
+    pub fn available(mode: impl Into<String>) -> Self {
+        Self {
+            mode: mode.into(),
+            available: true,
+            reason: None,
+        }
+    }
+
+    pub fn blocked(mode: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            mode: mode.into(),
+            available: false,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockedModeFact {
+    pub mode: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
