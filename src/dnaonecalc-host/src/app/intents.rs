@@ -25,7 +25,7 @@ pub struct ApplyFormulaEditIntent {
     pub formatting_request: Option<FormulaFormattingRequest>,
     /// Calc-options scenario policy lifted from the active
     /// formula's `FormulaFormattingState.scenario_policy`. Drives
-    /// `now_serial` / `random_value` seeding in the bridge.
+    /// clock and random-provider selection in the bridge.
     pub scenario_policy: ScenarioPolicyRequest,
     /// When `true`, skip the runtime-evaluation pass and run only
     /// parse / bind / popup / signature-help / function-help. The

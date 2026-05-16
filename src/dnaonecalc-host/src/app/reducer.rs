@@ -654,10 +654,9 @@ pub fn set_active_date1904(state: &mut OneCalcHostState, value: bool) -> bool {
 
 /// Set the active formula's scenario policy (Deterministic /
 /// LiveRecalc). Drives whether the bridge passes fixed seeds for
-/// `now_serial` / `random_value` (Deterministic — formula re-runs
-/// identically on every keystroke) or fresh values per round-trip
-/// (LiveRecalc — `=NOW()` advances, `=RAND()` rolls). Returns true
-/// when the value actually changed.
+/// `now_serial` plus a deterministic random provider stream, or
+/// fresh clock/provider inputs per round-trip. Returns true when the
+/// value actually changed.
 pub fn set_active_scenario_policy(
     state: &mut OneCalcHostState,
     policy: crate::persistence::ScenarioPolicy,

@@ -448,15 +448,13 @@ pub struct FormulaFormattingState {
     /// 1904 (Mac legacy).
     pub date1904: bool,
     /// Calc-options scenario policy for this formula. `Deterministic`
-    /// pins `now_serial` and `random_value` to fixed seeds so a
-    /// formula re-runs identically on every keystroke — what the
-    /// user wants while authoring. `LiveRecalc` lets each bridge
-    /// invocation pick fresh values, so `=NOW()` advances and
-    /// `=RAND()` rolls a new value per round-trip. The bridge reads
-    /// this and populates `RuntimeFormulaRequest`'s typed-context
-    /// bundle accordingly. Default `Deterministic` — that's the
-    /// authoring-friendly mode and the only mode the OxFml runtime
-    /// exposed pre-MVP.
+    /// pins `now_serial` and uses a deterministic random provider
+    /// stream so a formula re-runs identically on every keystroke.
+    /// `LiveRecalc` lets each bridge invocation pick fresh clock and
+    /// provider inputs, so `=NOW()` advances and random functions
+    /// consume fresh draws. The bridge reads this and populates
+    /// `RuntimeFormulaRequest`'s typed-context bundle accordingly.
+    /// Default `Deterministic` — that's the authoring-friendly mode.
     pub scenario_policy: crate::persistence::ScenarioPolicy,
     /// Conditional-formatting rules for this formula's result hero.
     /// Each rule renders as a row inside the formatting panel and

@@ -762,7 +762,7 @@ The single‑choice scenario policy selector that already lives in the context b
 
 | Flag | Status |
 |---|---|
-| Volatile functions allowed (NOW, TODAY, RAND, RANDBETWEEN re‑evaluate live) | 🟢 LIVE — wired through `SingleFormulaHost.now_serial` and `random_value` |
+| Volatile functions allowed (NOW, TODAY, RAND, RANDBETWEEN re‑evaluate live) | 🟢 LIVE — wired through `SingleFormulaHost.now_serial` and `random_provider` |
 | Freeze intermediate arrays | 🔴 `<NOT IMPLEMENTED>` — `SEAM-OXFML-EVAL-FREEZE` |
 | Result caching | 🔴 `<NOT IMPLEMENTED>` — `SEAM-OXFML-EVAL-CACHE` |
 | Strict evaluation | 🔴 `<NOT IMPLEMENTED>` — `SEAM-OXFML-EVAL-STRICT` |
@@ -783,7 +783,7 @@ All value inputs in this tab are **typed `EvalValue` inputs** — the editor is 
 | Direct cell bindings | Editable table: A1 reference, typed `EvalValue` via the type‑picker form | 🟢 LIVE — wired to `cell_values: BTreeMap<String, EvalValue>` |
 | Tables | Editable list: Name, columns (each with typed `ArrayShape`), range — opens a sub‑editor for table structure | 🟡 PARTIAL — `table_catalog` model exists in OxFml but the OneCalc UI grammar for editing it has gaps; document `SEAM-ONECALC-TABLE-EDITOR` (UI‑side only) |
 | Enclosing table | Picker (None / one of the tables defined above) | 🟢 LIVE |
-| Volatile values | NOW serial number (datetime picker) + RAND seed | 🟢 LIVE — wired to `now_serial` / `random_value` |
+| Volatile values | NOW serial number (datetime picker) + random provider | 🟢 LIVE — wired to `now_serial` / `random_provider` |
 | Host info provider | A small editable form for INFO/CELL function inputs (directory, OS version, file name, etc.) | 🟡 PARTIAL — `HostInfoProvider` trait exists; OneCalc does not yet implement it (`SEAM-ONECALC-HOST-INFO`) |
 | RTD provider | A list of (server, topic, typed `EvalValue`) entries with auto‑refresh interval | 🔴 `<NOT IMPLEMENTED>` (`SEAM-ONECALC-RTD`) |
 | Value boundaries | Diagnostic: for every typed value the user enters, the UI evaluates `ValueBoundary::CellContent.allows(tag)` or the appropriate boundary for that slot and surfaces a warning if the value is structurally invalid at the slot (e.g. `MissingArg` in a cell binding) | 🟢 LIVE — `ValueBoundary::allows()` is already in `oxfunc_value_types` |
@@ -824,8 +824,8 @@ OneCalc owns all the UI entry; OxFml owns all the interpretation. The shape of t
 
 - A `FormulaSpaceContext` value object that bundles every field above. It is composed of:
   - `EditorPlanOptions { oxfunc_catalog_identity, locale_profile, date_system, format_profile, library_context_snapshot }` — already exists in OxFml.
-  - `SingleFormulaHost { caller_row, caller_col, defined_names, cell_values, table_catalog, enclosing_table_ref, caller_table_region, now_serial, random_value }` — already exists in OxFml.
-  - `TypedContextQueryBundle { host_info, rtd_provider, locale_ctx, now_serial, random_value }` — already exists in OxFml.
+  - `SingleFormulaHost { caller_row, caller_col, defined_names, cell_values, table_catalog, enclosing_table_ref, caller_table_region, now_serial, random_provider }` — already exists in OxFml.
+  - `TypedContextQueryBundle { host_info, rtd_provider, locale_ctx, now_serial, random_provider }` — already exists in OxFml.
   - `CellFormatPayload` (NEW) — number format code, font, fill, border, alignment, protection, CF rules. Most of this is `<NOT IMPLEMENTED>` on the engine side and round‑trips through `SEAM-OXFML-FORMAT-PAYLOAD`.
   - `CalcOptionsPayload` (NEW) — iterative, calc mode, precision as displayed, etc. Almost entirely `<NOT IMPLEMENTED>` and tracked by `SEAM-OXFML-CALC-OPTIONS`.
 - This value object is included in every `FormulaEditRequest` and every replay request so OxFml's `EditorDocument`, `EditorSyntaxSnapshot`, and `VerificationPublicationSurface` are produced under it.
@@ -1070,7 +1070,7 @@ This plan is a UX plan, so verification is staged behavioural, not just compile�
 | **Style index / XF** | ABSENT in code (acknowledged in docs). | PARTIAL (captures `style_id`, no resolution). | Surface style id in read‑only diagnostic; `SEAM-OXFML-STYLE-XF`. |
 | **Fill (solid)** | ABSENT (only CF overlay). | PARTIAL (`fill_color` observed). | Render fill colour; `SEAM-OXFML-FILL-COLOR`. |
 | **Fill (gradient / pattern)** | ABSENT. | ABSENT. | Render Fill Effects sub‑popover; `SEAM-OXFML-FILL-EFFECTS`. |
-| **Host context (`SingleFormulaHost`)** | PRESENT — `caller_row/col`, `defined_names`, `cell_values`, `table_catalog`, `enclosing_table_ref`, `caller_table_region`, `now_serial`, `random_value` (`OxFml/crates/oxfml_core/src/host/mod.rs`). | n/a. | Wire Tab 9 controls directly. |
+| **Host context (`SingleFormulaHost`)** | PRESENT — `caller_row/col`, `defined_names`, `cell_values`, `table_catalog`, `enclosing_table_ref`, `caller_table_region`, `now_serial`, `random_provider` (`OxFml/crates/oxfml_core/src/host/mod.rs`). | n/a. | Wire Tab 9 controls directly. |
 | **Host info / RTD providers** | PRESENT (traits) — `HostInfoProvider`, `RtdProvider` in `TypedContextQueryBundle`. | n/a. | OneCalc must implement `HostInfoProvider`; `SEAM-ONECALC-HOST-INFO`, `SEAM-ONECALC-RTD`. |
 | **Defined names / table catalog** | PRESENT. | n/a. | LIVE Tab 9 surface. |
 | **Iterative calc** | ABSENT. | ABSENT. | Render Calc Options controls; `SEAM-OXFML-CALC-ITERATIVE`. |

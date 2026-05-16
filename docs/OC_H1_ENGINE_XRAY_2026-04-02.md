@@ -796,7 +796,7 @@ pub struct SingleFormulaHost {
     pub enclosing_table_ref: Option<TableRef>,
     pub caller_table_region: Option<TableCallerRegion>,
     pub now_serial: Option<f64>,
-    pub random_value: Option<f64>,
+    pub random_provider: Option<f64>,
     next_session_id: u64,
     next_commit_attempt_id: u64,
     cached_artifacts: Option<CachedHostArtifacts>,
@@ -824,7 +824,7 @@ pub fn new(formula_stable_id: impl Into<String>, formula_text: impl Into<String>
         enclosing_table_ref: None,
         caller_table_region: None,
         now_serial: Some(46000.0),
-        random_value: Some(0.25),
+        random_provider: Some(0.25),
         next_session_id: 1,
         next_commit_attempt_id: 1,
         cached_artifacts: None,
@@ -920,7 +920,7 @@ pub struct EvaluationContext<'a> {
     pub rtd_provider: Option<&'a dyn RtdProvider>,
     pub registered_external_provider: Option<&'a dyn RegisteredExternalProvider>,
     pub now_serial: Option<f64>,
-    pub random_value: Option<f64>,
+    pub random_provider: Option<f64>,
 }
 ```
 
@@ -1047,7 +1047,7 @@ classDiagram
       +cell_values
       +defined_names
       +now_serial
-      +random_value
+      +random_provider
     }
 
     RuntimeAdapter --> FunctionSurfaceCatalog

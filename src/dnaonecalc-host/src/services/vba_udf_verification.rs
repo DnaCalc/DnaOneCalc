@@ -7,6 +7,7 @@ use oxfml_core::interface::{
     LibraryContextProvider, TypedContextQueryBundle, TypedContextQueryFamily,
 };
 use oxfml_core::EvaluationBackend;
+use oxfunc_core::functions::rand_fn::RandomProvider;
 use oxfunc_core::value::EvalValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,6 +27,18 @@ const DEFAULT_ASSOCIATION_ID: &str = "vba-assoc-1";
 const DEFAULT_PROJECT_REF: &str = "memory:AddThem";
 const DEFAULT_ORACLE_REF: &str =
     "OxXlPlay/states/excel/xlplay_vba_udf_addthem_001/views/normalized-replay.json";
+
+struct FixedRandomProvider {
+    value: f64,
+}
+
+impl RandomProvider for FixedRandomProvider {
+    fn random_unit(&self) -> f64 {
+        self.value
+    }
+}
+
+static FIXED_RANDOM_PROVIDER_05: FixedRandomProvider = FixedRandomProvider { value: 0.5 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VbaUdfVerificationRequest {
@@ -165,9 +178,14 @@ pub fn run_vba_udf_verification(
     };
 
     let locale = oxfml_en_us_locale_context();
-    let query_bundle =
-        TypedContextQueryBundle::new(None, None, Some(&locale), Some(46000.0), Some(0.5))
-            .with_host_function_provider(Some(&runtime));
+    let query_bundle = TypedContextQueryBundle::new(
+        None,
+        None,
+        Some(&locale),
+        Some(46000.0),
+        Some(&FIXED_RANDOM_PROVIDER_05),
+    )
+    .with_host_function_provider(Some(&runtime));
     let mut host = SingleFormulaHost::new(&request.case_id, &request.formula);
     let result = host
         .recalc_with_interfaces(

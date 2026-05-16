@@ -14,8 +14,8 @@ pub struct FormulaEditRequest {
     /// `None` skips the formatted-display lane.
     pub formatting_request: Option<FormulaFormattingRequest>,
     /// Calc-options scenario policy. Drives whether the bridge
-    /// supplies fixed `now_serial` / `random_value` seeds
-    /// (Deterministic) or fresh values per request (LiveRecalc).
+    /// supplies fixed clock/provider inputs (Deterministic) or
+    /// fresh clock/provider inputs per request (LiveRecalc).
     pub scenario_policy: ScenarioPolicyRequest,
     /// When `true`, the bridge runs parse / bind / completion /
     /// signature-help / function-help (the "interactive" lane) and

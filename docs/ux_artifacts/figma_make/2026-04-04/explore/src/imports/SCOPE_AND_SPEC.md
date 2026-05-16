@@ -776,7 +776,7 @@ In scope:
 4. `FormulaSourceRecord`, `formula_channel_kind`, and `structure_context_version`,
 5. immutable `LibraryContextSnapshot` carriage through `LibraryContextProvider`,
 6. locale and date-system context through `LocaleFormatContext`,
-7. deterministic volatile seeds such as `now_serial` and `random_value` when the active formula family requires them,
+7. deterministic volatile inputs such as `now_serial` and `random_provider` when the active formula family requires them,
 8. result display with semantic formatting consequences where already available upstream,
 9. replay capture for every executed scenario,
 10. attractive but honest result presentation.
@@ -1809,7 +1809,7 @@ This section summarizes the current honest floor that `DNA OneCalc` should desig
 
 ### 14.1 Host And Evaluator Seam Floor
 1. the primary upstream host/runtime contract is now the OxFml downstream-consumer clarification note plus the broader OxFml host/runtime packet and reduced-profile OneCalc supplement,
-2. the H0 mandatory field floor now explicitly includes `FormulaSourceRecord`, `formula_channel_kind`, `structure_context_version`, immutable library-context carriage, `LocaleFormatContext`, and deterministic volatile seeds where the active semantic lane requires them,
+2. the H0 mandatory field floor now explicitly includes `FormulaSourceRecord`, `formula_channel_kind`, `structure_context_version`, immutable library-context carriage, `LocaleFormatContext`, and deterministic volatile inputs where the active semantic lane requires them,
 3. the H1 additions now center on driven single-formula execution, explicit recalc behavior, scriptable formula replacement, `RtdProvider`, display context, and version-to-version retained comparison,
 4. the current product scope does not admit `defined_name_bindings`, `HostInfoProvider`, direct reference binding, or worksheet-style host queries,
 5. the current OxCalc seam-reference packet is still useful as informative reference material, but `DNA OneCalc` does not exercise the dereference seam in its present scope,

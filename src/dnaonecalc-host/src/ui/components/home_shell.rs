@@ -2668,7 +2668,7 @@ fn render_vba_association_row(
 ///    preset chip strip + font / fill colour pickers + Date1904
 ///    toggle.
 /// 2. **Calc-options row** — Deterministic / LiveRecalc segmented
-///    control. Drives `now_serial` / `random_value` seeding for the
+///    control. Drives clock and random-provider selection for the
 ///    bridge.
 /// 3. **Conditional formatting** — list of rules with per-rule
 ///    remove + a `+ add rule` affordance.

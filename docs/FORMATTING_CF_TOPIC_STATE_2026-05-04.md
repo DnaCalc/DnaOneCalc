@@ -112,7 +112,7 @@ shared framing across the per-cell + aggregate-CF handoffs.
   (`services::ambient_app_context::nearest_locale_profile_for_language_tag`),
   ready to wire through the moment OxFml's locale tables land.
 - **Deterministic vs. LiveRecalc** seeding: Deterministic pins
-  `now_serial = 46000.0` and `random_value = 0.5`; LiveRecalc
+  `now_serial = 46000.0` and `random_provider = 0.5`; LiveRecalc
   derives both from the platform clock / RNG.
 
 ## Outstanding upstream work (filed as handoffs)

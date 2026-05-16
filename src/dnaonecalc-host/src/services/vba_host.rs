@@ -436,7 +436,20 @@ mod tests {
     use oxfml_core::format::oxfml_en_us_locale_context;
     use oxfml_core::interface::TypedContextQueryBundle;
     use oxfml_core::EvaluationBackend;
+    use oxfunc_core::functions::rand_fn::RandomProvider;
     use oxvba_runtime::bstr::BStr;
+
+    struct FixedRandomProvider {
+        value: f64,
+    }
+
+    impl RandomProvider for FixedRandomProvider {
+        fn random_unit(&self) -> f64 {
+            self.value
+        }
+    }
+
+    static FIXED_RANDOM_PROVIDER_05: FixedRandomProvider = FixedRandomProvider { value: 0.5 };
 
     fn add_them_project(extra_source: &str) -> OxvbaSourceProject {
         OxvbaSourceProject {
@@ -540,9 +553,14 @@ mod tests {
         )
         .expect("runtime should load");
         let locale = oxfml_en_us_locale_context();
-        let query_bundle =
-            TypedContextQueryBundle::new(None, None, Some(&locale), Some(46000.0), Some(0.5))
-                .with_host_function_provider(Some(&runtime));
+        let query_bundle = TypedContextQueryBundle::new(
+            None,
+            None,
+            Some(&locale),
+            Some(46000.0),
+            Some(&FIXED_RANDOM_PROVIDER_05),
+        )
+        .with_host_function_provider(Some(&runtime));
         let mut host =
             oxfml_core::consumer::runtime::SingleFormulaHost::new("vba-udf-t001", "=AddThem(2,3)");
 

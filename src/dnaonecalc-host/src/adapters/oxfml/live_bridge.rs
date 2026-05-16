@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -19,6 +20,7 @@ use oxfml_core::publication::{
 };
 use oxfml_core::source::FormulaSourceRecord;
 use oxfml_core::{BindContext, FormulaChannelKind};
+use oxfunc_core::functions::rand_fn::RandomProvider;
 use oxfunc_core::locale_format::{format_profile, LocaleProfileId, WorkbookDateSystem};
 
 use super::bridge::{
@@ -207,13 +209,13 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                     .map(|formatting| formatting.date1904)
                     .unwrap_or(false),
             );
-            let (now_serial, random_value) = scenario_seeds(request.scenario_policy);
+            let (now_serial, random_provider) = scenario_runtime_context(request.scenario_policy);
             let typed_context = TypedContextQueryBundle::new(
                 None,
                 None,
                 Some(&locale_ctx),
                 Some(now_serial),
-                Some(random_value),
+                Some(random_provider.as_ref()),
             );
             let mut runtime_request = RuntimeFormulaRequest::new(source.clone(), typed_context);
             if let Some(formatting) = request.formatting_request.as_ref() {
@@ -1064,19 +1066,10 @@ fn bridge_threshold_to_upstream(
     }
 }
 
-/// Derive `(now_serial, random_value)` for the runtime context bundle
-/// from the active formula's calc-options policy.
-///
-/// **Deterministic** mode pins both values so a formula re-runs
-/// identically on every keystroke. The constants match OxFml's host
-/// defaults (`now_serial = 46000.0` ≈ 2025-12-09, `random_value =
-/// 0.5`) so the host's deterministic mode reproduces what users
-/// already see in OxFml's own test fixtures.
-///
-/// **LiveRecalc** mode reads a fresh `now_serial` from the platform
-/// clock and a fresh `random_value` from the platform RNG on every
-/// bridge round-trip. `=NOW()` advances per keystroke and `=RAND()`
-/// rolls a new value per round-trip.
+/// Derive the runtime volatile context from the active calc-options
+/// policy. Deterministic mode pins the clock and uses a reproducible
+/// provider stream; live/manual modes read the clock at dispatch time
+/// and let each volatile random function consume its own provider draw.
 /// Resolve the runtime locale context for a bridge call. Pulls
 /// the profile via `LocaleProfileId::from_bcp47_language_tag` —
 /// unrecognised / empty tags fall back to en-US. The
@@ -1103,12 +1096,48 @@ fn build_runtime_locale_context(
     oxfml_locale_context(format_profile(profile_id), date_system)
 }
 
-fn scenario_seeds(policy: ScenarioPolicyRequest) -> (f64, f64) {
+fn scenario_runtime_context(policy: ScenarioPolicyRequest) -> (f64, Box<dyn RandomProvider>) {
     match policy {
-        ScenarioPolicyRequest::Deterministic => (46000.0, 0.5),
+        ScenarioPolicyRequest::Deterministic => (
+            46000.0,
+            Box::new(SplitMixRandomProvider::new(0xD1A0_0ECA_1C5E_ED5E)),
+        ),
         ScenarioPolicyRequest::LiveRecalc | ScenarioPolicyRequest::ManualRecalc => {
-            (current_excel_serial(), current_random_value())
+            (current_excel_serial(), current_random_provider())
         }
+    }
+}
+
+struct SplitMixRandomProvider {
+    state: Cell<u64>,
+}
+
+impl SplitMixRandomProvider {
+    fn new(seed: u64) -> Self {
+        Self {
+            state: Cell::new(seed),
+        }
+    }
+}
+
+impl RandomProvider for SplitMixRandomProvider {
+    fn random_unit(&self) -> f64 {
+        let mut z = self.state.get().wrapping_add(0x9E3779B97F4A7C15);
+        self.state.set(z);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^= z >> 31;
+        (z >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct JsMathRandomProvider;
+
+#[cfg(target_arch = "wasm32")]
+impl RandomProvider for JsMathRandomProvider {
+    fn random_unit(&self) -> f64 {
+        js_sys::Math::random()
     }
 }
 
@@ -1128,8 +1157,8 @@ fn current_excel_serial() -> f64 {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn current_random_value() -> f64 {
-    js_sys::Math::random()
+fn current_random_provider() -> Box<dyn RandomProvider> {
+    Box::new(JsMathRandomProvider)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1141,22 +1170,16 @@ fn current_excel_serial() -> f64 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn current_random_value() -> f64 {
+fn current_random_provider() -> Box<dyn RandomProvider> {
     // Lightweight non-wasm RNG: derive a u64 from the current
     // nanosecond clock and run it through a small splittable
-    // mixer. Sufficient for a `=RAND()` seed; SSR / desktop builds
+    // mixer. Sufficient for volatile formula previews; SSR / desktop builds
     // are not running cryptographic RNGs out of this site.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos() as u64)
         .unwrap_or(0);
-    let mut z = nanos.wrapping_add(0x9E3779B97F4A7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-    z ^= z >> 31;
-    // Map to [0, 1) the same way the JavaScript Math.random
-    // contract does — use the upper 53 bits.
-    (z >> 11) as f64 / ((1u64 << 53) as f64)
+    Box::new(SplitMixRandomProvider::new(nanos))
 }
 
 /// Format a value preview for the formula walk-tree drill-down.

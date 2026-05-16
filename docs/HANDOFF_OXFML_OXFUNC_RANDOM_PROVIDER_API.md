@@ -31,7 +31,7 @@ C:\Work\DnaCalc\OxFml\crates\oxfml_core\src\eval\mod.rs:1692:17
 expected Option<&dyn oxfunc_core::functions::rand_fn::RandomProvider>, found Option<f64>
 ```
 
-`OxFml` also writes `runtime.random_value` in several places, but the current `SurfaceCallRuntime` fields are now:
+`OxFml` also writes `runtime.random_provider` in several places, but the current `SurfaceCallRuntime` fields are now:
 
 ```text
 resolver, now_serial, now_provider, random_provider, locale_ctx, ...
@@ -57,7 +57,7 @@ This blocks DnaOneCalc validation because `dnaonecalc-host` depends on both crat
 Align `OxFunc` and `OxFml` on the new random-provider contract:
 
 1. Replace remaining `Option<f64>` dispatch arguments with `Option<&dyn RandomProvider>`.
-2. Replace `SurfaceCallRuntime.random_value` assignments with the current `random_provider` field or an adapter that preserves deterministic seeded behavior.
+2. Replace `SurfaceCallRuntime.random_provider` assignments with the current `random_provider` field or an adapter that preserves deterministic seeded behavior.
 3. Keep DnaOneCalc deterministic/live recalc semantics intact when `LiveOxfmlBridge` passes its scenario random seed through `TypedContextQueryBundle`.
 
 ## Minimal Reproduction

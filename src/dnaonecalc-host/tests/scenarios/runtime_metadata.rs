@@ -82,3 +82,42 @@ fn formal_input_binding_affects_single_formula_evaluation() {
 
     assert_eq!(presentation.effective_display_summary.as_deref(), Some("2"));
 }
+
+#[test]
+fn deterministic_randarray_uses_provider_stream_not_one_scalar_seed() {
+    let bridge = LiveOxfmlBridge::default();
+    let result = bridge
+        .apply_formula_edit(FormulaEditRequest {
+            formula_stable_id: "deterministic-randarray-provider".to_string(),
+            entered_text: "=RANDARRAY(2,2)".to_string(),
+            cursor_offset: "=RANDARRAY(2,2)".len(),
+            previous_green_tree_key: None,
+            analysis_stage: EditorAnalysisStage::SyntaxAndBind,
+            formatting_request: None,
+            scenario_policy: ScenarioPolicyRequest::Deterministic,
+            skip_runtime_evaluation: false,
+            recalc_mode: RecalcModeRequest::Auto,
+            trace_mode: TraceModeRequest::PreparedCalls,
+            language_tag: "en-US".to_string(),
+            formal_input_bindings: Vec::new(),
+        })
+        .expect("live bridge should evaluate RANDARRAY");
+
+    let presentation = result
+        .document
+        .value_presentation
+        .expect("runtime pass should populate value presentation");
+    let preview = presentation
+        .array_preview
+        .expect("RANDARRAY should publish an array preview");
+    let values: Vec<&str> = preview.rows.iter().flatten().map(String::as_str).collect();
+
+    assert_eq!(preview.rows.len(), 2);
+    assert_eq!(preview.rows[0].len(), 2);
+    assert_eq!(preview.rows[1].len(), 2);
+    assert_eq!(values.len(), 4);
+    assert!(
+        values.windows(2).any(|pair| pair[0] != pair[1]),
+        "provider stream should produce per-cell draws, got {values:?}"
+    );
+}
