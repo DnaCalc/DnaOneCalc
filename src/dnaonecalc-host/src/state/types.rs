@@ -46,6 +46,7 @@ pub struct OneCalcHostState {
     /// like *when the formula author hasn't picked a format
     /// explicitly*. Per-formula format codes always trump this.
     pub ambient_app_context: AmbientAppContext,
+    pub vba_host_context: VbaHostContextState,
 }
 
 impl Default for OneCalcHostState {
@@ -60,8 +61,52 @@ impl Default for OneCalcHostState {
             global_ui_chrome: GlobalUiChromeState::default(),
             view_mode: ViewMode::default(),
             ambient_app_context: AmbientAppContext::default(),
+            vba_host_context: VbaHostContextState::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VbaHostContextState {
+    pub associations: Vec<VbaHostAssociationState>,
+    pub pending_project_path: String,
+    pub next_association_ordinal: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaHostAssociationState {
+    pub association_id: String,
+    pub display_name: String,
+    pub source_ref: String,
+    pub source_kind: VbaHostAssociationSourceKind,
+    pub enabled: bool,
+    pub load_status: VbaHostAssociationLoadStatus,
+    pub admitted_udf_count: usize,
+    pub rejected_candidate_count: usize,
+    pub admitted_udfs: Vec<String>,
+    pub rejected_candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VbaHostAssociationSourceKind {
+    ModuleSource,
+    ProjectPath,
+}
+
+impl VbaHostAssociationSourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ModuleSource => ".bas",
+            Self::ProjectPath => "project",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VbaHostAssociationLoadStatus {
+    PendingLoad,
+    Loaded,
+    Failed(String),
 }
 
 /// Workspace-level format defaults — what `=NOW()` / `=TODAY()` etc.

@@ -12,6 +12,7 @@ pub use types::{
     FormulaIconSetRuleOptions, FormulaInputBindingState, FormulaRankRuleOptions,
     FormulaSpaceCollectionState, FormulaSpaceContextState, FormulaSpaceState, GlobalUiChromeState,
     ModeAvailabilityFact, OneCalcHostState, OpenFormulaSpaceRecord, OxFuncMetadataSnapshot,
-    ProjectionTruthSource, RetainedArtifactOpenState, RetainedArtifactRecord, ViewMode,
-    WorkspaceNavigationSelection, WorkspaceShellState,
+    ProjectionTruthSource, RetainedArtifactOpenState, RetainedArtifactRecord,
+    VbaHostAssociationLoadStatus, VbaHostAssociationSourceKind, VbaHostAssociationState,
+    VbaHostContextState, ViewMode, WorkspaceNavigationSelection, WorkspaceShellState,
 };

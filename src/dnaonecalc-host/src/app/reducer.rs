@@ -8,6 +8,9 @@ use crate::services::retained_artifacts::{
     ManualRetainedArtifactImportRequest, VerificationBundleImportRequest,
 };
 use crate::state::{CompletionHelpState, FormulaSpaceState, OneCalcHostState};
+use crate::state::{
+    VbaHostAssociationLoadStatus, VbaHostAssociationSourceKind, VbaHostAssociationState,
+};
 use crate::ui::editor::commands::{
     apply_editor_command, cycle_completion_selection, EditorCommand, EditorInputEvent,
 };
@@ -165,6 +168,113 @@ pub fn toggle_editor_settings_popover(state: &mut OneCalcHostState) -> bool {
 pub fn toggle_configure_drawer(state: &mut OneCalcHostState) -> bool {
     state.global_ui_chrome.configure_drawer_open = !state.global_ui_chrome.configure_drawer_open;
     true
+}
+
+pub fn set_pending_vba_project_path(state: &mut OneCalcHostState, path: impl Into<String>) -> bool {
+    let path = path.into();
+    if state.vba_host_context.pending_project_path == path {
+        return false;
+    }
+    state.vba_host_context.pending_project_path = path;
+    true
+}
+
+pub fn add_pending_vba_project_path(state: &mut OneCalcHostState) -> bool {
+    let source_ref = state
+        .vba_host_context
+        .pending_project_path
+        .trim()
+        .to_string();
+    if source_ref.is_empty() {
+        return false;
+    }
+    add_vba_host_association(
+        state,
+        source_ref.clone(),
+        source_ref,
+        VbaHostAssociationSourceKind::ProjectPath,
+    );
+    state.vba_host_context.pending_project_path.clear();
+    true
+}
+
+pub fn add_vba_module_source_for_host_context(
+    state: &mut OneCalcHostState,
+    display_name: impl Into<String>,
+    source_label: impl Into<String>,
+    admitted_udfs: Vec<String>,
+    rejected_candidates: Vec<String>,
+) -> bool {
+    let display_name = display_name.into();
+    let source_label = source_label.into();
+    if display_name.trim().is_empty() || source_label.trim().is_empty() {
+        return false;
+    }
+    let association = next_vba_association(
+        state,
+        display_name,
+        source_label,
+        VbaHostAssociationSourceKind::ModuleSource,
+        VbaHostAssociationLoadStatus::PendingLoad,
+        admitted_udfs,
+        rejected_candidates,
+    );
+    state.vba_host_context.associations.push(association);
+    true
+}
+
+pub fn remove_vba_host_association(state: &mut OneCalcHostState, association_id: &str) -> bool {
+    let before = state.vba_host_context.associations.len();
+    state
+        .vba_host_context
+        .associations
+        .retain(|association| association.association_id != association_id);
+    before != state.vba_host_context.associations.len()
+}
+
+fn add_vba_host_association(
+    state: &mut OneCalcHostState,
+    display_name: String,
+    source_ref: String,
+    source_kind: VbaHostAssociationSourceKind,
+) {
+    let association = next_vba_association(
+        state,
+        display_name,
+        source_ref,
+        source_kind,
+        VbaHostAssociationLoadStatus::PendingLoad,
+        Vec::new(),
+        Vec::new(),
+    );
+    state.vba_host_context.associations.push(association);
+}
+
+fn next_vba_association(
+    state: &mut OneCalcHostState,
+    display_name: String,
+    source_ref: String,
+    source_kind: VbaHostAssociationSourceKind,
+    load_status: VbaHostAssociationLoadStatus,
+    admitted_udfs: Vec<String>,
+    rejected_candidates: Vec<String>,
+) -> VbaHostAssociationState {
+    state.vba_host_context.next_association_ordinal += 1;
+    VbaHostAssociationState {
+        association_id: format!(
+            "vba-assoc-{}",
+            state.vba_host_context.next_association_ordinal
+        ),
+        display_name,
+        source_ref,
+        source_kind,
+        enabled: true,
+        load_status,
+        admitted_udf_count: admitted_udfs.len(),
+        rejected_candidate_count: rejected_candidates.len(),
+        admitted_udfs,
+        rejected_candidates,
+    }
 }
 
 /// Toggle the titlebar scenario-breadcrumb dropdown. Returns `true`

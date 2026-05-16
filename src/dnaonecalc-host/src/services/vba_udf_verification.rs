@@ -34,10 +34,11 @@ pub struct VbaUdfVerificationRequest {
     pub project_name: String,
     pub module_name: String,
     pub module_source: String,
+    pub vba_project_path: Option<String>,
     pub application_version: String,
     pub association_id: String,
     pub project_ref: String,
-    pub excel_oracle_ref: String,
+    pub excel_oracle_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,9 +49,10 @@ pub struct VbaUdfVerificationReport {
     pub output_root: String,
     pub comparison_status: ProgrammaticComparisonStatus,
     pub dna_value: Value,
-    pub excel_oracle_value: Value,
-    pub value_match: bool,
-    pub excel_oracle_ref: String,
+    pub excel_oracle_value: Option<Value>,
+    pub value_match: Option<bool>,
+    pub excel_oracle_ref: Option<String>,
+    pub oracle_status: String,
     pub invocation_record_path: String,
     pub capability_snapshot_path: String,
     pub blocked_matrix_path: String,
@@ -66,16 +68,23 @@ pub struct VbaUdfOracleObservation {
 }
 
 pub fn default_vba_udf_verification_request() -> VbaUdfVerificationRequest {
+    let mut request = default_vba_udf_evaluation_request();
+    request.excel_oracle_ref = Some(DEFAULT_ORACLE_REF.to_string());
+    request
+}
+
+pub fn default_vba_udf_evaluation_request() -> VbaUdfVerificationRequest {
     VbaUdfVerificationRequest {
         case_id: DEFAULT_CASE_ID.to_string(),
         formula: DEFAULT_FORMULA.to_string(),
         project_name: DEFAULT_PROJECT_NAME.to_string(),
         module_name: DEFAULT_MODULE_NAME.to_string(),
         module_source: default_addthem_module_source(),
+        vba_project_path: None,
         application_version: DEFAULT_APPLICATION_VERSION.to_string(),
         association_id: DEFAULT_ASSOCIATION_ID.to_string(),
         project_ref: DEFAULT_PROJECT_REF.to_string(),
-        excel_oracle_ref: DEFAULT_ORACLE_REF.to_string(),
+        excel_oracle_ref: None,
     }
 }
 
@@ -111,22 +120,49 @@ pub fn run_vba_udf_verification(
         )
     })?;
 
-    let oracle_path = resolve_repo_relative_path(&repo_root, &request.excel_oracle_ref);
-    let oracle = load_oracle_observation(&oracle_path)?;
-    verify_oracle_matches_formula(request, &oracle)?;
+    let oracle = if let Some(oracle_ref) = request.excel_oracle_ref.as_deref() {
+        let oracle_path = resolve_repo_relative_path(&repo_root, oracle_ref);
+        let oracle = load_oracle_observation(&oracle_path)?;
+        verify_oracle_matches_formula(request, &oracle)?;
+        Some(oracle)
+    } else {
+        None
+    };
 
-    let runtime = VbaHostRuntime::load_source_project(
-        VbaProjectAssociation::workspace_source(&request.association_id, &request.project_ref),
-        OxvbaSourceProject {
-            project_name: request.project_name.clone(),
-            modules: vec![OxvbaSourceModule {
-                module_name: request.module_name.clone(),
-                source: request.module_source.clone(),
-            }],
-        },
-        &request.application_version,
-        Some(request.excel_oracle_ref.clone()),
-    )?;
+    let association =
+        VbaProjectAssociation::workspace_source(&request.association_id, &request.project_ref);
+    let runtime = if let Some(project_path) = request.vba_project_path.as_deref() {
+        VbaHostRuntime::load_project_path_for_evaluation(
+            association,
+            resolve_repo_relative_path(&repo_root, project_path),
+            &request.application_version,
+        )?
+    } else if request.excel_oracle_ref.is_some() {
+        VbaHostRuntime::load_source_project(
+            association,
+            OxvbaSourceProject {
+                project_name: request.project_name.clone(),
+                modules: vec![OxvbaSourceModule {
+                    module_name: request.module_name.clone(),
+                    source: request.module_source.clone(),
+                }],
+            },
+            &request.application_version,
+            request.excel_oracle_ref.clone(),
+        )?
+    } else {
+        VbaHostRuntime::load_source_project_for_evaluation(
+            association,
+            OxvbaSourceProject {
+                project_name: request.project_name.clone(),
+                modules: vec![OxvbaSourceModule {
+                    module_name: request.module_name.clone(),
+                    source: request.module_source.clone(),
+                }],
+            },
+            &request.application_version,
+        )?
+    };
 
     let locale = oxfml_en_us_locale_context();
     let query_bundle =
@@ -153,11 +189,17 @@ pub fn run_vba_udf_verification(
     }
 
     let dna_value = eval_value_to_oracle_shape(&result.published_worksheet_value);
-    let value_match = values_match(&dna_value, &oracle.comparison_value);
-    let comparison_status = if value_match {
-        ProgrammaticComparisonStatus::Matched
-    } else {
-        ProgrammaticComparisonStatus::Mismatched
+    let value_match = oracle
+        .as_ref()
+        .map(|oracle| values_match(&dna_value, &oracle.comparison_value));
+    let comparison_status = match value_match {
+        Some(true) | None => ProgrammaticComparisonStatus::Matched,
+        Some(false) => ProgrammaticComparisonStatus::Mismatched,
+    };
+    let oracle_status = match value_match {
+        Some(true) => "matched",
+        Some(false) => "mismatched",
+        None => "not_requested",
     };
 
     let invocation_record_path = output_root.join("vba-udf-invocation-record.json");
@@ -170,10 +212,11 @@ pub fn run_vba_udf_verification(
         "association": runtime.association(),
         "formula_call": request.formula,
         "excel_oracle_ref": request.excel_oracle_ref,
+        "oracle_status": oracle_status,
         "signature": runtime.registrations().first().map(registration_to_json),
         "type_map": {
-            "status": "excel-observed",
-            "argument_rules": ["number-to-double", "number-to-double"],
+            "status": runtime.registrations().first().map(|registration| registration.type_map_status.as_str()).unwrap_or("none"),
+            "argument_rules": ["number-to-double"],
             "return_rule": "double-to-number"
         },
         "dna_result": {
@@ -181,14 +224,14 @@ pub fn run_vba_udf_verification(
             "raw_value_debug": format!("{:?}", result.published_worksheet_value)
         },
         "excel_oracle": oracle,
-        "verdict": if value_match { "matched" } else { "mismatched" }
+        "verdict": oracle_status
     });
     write_json_file(&invocation_record_path, &invocation_record)?;
 
     let capability_snapshot = json!({
         "schema_id": "dnaonecalc.vba_udf_capability_snapshot.v1",
         "case_id": request.case_id,
-        "oxvba_project_name": request.project_name,
+        "oxvba_project_name": runtime.association().project_identity.as_deref().unwrap_or(&request.project_name),
         "application_root": {
             "name": "Application",
             "members": ["Version"],
@@ -213,13 +256,16 @@ pub fn run_vba_udf_verification(
         output_root: display_repo_relative(output_root, &repo_root),
         comparison_status,
         dna_value: invocation_record["dna_result"]["comparison_value"].clone(),
-        excel_oracle_value: oracle.comparison_value,
+        excel_oracle_value: oracle
+            .as_ref()
+            .map(|oracle| oracle.comparison_value.clone()),
         value_match,
         excel_oracle_ref: request.excel_oracle_ref.clone(),
+        oracle_status: oracle_status.to_string(),
         invocation_record_path: display_repo_relative(&invocation_record_path, &repo_root),
         capability_snapshot_path: display_repo_relative(&capability_snapshot_path, &repo_root),
         blocked_matrix_path: display_repo_relative(&blocked_matrix_path, &repo_root),
-        artifact_open_mode_hint: if value_match {
+        artifact_open_mode_hint: if value_match.unwrap_or(true) {
             ProgrammaticOpenModeHint::Inspect
         } else {
             ProgrammaticOpenModeHint::Workbench
@@ -468,21 +514,42 @@ fn resolve_repo_relative_path(repo_root: &Path, path: &str) -> PathBuf {
     let candidate = PathBuf::from(path);
     if candidate.is_absolute() {
         candidate
+    } else if let Ok(current_dir) = std::env::current_dir() {
+        let current_candidate = current_dir.join(&candidate);
+        if current_candidate.exists() {
+            return current_candidate;
+        }
+        let onecalc_candidate = dnaonecalc_repo_root()
+            .map(|root| root.join(&candidate))
+            .unwrap_or_else(|_| current_candidate.clone());
+        if onecalc_candidate.exists() {
+            return onecalc_candidate;
+        }
+        repo_root.join(candidate)
     } else {
         repo_root.join(candidate)
     }
 }
 
 fn repo_root() -> Result<PathBuf, String> {
+    let onecalc_root = dnaonecalc_repo_root()?;
+    onecalc_root.parent().map(Path::to_path_buf).ok_or_else(|| {
+        format!(
+            "failed to resolve DnaCalc root from `{}`",
+            onecalc_root.display()
+        )
+    })
+}
+
+fn dnaonecalc_repo_root() -> Result<PathBuf, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
         .parent()
         .and_then(Path::parent)
-        .and_then(Path::parent)
         .map(Path::to_path_buf)
         .ok_or_else(|| {
             format!(
-                "failed to resolve repository root from `{}`",
+                "failed to resolve DnaOneCalc repository root from `{}`",
                 manifest_dir.display()
             )
         })
@@ -516,12 +583,41 @@ mod tests {
             report.comparison_status,
             ProgrammaticComparisonStatus::Matched
         );
-        assert!(report.value_match);
+        assert_eq!(report.value_match, Some(true));
         assert!(output_root.join("vba-udf-invocation-record.json").exists());
         assert!(output_root
             .join("vba-udf-capability-snapshot.json")
             .exists());
         assert!(output_root.join("vba-udf-blocked-matrix.json").exists());
+    }
+
+    #[test]
+    fn vba_udf_evaluation_runs_custom_formula_without_oracle() {
+        let output_root = repo_root()
+            .expect("repo root")
+            .join("DnaOneCalc")
+            .join("target")
+            .join("onecalc-verification-tests")
+            .join("vba-udf-multiply-three-no-oracle");
+        let _ = fs::remove_dir_all(&output_root);
+        let mut request = default_vba_udf_evaluation_request();
+        request.case_id = "VBA-UDF-MULTIPLY-THREE".to_string();
+        request.formula = "=MultiplyThree(2, 3, 4)".to_string();
+        request.module_source = concat!(
+            "Public Function MultiplyThree(val1 As Double, val2 As Double, val3 As Double) As Double\n",
+            "  MultiplyThree = val1 * val2 * val3\n",
+            "End Function\n"
+        )
+        .to_string();
+
+        let report = run_vba_udf_verification(&request, &output_root).expect("VBA UDF evaluation");
+
+        assert_eq!(report.oracle_status, "not_requested");
+        assert_eq!(report.value_match, None);
+        assert_eq!(
+            report.dna_value,
+            json!({ "kind": "number", "number": 24.0 })
+        );
     }
 
     #[test]

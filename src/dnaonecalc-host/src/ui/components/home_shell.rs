@@ -46,7 +46,7 @@ use crate::services::home_shell_view_model::{
     ManageFormulasView, NumberFormatPreset, ResultClassPill, ResultContextChip, ResultKind,
     ResultView, ScenarioBreadcrumbAction, ScenarioBreadcrumbActionId, ScenarioBreadcrumbEntry,
     ScenarioBreadcrumbView, ScenarioPolicyView, SignatureHelpView, StatusView,
-    ValueCapabilityFactKind,
+    ValueCapabilityFactKind, VbaHostAssociationView, VbaHostContextView,
 };
 use crate::services::live_edit::apply_live_editor_input;
 #[cfg(target_arch = "wasm32")]
@@ -684,6 +684,32 @@ pub fn HomeShell(
             },
         )
     };
+    let on_vba_project_path_input = Callback::new(move |path: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::set_pending_vba_project_path(s, path);
+        });
+    });
+    let on_vba_project_path_add = Callback::new(move |()| {
+        state.update(|s| {
+            let _ = crate::app::reducer::add_pending_vba_project_path(s);
+        });
+    });
+    let on_vba_module_file_selected = Callback::new(move |file_name: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::add_vba_module_source_for_host_context(
+                s,
+                file_name.clone(),
+                format!("browser-file:{file_name}"),
+                Vec::new(),
+                Vec::new(),
+            );
+        });
+    });
+    let on_vba_association_remove = Callback::new(move |association_id: String| {
+        state.update(|s| {
+            let _ = crate::app::reducer::remove_vba_host_association(s, &association_id);
+        });
+    });
     // Manual recalculate trigger. Wired both to the F9 key
     // (handled in `on_textarea_keydown`) and to a small button in
     // the editor-foot row. In Deterministic policy this re-runs
@@ -1480,6 +1506,13 @@ pub fn HomeShell(
                             on_add_cf_rule,
                             on_remove_cf_rule,
                             on_update_cf_rule,
+                        )}
+                        {move || render_vba_host_panel(
+                            view_model.get().map(|vm| vm.vba_host_context),
+                            on_vba_project_path_input,
+                            on_vba_project_path_add,
+                            on_vba_module_file_selected,
+                            on_vba_association_remove,
                         )}
                     </section>
 
@@ -2503,6 +2536,127 @@ fn render_formatting_panel(
                     view! { <></> }.into_any()
                 }}
             </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_vba_host_panel(
+    context: Option<VbaHostContextView>,
+    on_path_input: Callback<String>,
+    on_add_path: Callback<()>,
+    on_module_file_selected: Callback<String>,
+    on_remove: Callback<String>,
+) -> AnyView {
+    let Some(context) = context else {
+        return view! { <></> }.into_any();
+    };
+    let path_value = context.pending_project_path.clone();
+    let rows = context
+        .associations
+        .into_iter()
+        .map(|association| render_vba_association_row(association, on_remove))
+        .collect::<Vec<_>>();
+    let row_count = rows.len().to_string();
+    view! {
+        <div class="onecalc-home-shell__vba-panel" data-component="vba-host-context">
+            <div class="onecalc-home-shell__formatting-row" data-vba-row="picker">
+                <span class="onecalc-home-shell__formatting-caption">"VBA ▸"</span>
+                <label class="onecalc-home-shell__formatting-field">
+                    <span class="onecalc-home-shell__formatting-field-label">"project path"</span>
+                    <input
+                        type="text"
+                        class="onecalc-home-shell__formatting-input"
+                        data-vba-field="project-path"
+                        placeholder="C:\\path\\Project.basproj or folder"
+                        prop:value=path_value.clone()
+                        value=path_value
+                        on:input=move |ev| {
+                            let target: web_sys::HtmlInputElement =
+                                event_target::<web_sys::HtmlInputElement>(&ev);
+                            on_path_input.run(target.value());
+                        }
+                    />
+                </label>
+                <button
+                    type="button"
+                    class="onecalc-home-shell__formatting-preset"
+                    data-vba-action="add-project-path"
+                    on:click=move |_| on_add_path.run(())
+                >
+                    "Add"
+                </button>
+                <label class="onecalc-home-shell__formatting-field">
+                    <span class="onecalc-home-shell__formatting-field-label">".bas file"</span>
+                    <input
+                        type="file"
+                        class="onecalc-home-shell__formatting-input"
+                        data-vba-field="module-file"
+                        accept=".bas"
+                        on:change=move |ev| {
+                            let target: web_sys::HtmlInputElement =
+                                event_target::<web_sys::HtmlInputElement>(&ev);
+                            if let Some(files) = target.files() {
+                                if let Some(file) = files.get(0) {
+                                    on_module_file_selected.run(file.name());
+                                }
+                            }
+                        }
+                    />
+                </label>
+                <span class="onecalc-home-shell__formatting-field-label" data-vba-summary="true">
+                    {context.summary}
+                </span>
+            </div>
+            <div class="onecalc-home-shell__vba-associations" data-vba-association-count=row_count>
+                {rows}
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn render_vba_association_row(
+    association: VbaHostAssociationView,
+    on_remove: Callback<String>,
+) -> AnyView {
+    let id = association.association_id.clone();
+    let admitted = if association.admitted_udfs.is_empty() {
+        "admitted: pending load".to_string()
+    } else {
+        format!("admitted: {}", association.admitted_udfs.join(", "))
+    };
+    let rejected = if association.rejected_candidates.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · rejected: {}",
+            association.rejected_candidates.join(", ")
+        )
+    };
+    view! {
+        <div class="onecalc-home-shell__vba-association" data-vba-association-id=association.association_id>
+            <span class="onecalc-home-shell__palette-row-section">{association.source_kind}</span>
+            <span class="onecalc-home-shell__palette-row-label">{association.display_name}</span>
+            <span class="onecalc-home-shell__palette-row-detail">
+                {format!(
+                    "{} · {} UDF(s) · {} rejected · {}{}",
+                    association.status_label,
+                    association.admitted_udf_count,
+                    association.rejected_candidate_count,
+                    admitted,
+                    rejected,
+                )}
+            </span>
+            <span class="onecalc-home-shell__palette-row-detail">{association.source_ref}</span>
+            <button
+                type="button"
+                class="onecalc-home-shell__formatting-preset"
+                data-vba-action="remove"
+                on:click=move |_| on_remove.run(id.clone())
+            >
+                "Remove"
+            </button>
         </div>
     }
     .into_any()

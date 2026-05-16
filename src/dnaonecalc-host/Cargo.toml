@@ -19,6 +19,7 @@ oxfml_core = { path = "../../../OxFml/crates/oxfml_core" }
 oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core" }
 oxvba_compiler = { package = "oxvba-compiler", path = "../../../OxVba/crates/oxvba-compiler" }
 oxvba_host = { package = "oxvba-host", path = "../../../OxVba/crates/oxvba-host" }
+oxvba_project = { package = "oxvba-project", path = "../../../OxVba/crates/oxvba-project" }
 oxvba_runtime = { package = "oxvba-runtime", path = "../../../OxVba/crates/oxvba-runtime" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

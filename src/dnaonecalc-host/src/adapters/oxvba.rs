@@ -25,12 +25,19 @@ pub fn compile_hosted_source_project(
     project: &OxvbaSourceProject,
     application_version: &str,
 ) -> Result<OxvbaHostedProjectSession, PhaseDiagnostic> {
+    compile_hosted_project_manifest(&build_hosted_manifest(project), application_version)
+}
+
+pub fn compile_hosted_project_manifest(
+    manifest: &ProjectManifest,
+    application_version: &str,
+) -> Result<OxvbaHostedProjectSession, PhaseDiagnostic> {
     let mut engine = Engine::new(HostConfig {
         enable_jit: false,
         root_object_name: Some("Application".to_string()),
     });
     engine.register_root_object("Application", "DnaOneCalc.Application");
-    let manifest = build_hosted_manifest(project, application_version);
+    let manifest = hosted_manifest_with_application(manifest, application_version);
     let session = engine.compile_and_prepare_session(&manifest)?;
     Ok(OxvbaHostedProjectSession { engine, session })
 }
@@ -73,22 +80,29 @@ pub fn invoke_procedure_with_variants(
     )
 }
 
-fn build_hosted_manifest(
-    project: &OxvbaSourceProject,
-    application_version: &str,
-) -> ProjectManifest {
-    let mut modules = Vec::with_capacity(project.modules.len() + 1);
-    modules.push(host_application_module(application_version));
-    modules.extend(project.modules.iter().map(source_module));
-
+fn build_hosted_manifest(project: &OxvbaSourceProject) -> ProjectManifest {
     ProjectManifest {
         project_name: project.project_name.clone(),
         project_kind: ProjectKind::Library,
-        modules,
+        modules: project.modules.iter().map(source_module).collect(),
         references: Vec::new(),
         reference_projects: Vec::new(),
         conditional_constants: Default::default(),
     }
+}
+
+fn hosted_manifest_with_application(
+    manifest: &ProjectManifest,
+    application_version: &str,
+) -> ProjectManifest {
+    let mut hosted = manifest.clone();
+    hosted
+        .modules
+        .retain(|module| !module.module_name.eq_ignore_ascii_case("Application"));
+    hosted
+        .modules
+        .insert(0, host_application_module(application_version));
+    hosted
 }
 
 fn source_module(module: &OxvbaSourceModule) -> ModuleUnit {

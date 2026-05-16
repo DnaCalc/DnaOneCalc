@@ -143,6 +143,7 @@ pub struct HomeShellViewModel {
     /// `FormulaFormattingState`; the renderer's `on:input` handlers
     /// dispatch the matching reducer setters.
     pub formatting_controls: FormattingControlsView,
+    pub vba_host_context: VbaHostContextView,
     /// Manage-formulas overlay projection. `is_open == false`
     /// hides the overlay entirely; `true` carries the search
     /// query + filtered row list + per-row metadata so the user
@@ -230,6 +231,27 @@ pub struct FormattingControlsView {
     /// (e.g. an as-yet-unmapped Excel locale id) without code
     /// changes here.
     pub locale_seam_id: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaHostContextView {
+    pub pending_project_path: String,
+    pub associations: Vec<VbaHostAssociationView>,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaHostAssociationView {
+    pub association_id: String,
+    pub display_name: String,
+    pub source_ref: String,
+    pub source_kind: String,
+    pub enabled: bool,
+    pub status_label: String,
+    pub admitted_udf_count: usize,
+    pub rejected_candidate_count: usize,
+    pub admitted_udfs: Vec<String>,
+    pub rejected_candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1386,6 +1408,7 @@ fn project_formula_space(
     let formula_tab_strip = project_formula_tab_strip(state);
     let command_palette = project_command_palette(state);
     let manage_formulas = project_manage_formulas(state);
+    let vba_host_context = project_vba_host_context(state);
     HomeShellViewModel {
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
@@ -1407,7 +1430,59 @@ fn project_formula_space(
         formula_tab_strip,
         command_palette,
         formatting_controls,
+        vba_host_context,
         manage_formulas,
+    }
+}
+
+fn project_vba_host_context(state: &OneCalcHostState) -> VbaHostContextView {
+    let associations = state
+        .vba_host_context
+        .associations
+        .iter()
+        .map(|association| VbaHostAssociationView {
+            association_id: association.association_id.clone(),
+            display_name: association.display_name.clone(),
+            source_ref: association.source_ref.clone(),
+            source_kind: association.source_kind.label().to_string(),
+            enabled: association.enabled,
+            status_label: match &association.load_status {
+                crate::state::VbaHostAssociationLoadStatus::PendingLoad => {
+                    "pending load".to_string()
+                }
+                crate::state::VbaHostAssociationLoadStatus::Loaded => "loaded".to_string(),
+                crate::state::VbaHostAssociationLoadStatus::Failed(reason) => {
+                    format!("failed: {reason}")
+                }
+            },
+            admitted_udf_count: association.admitted_udf_count,
+            rejected_candidate_count: association.rejected_candidate_count,
+            admitted_udfs: association.admitted_udfs.clone(),
+            rejected_candidates: association.rejected_candidates.clone(),
+        })
+        .collect::<Vec<_>>();
+    let admitted_total = associations
+        .iter()
+        .map(|association| association.admitted_udf_count)
+        .sum::<usize>();
+    let rejected_total = associations
+        .iter()
+        .map(|association| association.rejected_candidate_count)
+        .sum::<usize>();
+    let summary = if associations.is_empty() {
+        "no VBA sources".to_string()
+    } else {
+        format!(
+            "{} source(s) · {} UDF(s) · {} rejected",
+            associations.len(),
+            admitted_total,
+            rejected_total
+        )
+    };
+    VbaHostContextView {
+        pending_project_path: state.vba_host_context.pending_project_path.clone(),
+        associations,
+        summary,
     }
 }
 
@@ -2890,6 +2965,7 @@ mod tests {
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::{
         AppMode, ClosedFormulaSpaceRecord, FormulaArrayPreviewState, FormulaSpaceState,
+        VbaHostAssociationLoadStatus, VbaHostAssociationSourceKind, VbaHostAssociationState,
     };
     use crate::test_support::{
         array_editor_document, blocked_editor_document, diagnostic_editor_document,
@@ -2932,6 +3008,44 @@ mod tests {
             producer_capability_set_keys: Vec::new(),
             exercised_capability_keys: Vec::new(),
         });
+    }
+
+    #[test]
+    fn view_model_projects_vba_host_context_associations() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=AddThem(2,3)");
+        let mut state = host_state_with(formula_space);
+        state.vba_host_context.pending_project_path = "fixtures/vba_udf/multi_module".to_string();
+        state
+            .vba_host_context
+            .associations
+            .push(VbaHostAssociationState {
+                association_id: "vba-assoc-1".to_string(),
+                display_name: "MathOne".to_string(),
+                source_ref: "fixtures/vba_udf/multi_module".to_string(),
+                source_kind: VbaHostAssociationSourceKind::ProjectPath,
+                enabled: true,
+                load_status: VbaHostAssociationLoadStatus::Loaded,
+                admitted_udf_count: 2,
+                rejected_candidate_count: 1,
+                admitted_udfs: vec!["AddThem".to_string(), "MultiplyThree".to_string()],
+                rejected_candidates: vec!["EchoText".to_string()],
+            });
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+
+        assert_eq!(
+            vm.vba_host_context.pending_project_path,
+            "fixtures/vba_udf/multi_module"
+        );
+        assert_eq!(
+            vm.vba_host_context.summary,
+            "1 source(s) · 2 UDF(s) · 1 rejected"
+        );
+        assert_eq!(vm.vba_host_context.associations[0].source_kind, "project");
+        assert_eq!(
+            vm.vba_host_context.associations[0].admitted_udfs,
+            vec!["AddThem".to_string(), "MultiplyThree".to_string()]
+        );
     }
 
     #[test]
