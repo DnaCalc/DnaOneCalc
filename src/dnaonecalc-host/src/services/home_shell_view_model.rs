@@ -22,7 +22,9 @@ use crate::services::completion_popup::{CompletionPopupKind, CompletionPopupStat
 use crate::services::function_semantic_profile::{
     project_function_semantic_profile, FunctionSemanticProfileRow,
 };
-use crate::state::CapabilityLedgerSnapshot;
+use crate::state::{
+    CapabilityLedgerSnapshot, VbaHostAssociationSourceKind, VbaHostAssociationState,
+};
 use crate::state::{FormulaSpaceState, OneCalcHostState, ProjectionTruthSource, ViewMode};
 use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{syntax_runs_from_snapshot, SyntaxRun, SyntaxTokenRole};
@@ -1443,18 +1445,10 @@ fn project_vba_host_context(state: &OneCalcHostState) -> VbaHostContextView {
         .map(|association| VbaHostAssociationView {
             association_id: association.association_id.clone(),
             display_name: association.display_name.clone(),
-            source_ref: association.source_ref.clone(),
-            source_kind: association.source_kind.label().to_string(),
+            source_ref: vba_source_ref_label(association),
+            source_kind: vba_source_kind_label(association).to_string(),
             enabled: association.enabled,
-            status_label: match &association.load_status {
-                crate::state::VbaHostAssociationLoadStatus::PendingLoad => {
-                    "pending load".to_string()
-                }
-                crate::state::VbaHostAssociationLoadStatus::Loaded => "loaded".to_string(),
-                crate::state::VbaHostAssociationLoadStatus::Failed(reason) => {
-                    format!("failed: {reason}")
-                }
-            },
+            status_label: vba_load_status_label(association),
             admitted_udf_count: association.admitted_udf_count,
             rejected_candidate_count: association.rejected_candidate_count,
             admitted_udfs: association.admitted_udfs.clone(),
@@ -1483,6 +1477,40 @@ fn project_vba_host_context(state: &OneCalcHostState) -> VbaHostContextView {
         pending_project_path: state.vba_host_context.pending_project_path.clone(),
         associations,
         summary,
+    }
+}
+
+fn vba_source_kind_label(association: &VbaHostAssociationState) -> &'static str {
+    if association.source_kind == VbaHostAssociationSourceKind::ModuleSource
+        && association.source_ref.starts_with("browser-file:")
+    {
+        "browser .bas"
+    } else {
+        association.source_kind.label()
+    }
+}
+
+fn vba_source_ref_label(association: &VbaHostAssociationState) -> String {
+    association
+        .source_ref
+        .strip_prefix("browser-file:")
+        .unwrap_or(&association.source_ref)
+        .to_string()
+}
+
+fn vba_load_status_label(association: &VbaHostAssociationState) -> String {
+    match &association.load_status {
+        crate::state::VbaHostAssociationLoadStatus::PendingLoad
+            if association.source_kind == VbaHostAssociationSourceKind::ModuleSource
+                && association.source_ref.starts_with("browser-file:") =>
+        {
+            "selected; native load pending".to_string()
+        }
+        crate::state::VbaHostAssociationLoadStatus::PendingLoad => "pending load".to_string(),
+        crate::state::VbaHostAssociationLoadStatus::Loaded => "loaded".to_string(),
+        crate::state::VbaHostAssociationLoadStatus::Failed(reason) => {
+            format!("failed: {reason}")
+        }
     }
 }
 
@@ -3046,6 +3074,34 @@ mod tests {
             vm.vba_host_context.associations[0].admitted_udfs,
             vec!["AddThem".to_string(), "MultiplyThree".to_string()]
         );
+    }
+
+    #[test]
+    fn view_model_projects_browser_vba_file_without_raw_source_prefix() {
+        let formula_space = FormulaSpaceState::new(FormulaSpaceId::new("space-1"), "=AddThem(2,3)");
+        let mut state = host_state_with(formula_space);
+        state
+            .vba_host_context
+            .associations
+            .push(VbaHostAssociationState {
+                association_id: "vba-assoc-1".to_string(),
+                display_name: "SimpleVba.bas".to_string(),
+                source_ref: "browser-file:SimpleVba.bas".to_string(),
+                source_kind: VbaHostAssociationSourceKind::ModuleSource,
+                enabled: true,
+                load_status: VbaHostAssociationLoadStatus::PendingLoad,
+                admitted_udf_count: 0,
+                rejected_candidate_count: 0,
+                admitted_udfs: Vec::new(),
+                rejected_candidates: Vec::new(),
+            });
+
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+        let association = &vm.vba_host_context.associations[0];
+
+        assert_eq!(association.source_kind, "browser .bas");
+        assert_eq!(association.source_ref, "SimpleVba.bas");
+        assert_eq!(association.status_label, "selected; native load pending");
     }
 
     #[test]

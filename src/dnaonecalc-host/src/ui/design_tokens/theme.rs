@@ -3025,6 +3025,69 @@ pub const ONECALC_THEME_CSS: &str = r#"
   font-size: 0.85rem;
 }
 
+.onecalc-home-shell__vba-association {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(140px, 1fr) auto auto minmax(120px, auto) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--oc-color-border);
+}
+
+.onecalc-home-shell__vba-source-kind {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-color-muted);
+}
+
+.onecalc-home-shell__vba-source-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.onecalc-home-shell__vba-source-status,
+.onecalc-home-shell__vba-source-detail,
+.onecalc-home-shell__vba-source-ref,
+.onecalc-home-shell__vba-source-rejected {
+  color: var(--oc-color-muted);
+  font-size: 0.85rem;
+}
+
+.onecalc-home-shell__vba-source-ref {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--oc-font-mono);
+}
+
+.onecalc-home-shell__vba-source-rejected {
+  grid-column: 3 / -1;
+  overflow-wrap: anywhere;
+}
+
+.onecalc-home-shell__vba-association > .onecalc-home-shell__formatting-preset {
+  justify-self: end;
+}
+
+@media (max-width: 900px) {
+  .onecalc-home-shell__vba-association {
+    grid-template-columns: minmax(76px, auto) minmax(0, 1fr) auto;
+  }
+
+  .onecalc-home-shell__vba-source-status,
+  .onecalc-home-shell__vba-source-detail,
+  .onecalc-home-shell__vba-source-ref,
+  .onecalc-home-shell__vba-source-rejected {
+    grid-column: 2 / -1;
+  }
+
+  .onecalc-home-shell__vba-association > .onecalc-home-shell__formatting-preset {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
 .onecalc-home-shell__palette-row-chord {
   color: var(--oc-color-muted);
   font-family: var(--oc-font-mono);

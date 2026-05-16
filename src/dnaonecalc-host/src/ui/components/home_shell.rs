@@ -2621,34 +2621,31 @@ fn render_vba_association_row(
     on_remove: Callback<String>,
 ) -> AnyView {
     let id = association.association_id.clone();
-    let admitted = if association.admitted_udfs.is_empty() {
-        "admitted: pending load".to_string()
+    let udf_detail = if association.admitted_udfs.is_empty() {
+        format!(
+            "{} UDF(s) · {} rejected",
+            association.admitted_udf_count, association.rejected_candidate_count,
+        )
     } else {
-        format!("admitted: {}", association.admitted_udfs.join(", "))
+        format!(
+            "{} UDF(s) · {} rejected · admitted: {}",
+            association.admitted_udf_count,
+            association.rejected_candidate_count,
+            association.admitted_udfs.join(", "),
+        )
     };
     let rejected = if association.rejected_candidates.is_empty() {
         String::new()
     } else {
-        format!(
-            " · rejected: {}",
-            association.rejected_candidates.join(", ")
-        )
+        format!("rejected: {}", association.rejected_candidates.join(", "))
     };
     view! {
         <div class="onecalc-home-shell__vba-association" data-vba-association-id=association.association_id>
-            <span class="onecalc-home-shell__palette-row-section">{association.source_kind}</span>
-            <span class="onecalc-home-shell__palette-row-label">{association.display_name}</span>
-            <span class="onecalc-home-shell__palette-row-detail">
-                {format!(
-                    "{} · {} UDF(s) · {} rejected · {}{}",
-                    association.status_label,
-                    association.admitted_udf_count,
-                    association.rejected_candidate_count,
-                    admitted,
-                    rejected,
-                )}
-            </span>
-            <span class="onecalc-home-shell__palette-row-detail">{association.source_ref}</span>
+            <span class="onecalc-home-shell__vba-source-kind">{association.source_kind}</span>
+            <span class="onecalc-home-shell__vba-source-name">{association.display_name}</span>
+            <span class="onecalc-home-shell__vba-source-status">{association.status_label}</span>
+            <span class="onecalc-home-shell__vba-source-detail">{udf_detail}</span>
+            <span class="onecalc-home-shell__vba-source-ref">{association.source_ref}</span>
             <button
                 type="button"
                 class="onecalc-home-shell__formatting-preset"
@@ -2657,6 +2654,9 @@ fn render_vba_association_row(
             >
                 "Remove"
             </button>
+            {(!rejected.is_empty()).then(|| view! {
+                <span class="onecalc-home-shell__vba-source-rejected">{rejected}</span>
+            })}
         </div>
     }
     .into_any()
