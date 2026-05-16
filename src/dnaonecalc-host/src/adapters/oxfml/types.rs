@@ -83,6 +83,15 @@ pub fn worksheet_error_literal(code: WorksheetErrorCode) -> &'static str {
 pub struct FormulaWalkNode {
     pub node_id: String,
     pub label: String,
+    pub developer_label: Option<String>,
+    pub expression_text: Option<String>,
+    pub kind: Option<String>,
+    pub source_span_start: Option<usize>,
+    pub source_span_len: Option<usize>,
+    pub branch_disposition: Option<String>,
+    pub argument_name: Option<String>,
+    pub argument_role: Option<String>,
+    pub error_message: Option<String>,
     pub value_preview: Option<String>,
     pub state: FormulaWalkNodeState,
     pub children: Vec<FormulaWalkNode>,
@@ -90,10 +99,13 @@ pub struct FormulaWalkNode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormulaWalkNodeState {
+    Pending,
     Evaluated,
     Bound,
+    Skipped,
     Opaque,
     Blocked,
+    Error,
 }
 
 /// Compact parse-phase summary. Host-bundle of upstream parse signals.

@@ -3,6 +3,7 @@ pub mod capability_snapshot;
 pub mod completion_popup;
 pub mod editor_session;
 pub mod formal_inputs;
+pub mod formula_drill_audit;
 pub mod function_semantic_profile;
 pub mod home_shell_view_model;
 pub mod live_edit;

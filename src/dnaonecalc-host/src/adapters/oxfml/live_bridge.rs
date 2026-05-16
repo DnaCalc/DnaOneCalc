@@ -6,7 +6,8 @@ use oxfml_core::consumer::editor::{
     EditorInteractionResult as UpstreamEditorInteractionResult,
 };
 use oxfml_core::consumer::runtime::{
-    RuntimeEnvironment, RuntimeFormalInputBinding, RuntimeFormulaRequest, RuntimeFormulaResult,
+    FormulaDrillEvaluationState, FormulaDrillTrace, FormulaDrillTraceNode, RuntimeEnvironment,
+    RuntimeFormalInputBinding, RuntimeFormulaRequest, RuntimeFormulaResult,
 };
 use oxfml_core::format::{oxfml_en_us_locale_context, oxfml_locale_context};
 use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
@@ -214,7 +215,7 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                 Some(now_serial),
                 Some(random_value),
             );
-            let mut runtime_request = RuntimeFormulaRequest::new(source, typed_context);
+            let mut runtime_request = RuntimeFormulaRequest::new(source.clone(), typed_context);
             if let Some(formatting) = request.formatting_request.as_ref() {
                 if let Some(context) = build_publication_context(formatting) {
                     runtime_request =
@@ -245,10 +246,17 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
             None
         };
 
+        let projection_drill_trace = if runtime_result.is_none() {
+            Some(RuntimeEnvironment::new().formula_drill_trace_for_source(source.clone()))
+        } else {
+            None
+        };
+
         let document = build_editor_document(
             &request.formula_stable_id,
             &interaction,
             runtime_result.as_ref(),
+            projection_drill_trace.as_ref(),
         );
         if fingerprint.is_cacheable() {
             self.cache_result(
@@ -365,6 +373,7 @@ fn build_editor_document(
     _formula_stable_id: &str,
     interaction: &UpstreamEditorInteractionResult,
     runtime_result: Option<&RuntimeFormulaResult>,
+    projection_drill_trace: Option<&FormulaDrillTrace>,
 ) -> EditorDocument {
     let document = &interaction.document;
     let parse_status = if document.live_diagnostics.diagnostics.is_empty() {
@@ -387,21 +396,26 @@ fn build_editor_document(
             .as_ref()
             .map(|result| result.proposals.clone())
             .unwrap_or_default(),
-        formula_walk: runtime_result.map(map_formula_walk).unwrap_or_else(|| {
-            vec![FormulaWalkNode {
-                node_id: "node:source".to_string(),
-                label: "CellEntry".to_string(),
-                value_preview: Some(document.source.entered_formula_text.clone()),
-                state: if blocked_reason.is_some() {
-                    FormulaWalkNodeState::Blocked
-                } else if document.bound_formula.is_some() {
-                    FormulaWalkNodeState::Evaluated
-                } else {
-                    FormulaWalkNodeState::Opaque
-                },
-                children: Vec::new(),
-            }]
-        }),
+        formula_walk: runtime_result
+            .and_then(|result| result.formula_drill_trace.as_ref())
+            .or(projection_drill_trace)
+            .map(map_formula_walk_from_trace)
+            .filter(|nodes| !nodes.is_empty())
+            .or_else(|| runtime_result.map(map_formula_walk))
+            .unwrap_or_else(|| {
+                vec![fallback_formula_walk_node(
+                    "node:source",
+                    "CellEntry",
+                    Some(document.source.entered_formula_text.clone()),
+                    if blocked_reason.is_some() {
+                        FormulaWalkNodeState::Blocked
+                    } else if document.bound_formula.is_some() {
+                        FormulaWalkNodeState::Evaluated
+                    } else {
+                        FormulaWalkNodeState::Opaque
+                    },
+                )]
+            }),
         parse_summary: Some(ParseSummary {
             status: parse_status,
             token_count: document.editor_syntax_snapshot.tokens.len(),
@@ -423,21 +437,40 @@ fn build_editor_document(
         }),
         eval_summary: Some(EvalSummary {
             step_count: runtime_result
-                .map(|result| result.evaluation.trace.prepared_calls.len())
+                .and_then(|result| result.formula_drill_trace.as_ref())
+                .map(|trace| trace.evaluation_order.len())
+                .or_else(|| projection_drill_trace.map(|trace| trace.nodes.len()))
+                .or_else(|| {
+                    runtime_result.map(|result| result.evaluation.trace.prepared_calls.len())
+                })
                 .unwrap_or_else(|| usize::from(document.semantic_plan.is_some())),
             duration_text: runtime_result
-                .map(|result| {
-                    format!(
-                        "{} prepared call(s)",
-                        result.evaluation.trace.prepared_calls.len()
-                    )
+                .and_then(|result| result.formula_drill_trace.as_ref())
+                .map(|trace| format!("{} trace node(s)", trace.nodes.len()))
+                .or_else(|| {
+                    projection_drill_trace
+                        .map(|trace| format!("{} projected trace node(s)", trace.nodes.len()))
+                })
+                .or_else(|| {
+                    runtime_result.map(|result| {
+                        format!(
+                            "{} prepared call(s)",
+                            result.evaluation.trace.prepared_calls.len()
+                        )
+                    })
                 })
                 .unwrap_or_else(|| "edit-only".to_string()),
         }),
         provenance_summary: Some(ProvenanceSummary {
             profile_summary: runtime_result
                 .map(|result| format!("OxFml runtime · {:?}", result.returned_value_surface.kind))
-                .unwrap_or_else(|| "OxFml editor".to_string()),
+                .unwrap_or_else(|| {
+                    if projection_drill_trace.is_some() {
+                        "OxFml formula drill projection".to_string()
+                    } else {
+                        "OxFml editor".to_string()
+                    }
+                }),
             blocked_reason,
         }),
         value_presentation: runtime_result.map(map_value_presentation),
@@ -446,13 +479,12 @@ fn build_editor_document(
 
 fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
     if result.evaluation.trace.prepared_calls.is_empty() {
-        return vec![FormulaWalkNode {
-            node_id: "node:formula".to_string(),
-            label: "Formula".to_string(),
-            value_preview: Some(format_walk_value_preview(&result.published_worksheet_value)),
-            state: FormulaWalkNodeState::Evaluated,
-            children: Vec::new(),
-        }];
+        return vec![fallback_formula_walk_node(
+            "node:formula",
+            "Formula",
+            Some(format_walk_value_preview(&result.published_worksheet_value)),
+            FormulaWalkNodeState::Evaluated,
+        )];
     }
 
     result
@@ -464,6 +496,15 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
         .map(|(index, call)| FormulaWalkNode {
             node_id: format!("node:prepared:{index}"),
             label: call.function_name.clone(),
+            developer_label: None,
+            expression_text: None,
+            kind: Some("PreparedCall".to_string()),
+            source_span_start: None,
+            source_span_len: None,
+            branch_disposition: None,
+            argument_name: None,
+            argument_role: None,
+            error_message: None,
             value_preview: call
                 .returned_value
                 .as_ref()
@@ -483,6 +524,15 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                 .map(|(arg_ordinal, argument)| FormulaWalkNode {
                     node_id: format!("node:prepared:{index}:arg:{arg_ordinal}"),
                     label: format!("arg[{}]", argument.ordinal),
+                    developer_label: None,
+                    expression_text: None,
+                    kind: Some("PreparedArgument".to_string()),
+                    source_span_start: None,
+                    source_span_len: None,
+                    branch_disposition: None,
+                    argument_name: Some(format!("arg[{}]", argument.ordinal)),
+                    argument_role: None,
+                    error_message: None,
                     value_preview: argument
                         .resolved_value
                         .as_ref()
@@ -499,6 +549,144 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                 .collect(),
         })
         .collect()
+}
+
+fn map_formula_walk_from_trace(trace: &FormulaDrillTrace) -> Vec<FormulaWalkNode> {
+    let root = trace
+        .nodes
+        .iter()
+        .find(|node| node.node_id == trace.root_node_id);
+    match root {
+        Some(root) => vec![map_formula_drill_trace_node(trace, root)],
+        None => trace
+            .nodes
+            .iter()
+            .filter(|node| node.parent_node_id.is_none())
+            .map(|node| map_formula_drill_trace_node(trace, node))
+            .collect(),
+    }
+}
+
+fn map_formula_drill_trace_node(
+    trace: &FormulaDrillTrace,
+    node: &FormulaDrillTraceNode,
+) -> FormulaWalkNode {
+    let children = node
+        .child_node_ids
+        .iter()
+        .filter_map(|child_id| {
+            trace
+                .nodes
+                .iter()
+                .find(|candidate| candidate.node_id == *child_id)
+        })
+        .map(|child| map_formula_drill_trace_node(trace, child))
+        .collect();
+    let source_span = node.source_span;
+    FormulaWalkNode {
+        node_id: node.node_id.0.clone(),
+        label: node.label_user.clone(),
+        developer_label: Some(node.label_developer.clone()),
+        expression_text: node.expression_text.clone(),
+        kind: Some(format!("{:?}", node.kind)),
+        source_span_start: source_span.map(|span| span.start),
+        source_span_len: source_span.map(|span| span.len),
+        branch_disposition: node
+            .branch_disposition
+            .as_ref()
+            .map(|disposition| format!("{disposition:?}")),
+        argument_name: node.argument_name.clone(),
+        argument_role: node.argument_role.as_ref().map(|role| format!("{role:?}")),
+        error_message: node.error.as_ref().map(|error| {
+            error
+                .code
+                .as_ref()
+                .map(|code| format!("{code}: {}", error.message))
+                .unwrap_or_else(|| error.message.clone())
+        }),
+        value_preview: node
+            .value_preview
+            .as_ref()
+            .map(format_drill_value_preview)
+            .or_else(|| node.returned_value.as_ref().map(format_walk_value_preview))
+            .or_else(|| node.published_value.as_ref().map(format_walk_value_preview))
+            .or_else(|| {
+                node.value_after_coercion
+                    .as_ref()
+                    .map(format_walk_value_preview)
+            })
+            .or_else(|| {
+                node.value_before_coercion
+                    .as_ref()
+                    .map(format_walk_value_preview)
+            })
+            .or_else(|| node.error.as_ref().map(|error| error.message.clone())),
+        state: map_drill_evaluation_state(node.evaluation_state),
+        children,
+    }
+}
+
+fn map_drill_evaluation_state(state: FormulaDrillEvaluationState) -> FormulaWalkNodeState {
+    match state {
+        FormulaDrillEvaluationState::Pending => FormulaWalkNodeState::Pending,
+        FormulaDrillEvaluationState::Bound => FormulaWalkNodeState::Bound,
+        FormulaDrillEvaluationState::Evaluated => FormulaWalkNodeState::Evaluated,
+        FormulaDrillEvaluationState::Skipped
+        | FormulaDrillEvaluationState::ShortCircuited
+        | FormulaDrillEvaluationState::Omitted => FormulaWalkNodeState::Skipped,
+        FormulaDrillEvaluationState::Blocked => FormulaWalkNodeState::Blocked,
+        FormulaDrillEvaluationState::Error => FormulaWalkNodeState::Error,
+    }
+}
+
+fn format_drill_value_preview(
+    preview: &oxfml_core::consumer::runtime::FormulaDrillValuePreview,
+) -> String {
+    let mut text = if let Some(shape) = preview.array_shape {
+        format!(
+            "{} {}x{} [{}]",
+            preview.value_kind,
+            shape.rows,
+            shape.cols,
+            preview.preview.join(", ")
+        )
+    } else {
+        preview.preview.join(", ")
+    };
+    if text.is_empty() {
+        text = preview.value_kind.clone();
+    }
+    if preview.truncated {
+        text.push_str(" ...");
+    }
+    if let Some(type_name) = preview.rich_value_type_name.as_ref() {
+        text.push_str(&format!(" ({type_name})"));
+    }
+    text
+}
+
+fn fallback_formula_walk_node(
+    node_id: &str,
+    label: &str,
+    value_preview: Option<String>,
+    state: FormulaWalkNodeState,
+) -> FormulaWalkNode {
+    FormulaWalkNode {
+        node_id: node_id.to_string(),
+        label: label.to_string(),
+        developer_label: None,
+        expression_text: None,
+        kind: None,
+        source_span_start: None,
+        source_span_len: None,
+        branch_disposition: None,
+        argument_name: None,
+        argument_role: None,
+        error_message: None,
+        value_preview,
+        state,
+        children: Vec::new(),
+    }
 }
 
 fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresentation {

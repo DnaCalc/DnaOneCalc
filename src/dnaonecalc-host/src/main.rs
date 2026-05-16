@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use dnaonecalc_host::services::formula_drill_audit::{
+    audit_formula_drill_case, build_default_formula_drill_audit_report,
+    render_formula_drill_audit_markdown, FormulaDrillAuditReport,
+};
 use dnaonecalc_host::services::programmatic_testing::{
     default_verification_config, load_verification_config_xml, ProgrammaticComparisonStatus,
 };
@@ -15,6 +19,7 @@ fn main() -> ExitCode {
         Some("verify-formula") => run_verify_formula(args.collect()),
         Some("verify-xml-cell") => run_verify_xml_cell(args.collect()),
         Some("verify-batch") => run_verify_batch(args.collect()),
+        Some("audit-formula-drill") => run_audit_formula_drill(args.collect()),
         Some("--help") | Some("-h") | Some("help") => {
             print_help();
             ExitCode::SUCCESS
@@ -27,6 +32,74 @@ fn main() -> ExitCode {
         None => {
             print_help();
             ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_audit_formula_drill(args: Vec<String>) -> ExitCode {
+    let mut formulas = Vec::new();
+    let mut format = "markdown".to_string();
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--formula" => {
+                if let Some(formula) = args.get(index + 1) {
+                    let case_id = format!("manual_{}", formulas.len() + 1);
+                    formulas.push((case_id, formula.clone()));
+                    index += 2;
+                } else {
+                    eprintln!("audit-formula-drill requires a value after --formula");
+                    return ExitCode::from(2);
+                }
+            }
+            "--format" => {
+                if let Some(value) = args.get(index + 1) {
+                    format = value.clone();
+                    index += 2;
+                } else {
+                    eprintln!("audit-formula-drill requires a value after --format");
+                    return ExitCode::from(2);
+                }
+            }
+            other => {
+                eprintln!("unexpected audit-formula-drill argument: {other}");
+                print_help();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let report = if formulas.is_empty() {
+        build_default_formula_drill_audit_report()
+    } else {
+        FormulaDrillAuditReport {
+            schema_id: "dnaonecalc.formula-drill-audit.v1",
+            cases: formulas
+                .iter()
+                .map(|(case_id, formula)| audit_formula_drill_case(case_id, formula))
+                .collect(),
+        }
+    };
+
+    match format.as_str() {
+        "json" => match serde_json::to_string_pretty(&report) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("failed to serialise formula drill audit JSON: {error}");
+                ExitCode::from(4)
+            }
+        },
+        "markdown" | "md" => {
+            print!("{}", render_formula_drill_audit_markdown(&report));
+            ExitCode::SUCCESS
+        }
+        other => {
+            eprintln!("unsupported audit-formula-drill --format {other}; use markdown or json");
+            ExitCode::from(2)
         }
     }
 }
@@ -315,6 +388,7 @@ fn print_help() {
           verify-formula --case-id <id> --formula <text> [--config-xml <path>] [--output-root <path>]\n\
           verify-xml-cell --case-id <id> --workbook-xml <path> --locator <Sheet!Cell> [--config-xml <path>] [--output-root <path>]\n\
           verify-batch --input <json-path> [--output-root <path>]\n\
+          audit-formula-drill [--formula <text>]... [--format markdown|json]\n\
          \n\
          Verification config XML shape:\n\
           <verification-config>\n\

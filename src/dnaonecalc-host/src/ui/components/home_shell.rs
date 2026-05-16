@@ -4542,13 +4542,18 @@ fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cell
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn copy_cells_to_clipboard(
-    _state: RwSignal<crate::state::OneCalcHostState>,
-    _cells: &[Vec<String>],
-) {
+fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cells: &[Vec<String>]) {
     // No clipboard access on the SSR / test path. The
-    // serialisation logic lives in `build_clipboard_tsv` and is
-    // unit-tested independently.
+    // serialisation logic still runs here so native builds keep
+    // the same selection-to-TSV path type-checked.
+    let selection = state.with(|s| {
+        s.workspace_shell
+            .active_formula_space_id
+            .as_ref()
+            .and_then(|id| s.formula_spaces.get(id))
+            .and_then(|space| space.array_browser.selection)
+    });
+    drop(build_clipboard_tsv(cells, selection));
 }
 
 /// Build the tab-separated payload for clipboard copy. Without a
@@ -5601,6 +5606,9 @@ fn render_capability_context_panel(
     capability_context: Option<CapabilityContextView>,
     view_mode: ViewMode,
 ) -> AnyView {
+    if view_mode != ViewMode::Developer {
+        return view! { <span></span> }.into_any();
+    }
     let Some(context) = capability_context else {
         return view! { <span></span> }.into_any();
     };
@@ -5721,29 +5729,79 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
     let value_preview = value_preview_full.clone().unwrap_or_default();
     let aria_level = (depth + 1).to_string();
     let mode_attr = view_mode.slug();
+    let span_start_attr = node
+        .source_span_start
+        .map(|span| span.to_string())
+        .unwrap_or_default();
+    let span_len_attr = node
+        .source_span_len
+        .map(|span| span.to_string())
+        .unwrap_or_default();
+    let branch_attr = node.branch_disposition.clone().unwrap_or_default();
+    let kind_attr = node.kind.clone().unwrap_or_default();
+    let expression_title = node.expression_text.clone().unwrap_or_default();
     let row_inner = match view_mode {
-        ViewMode::Developer => view! {
-            <>
-                <span
-                    class="onecalc-home-shell__formula-drill-state"
-                    aria-label=state_slug
-                    data-state=state_slug
-                >
-                    {formula_drill_state_label(node.state)}
-                </span>
-                <span class="onecalc-home-shell__formula-drill-label">{node.label.clone()}</span>
-                <span
-                    class="onecalc-home-shell__formula-drill-value"
-                    title=value_preview.clone()
-                >
-                    {truncate_for_drill(value_preview.clone())}
-                </span>
-            </>
+        ViewMode::Developer => {
+            let developer_label = node
+                .developer_label
+                .clone()
+                .unwrap_or_else(|| node.label.clone());
+            let value_view = if label_includes_value(&developer_label) {
+                view! { <></> }.into_any()
+            } else {
+                view! {
+                    <span
+                        class="onecalc-home-shell__formula-drill-value"
+                        title=value_preview.clone()
+                    >
+                        {truncate_for_drill(value_preview.clone())}
+                    </span>
+                }
+                .into_any()
+            };
+            view! {
+                <>
+                    <span
+                        class="onecalc-home-shell__formula-drill-state"
+                        aria-label=state_slug
+                        data-state=state_slug
+                    >
+                        {formula_drill_state_label(node.state)}
+                    </span>
+                    <span
+                        class="onecalc-home-shell__formula-drill-label"
+                        title=expression_title.clone()
+                    >
+                        {developer_label}
+                    </span>
+                    {node.branch_disposition.clone().map(|branch| view! {
+                        <span
+                            class="onecalc-home-shell__formula-drill-branch"
+                            data-branch=branch.clone()
+                        >
+                            {branch.clone()}
+                        </span>
+                    })}
+                    {node.argument_role.clone().map(|role| view! {
+                        <span
+                            class="onecalc-home-shell__formula-drill-role"
+                            data-role=role.clone()
+                        >
+                            {role.clone()}
+                        </span>
+                    })}
+                    {value_view}
+                </>
+            }
+            .into_any()
         }
-        .into_any(),
-        ViewMode::User => {
-            render_formula_drill_row_user_mode(node.label.clone(), node.state, value_preview_full)
-        }
+        ViewMode::User => render_formula_drill_row_user_mode(
+            node.label.clone(),
+            node.state,
+            node.branch_disposition.clone(),
+            node.error_message.clone(),
+            value_preview_full,
+        ),
     };
     if has_children {
         let children_view: Vec<AnyView> = node
@@ -5760,6 +5818,10 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
                 data-node-id=node.node_id
                 data-aria-level=aria_level
                 data-mode=mode_attr
+                data-kind=kind_attr
+                data-span-start=span_start_attr
+                data-span-len=span_len_attr
+                data-branch=branch_attr
                 open
             >
                 <summary class="onecalc-home-shell__formula-drill-row-summary">
@@ -5782,6 +5844,10 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
                 data-node-id=node.node_id
                 data-aria-level=aria_level
                 data-mode=mode_attr
+                data-kind=kind_attr
+                data-span-start=span_start_attr
+                data-span-len=span_len_attr
+                data-branch=branch_attr
             >
                 {row_inner}
             </div>
@@ -5900,31 +5966,69 @@ fn render_formula_drill_diagnostics(
 fn render_formula_drill_row_user_mode(
     label: String,
     state: crate::adapters::oxfml::FormulaWalkNodeState,
+    branch_disposition: Option<String>,
+    error_message: Option<String>,
     value_preview: Option<String>,
 ) -> AnyView {
     use crate::adapters::oxfml::FormulaWalkNodeState as State;
     let label_view = view! {
-        <span class="onecalc-home-shell__formula-drill-label">{label}</span>
+        <span class="onecalc-home-shell__formula-drill-label">{label.clone()}</span>
     };
     match state {
-        State::Blocked => {
+        State::Blocked | State::Error => {
             let value_text = value_preview.clone().unwrap_or_default();
             let truncated = truncate_for_drill(value_text.clone());
-            view! {
-                <>
-                    {label_view}
-                    <span class="onecalc-home-shell__formula-drill-blocked-tag">"blocked"</span>
+            let tag = if state == State::Error {
+                "error"
+            } else {
+                "blocked"
+            };
+            let title = error_message.unwrap_or(value_text.clone());
+            let value_view = if label_includes_value(&label) {
+                view! { <></> }.into_any()
+            } else {
+                view! {
                     <span
                         class="onecalc-home-shell__formula-drill-value"
-                        title=value_text
+                        title=title
                     >
                         {truncated}
                     </span>
+                }
+                .into_any()
+            };
+            view! {
+                <>
+                    {label_view}
+                    <span class="onecalc-home-shell__formula-drill-blocked-tag">{tag}</span>
+                    {value_view}
                 </>
             }
             .into_any()
         }
+        State::Skipped => view! {
+            <>
+                {label_view}
+                {(!label.to_ascii_lowercase().contains("skipped")).then(|| view! {
+                    <span
+                        class="onecalc-home-shell__formula-drill-branch"
+                        data-branch=branch_disposition.clone().unwrap_or_else(|| "Skipped".to_string())
+                    >
+                        "skipped"
+                    </span>
+                })}
+            </>
+        }
+        .into_any(),
         _ => {
+            if label_includes_value(&label) {
+                return view! {
+                    <>
+                        {label_view}
+                    </>
+                }
+                .into_any();
+            }
             let (value_text, value_title) = match value_preview {
                 Some(v) => (truncate_for_drill(v.clone()), v),
                 None => ("…".to_string(), String::new()),
@@ -5944,6 +6048,10 @@ fn render_formula_drill_row_user_mode(
             .into_any()
         }
     }
+}
+
+fn label_includes_value(label: &str) -> bool {
+    label.contains(" = ")
 }
 
 /// Developer-mode phase strip: parse / bind / eval chips, one per phase.
@@ -6036,20 +6144,26 @@ fn render_formula_drill_phase_chip(chip: FormulaDrillPhaseChip) -> AnyView {
 fn formula_drill_state_slug(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
     use crate::adapters::oxfml::FormulaWalkNodeState as State;
     match state {
+        State::Pending => "pending",
         State::Evaluated => "evaluated",
         State::Bound => "bound",
+        State::Skipped => "skipped",
         State::Opaque => "opaque",
         State::Blocked => "blocked",
+        State::Error => "error",
     }
 }
 
 fn formula_drill_state_label(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
     use crate::adapters::oxfml::FormulaWalkNodeState as State;
     match state {
+        State::Pending => "pending",
         State::Evaluated => "evaluated",
         State::Bound => "bound",
+        State::Skipped => "skipped",
         State::Opaque => "opaque",
         State::Blocked => "blocked",
+        State::Error => "error",
     }
 }
 
