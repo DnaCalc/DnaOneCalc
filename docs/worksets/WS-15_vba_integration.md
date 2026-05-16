@@ -441,7 +441,8 @@ cargo run -p dnaonecalc-host -- verify-vba-udf `
   --output-root .\target\onecalc-verification\vba-udf\dna
 ```
 
-4. add `scripts/run-vba-udf-oracle.ps1` once the command exists,
+4. keep `scripts/run-vba-udf-oracle.ps1` as the first retained-oracle command
+   wrapper,
 5. add the new script to the integration or compare-regression family only after
    it can run in a gated way on non-Windows hosts.
 

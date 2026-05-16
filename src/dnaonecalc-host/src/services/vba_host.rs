@@ -406,7 +406,7 @@ mod tests {
             TypedContextQueryBundle::new(None, None, Some(&locale), Some(46000.0), Some(0.5))
                 .with_host_function_provider(Some(&runtime));
         let mut host =
-            oxfml_core::test_support::host::SingleFormulaHost::new("vba-udf-t001", "=AddThem(2,3)");
+            oxfml_core::consumer::runtime::SingleFormulaHost::new("vba-udf-t001", "=AddThem(2,3)");
 
         let result = host
             .recalc_with_interfaces(
