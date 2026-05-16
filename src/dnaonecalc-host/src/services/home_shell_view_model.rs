@@ -1504,7 +1504,7 @@ fn vba_load_status_label(association: &VbaHostAssociationState) -> String {
             if association.source_kind == VbaHostAssociationSourceKind::ModuleSource
                 && association.source_ref.starts_with("browser-file:") =>
         {
-            "selected; native load pending".to_string()
+            "selected; browser runtime unavailable".to_string()
         }
         crate::state::VbaHostAssociationLoadStatus::PendingLoad => "pending load".to_string(),
         crate::state::VbaHostAssociationLoadStatus::Loaded => "loaded".to_string(),
@@ -3101,7 +3101,10 @@ mod tests {
 
         assert_eq!(association.source_kind, "browser .bas");
         assert_eq!(association.source_ref, "SimpleVba.bas");
-        assert_eq!(association.status_label, "selected; native load pending");
+        assert_eq!(
+            association.status_label,
+            "selected; browser runtime unavailable"
+        );
     }
 
     #[test]
