@@ -301,6 +301,47 @@ fn runtime_formal_input_bindings(
 }
 
 impl LiveOxfmlBridge {
+    /// Clear cached editor and runtime projections for one formula. Future
+    /// UDF registration, unregister, disable, and source-change events should
+    /// call this after publishing a bind-visible function-surface generation.
+    pub fn invalidate_formula_binding_state(
+        &self,
+        formula_stable_id: &str,
+    ) -> Result<usize, OxfmlEditorBridgeError> {
+        let mut invalidated = 0;
+        {
+            let mut cached_documents = self.cached_documents.lock().map_err(|_| {
+                OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+            })?;
+            invalidated += usize::from(cached_documents.remove(formula_stable_id).is_some());
+        }
+        {
+            let mut last_result = self.last_result.lock().map_err(|_| {
+                OxfmlEditorBridgeError::UpstreamFailure(
+                    "Live bridge result cache poisoned".to_string(),
+                )
+            })?;
+            invalidated += usize::from(last_result.remove(formula_stable_id).is_some());
+        }
+        Ok(invalidated)
+    }
+
+    /// Clear all cached editor and runtime projections. This is the coarse
+    /// invalidation hook for a workspace-level function-surface generation
+    /// change until formula-level dependency targeting is available.
+    pub fn invalidate_all_binding_state(&self) -> Result<usize, OxfmlEditorBridgeError> {
+        let mut cached_documents = self.cached_documents.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+        })?;
+        let mut last_result = self.last_result.lock().map_err(|_| {
+            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
+        })?;
+        let invalidated = cached_documents.len() + last_result.len();
+        cached_documents.clear();
+        last_result.clear();
+        Ok(invalidated)
+    }
+
     fn previous_document(
         &self,
         request: &FormulaEditRequest,

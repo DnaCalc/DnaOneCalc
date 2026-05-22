@@ -304,6 +304,30 @@ Broader descriptor lane:
    sidecar; neither the OxFml snapshot entry nor the OxVba id is enough by
    itself.
 
+### 9.1 No-Host-Reference Guardrail
+
+Ordinary single-formula execution must remain the default path:
+1. built-in functions, operators, literals, and `LET` / `LAMBDA` formulas must
+   evaluate without a DnaOneCalc host namespace, host-reference resolver,
+   `HostFunctionProvider`, `RegisteredExternalProvider`, RTD provider, or
+   host-query provider;
+2. `LET` locals, callable locals, lambda captures, and returned lambda values
+   must continue through OxFml/OxFunc lexical and callable-value machinery, not
+   through DnaOneCalc-local function mirrors;
+3. completion, signature help, and function help must stay registry-backed by
+   OxFml/OxFunc rather than by a host-authored catalog copy.
+
+UDF support enters only through an explicit registry-backed extension lane:
+1. admitted VBA/XLL functions publish a new function-surface or
+   `LibraryContextSnapshot` generation through the OxFml/OxFunc registration
+   surfaces;
+2. bind-visible UDF registration, unregister, disable, or source-change events
+   must invalidate affected formula binding/runtime caches before the next
+   ordinary edit or recalc result is trusted;
+3. future `VbaProjectShimRegistration` work may replace the current
+   host-function-provider first slice, but it must not make the host namespace
+   resolver part of ordinary formulas.
+
 ## 10. Invocation Path
 
 When a DnaOneCalc formula calls a published VBA UDF:
