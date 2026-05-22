@@ -4466,6 +4466,8 @@ mod consumer_shape_tests {
                 "Materialisable(target_class=published_fallback_text)".to_string()
             ],
             prepared_formula_identity: None,
+            host_formula_context: None,
+            host_reference_bind_results: Vec::new(),
         };
 
         let serialized = serialize_replay_projection(&projection, true);

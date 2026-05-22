@@ -198,7 +198,6 @@ fn ordinary_single_formula_runtime_uses_no_host_extension_providers() {
     let families = &result.typed_query_bundle_spec.families;
 
     assert_eq!(result.published_worksheet_value, EvalValue::Number(6.0));
-    assert!(families.contains(&TypedContextQueryFamily::ReferenceResolver));
     assert!(families.contains(&TypedContextQueryFamily::LocaleFormatContext));
     assert!(families.contains(&TypedContextQueryFamily::NowSerial));
     assert!(families.contains(&TypedContextQueryFamily::RandomProvider));
@@ -226,6 +225,14 @@ fn ordinary_single_formula_runtime_uses_no_host_extension_providers() {
             .formal_references
             .is_empty(),
         "ordinary built-in execution should not create host formal-reference bindings"
+    );
+    assert!(
+        result.host_formula_context.is_none(),
+        "ordinary built-in execution should not create a host formula context"
+    );
+    assert!(
+        result.host_reference_bind_results.is_empty(),
+        "ordinary built-in execution should not perform host reference binding"
     );
 }
 
