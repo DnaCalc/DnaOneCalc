@@ -4467,6 +4467,7 @@ mod consumer_shape_tests {
             ],
             prepared_formula_identity: None,
             host_formula_context: None,
+            host_name_bind_results: Vec::new(),
             host_reference_bind_results: Vec::new(),
         };
 
