@@ -358,7 +358,7 @@ Current upstream caveat:
    Excel-compatible UDF behavior once coercion, error, array, object, optional,
    `Variant`, or ByRef cases enter scope.
 3. DnaOneCalc may implement a narrow adapter against the current surface, but must
-   record the runtime-context-delivery gap as upstream pressure if a required
+   record any FEC/provider-delivery gap as upstream pressure if a required
    DnaOneCalc behavior depends on it.
 4. If exact Excel behavior requires OxVba to expose a richer typed UDF call
    contract, DnaOneCalc must capture that as an OxVba handoff rather than

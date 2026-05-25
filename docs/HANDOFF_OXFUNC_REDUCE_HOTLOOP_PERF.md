@@ -59,11 +59,11 @@ likely wins. Filed status updated to "partial" on this basis.
 ## Landing-progress check (2026-05-07)
 
 OxFunc W096 landed an architectural seam for compiled semantic
-kernel dispatch (`SurfaceCallSite`, `SurfaceCallRuntime`,
-`SurfaceCallScratch`); OxFml W075 consumed the same seam for
-compiled formula call-site planning. Together they replace the
+kernel dispatch (`FunctionCallTarget`, `FunctionExecutionContextBundle`,
+`FunctionCallScratch`); OxFml W075 consumed the same seam for
+compiled formula target planning. Together they replace the
 string-based broad dispatch on the hot path with resolved
-call-site handles + reusable scratch buffers.
+function-call target handles + reusable scratch buffers.
 
 Re-measured Mandelbrot probe with the new upstream + the
 host-side trace-mode opt-in:

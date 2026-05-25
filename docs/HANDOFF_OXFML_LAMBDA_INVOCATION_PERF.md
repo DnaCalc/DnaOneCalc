@@ -3,7 +3,7 @@
 # OxFml Handoff: Lambda invocation hot-loop overhead in `OxFmlCallableInvoker`
 
 Status: **partial — invoke_many + cached binding lookup +
-compiled call-site planning + opt-in trace mode landed; per-iter
+compiled function-call target planning + opt-in trace mode landed; per-iter
 `evaluate_expr_value` cost still dominates the residual band**.
 Direction: DnaOneCalc → OxFml
 Source repo / workset: DnaOneCalc / Performance investigation
@@ -46,12 +46,12 @@ work.
 
 ## Landing-progress check (2026-05-07)
 
-OxFml W075 landed compiled formula call-site planning
+OxFml W075 landed compiled formula target planning
 (commit `47960d9`). The optimizer retains resolved
-`SurfaceCallSite` handles for ordinary calls, operators, special
+`FunctionCallTarget` handles for ordinary calls, operators, special
 operator lanes, reference operators, implicit intersection, and
 built-in callable slots. Built-in callable `invoke_many` uses
-reusable `SurfaceCallScratch` for repeated call-site invocation.
+reusable `FunctionCallScratch` for repeated target invocation.
 Most importantly for the typing UX, value-only versus
 prepared-call tracing is now an explicit `EvaluationTraceMode`,
 defaulting to `ValueOnly`.
@@ -95,7 +95,7 @@ metadata-driven hoisting) are the obvious next levers, plus the
 sibling OxFunc small-row `EvalArray` pool ask.
 
 Filed status updated to "partial" — three lanes have landed
-(invoke_many + binding cache, compiled call-site planning,
+(invoke_many + binding cache, compiled function-call target planning,
 opt-in trace mode); two lanes still open (slot-frame frame
 lowering, small-row `EvalArray` pool).
 Related:
