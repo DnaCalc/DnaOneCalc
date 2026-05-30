@@ -223,35 +223,87 @@ pub fn add_vba_module_source_for_host_context(
     true
 }
 
-/// Load a browser-uploaded `.bas` file: compile the VBA source through OxVba,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaModuleSourceLoadRequest {
+    pub display_name: String,
+    pub source_ref: String,
+    pub source_text: String,
+    pub diagnostics: Vec<String>,
+}
+
+impl VbaModuleSourceLoadRequest {
+    pub fn browser_file(file_name: String, source_text: String) -> Self {
+        Self {
+            source_ref: format!("browser-file:{file_name}"),
+            display_name: file_name,
+            source_text,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn native_file(
+        display_name: String,
+        source_ref: String,
+        source_text: String,
+        diagnostics: Vec<String>,
+    ) -> Self {
+        Self {
+            display_name,
+            source_ref,
+            source_text,
+            diagnostics,
+        }
+    }
+}
+
+/// Load a selected `.bas` file: compile the VBA source through OxVba,
 /// extract admitted UDFs, and record the association as Loaded (or Failed).
 pub fn load_vba_module_source_for_host_context(
     state: &mut OneCalcHostState,
-    file_name: String,
-    source_text: String,
+    request: VbaModuleSourceLoadRequest,
 ) -> Option<crate::services::vba_host::VbaHostRuntime> {
     use crate::services::vba_host::{
         VbaHostRuntime, VbaProjectAssociation, VbaSourceModule, VbaSourceProject,
     };
 
-    if file_name.trim().is_empty() || source_text.trim().is_empty() {
+    if request.display_name.trim().is_empty() || request.source_ref.trim().is_empty() {
         return None;
     }
 
-    let module_name = file_name
+    if request.source_text.trim().is_empty() {
+        let diagnostic = if request.diagnostics.is_empty() {
+            "selected VBA module source was empty".to_string()
+        } else {
+            request.diagnostics.join("; ")
+        };
+        let assoc = next_vba_association(
+            state,
+            request.display_name,
+            request.source_ref,
+            VbaHostAssociationSourceKind::ModuleSource,
+            VbaHostAssociationLoadStatus::Failed(diagnostic),
+            Vec::new(),
+            Vec::new(),
+        );
+        state.vba_host_context.associations.push(assoc);
+        return None;
+    }
+
+    let module_name = request
+        .display_name
         .strip_suffix(".bas")
-        .or_else(|| file_name.strip_suffix(".BAS"))
-        .unwrap_or(&file_name)
+        .or_else(|| request.display_name.strip_suffix(".BAS"))
+        .unwrap_or(&request.display_name)
         .to_string();
 
-    let source_ref = format!("browser-file:{file_name}");
-    let association = VbaProjectAssociation::workspace_source("browser-vba-load", &source_ref);
+    let association =
+        VbaProjectAssociation::workspace_source("selected-vba-module", &request.source_ref);
 
     let project = VbaSourceProject {
         project_name: module_name.clone(),
         modules: vec![VbaSourceModule {
             module_name: module_name.clone(),
-            source: source_text,
+            source: request.source_text,
         }],
     };
 
@@ -278,8 +330,8 @@ pub fn load_vba_module_source_for_host_context(
             let rejected_count = rejected_candidates.len();
             let assoc = next_vba_association(
                 state,
-                file_name,
-                source_ref,
+                request.display_name,
+                request.source_ref,
                 VbaHostAssociationSourceKind::ModuleSource,
                 VbaHostAssociationLoadStatus::Loaded,
                 admitted_udfs,
@@ -298,8 +350,8 @@ pub fn load_vba_module_source_for_host_context(
         Err(diagnostic) => {
             let assoc = next_vba_association(
                 state,
-                file_name,
-                source_ref,
+                request.display_name,
+                request.source_ref,
                 VbaHostAssociationSourceKind::ModuleSource,
                 VbaHostAssociationLoadStatus::Failed(diagnostic),
                 Vec::new(),
@@ -1262,13 +1314,15 @@ mod tests {
 
         let runtime = load_vba_module_source_for_host_context(
             &mut state,
-            "SimpleVba.bas".to_string(),
-            concat!(
-                "Public Function AddThem(a As Double, b As Double) As Double\n",
-                "AddThem = a + b\n",
-                "End Function\n"
-            )
-            .to_string(),
+            VbaModuleSourceLoadRequest::browser_file(
+                "SimpleVba.bas".to_string(),
+                concat!(
+                    "Public Function AddThem(a As Double, b As Double) As Double\n",
+                    "AddThem = a + b\n",
+                    "End Function\n"
+                )
+                .to_string(),
+            ),
         )
         .expect("browser .bas source should load into a VBA runtime");
 
@@ -1290,6 +1344,68 @@ mod tests {
         );
         assert_eq!(association.admitted_udf_count, 1);
         assert!(association.admitted_udfs[0].eq_ignore_ascii_case("AddThem"));
+    }
+
+    #[test]
+    fn vba_host_native_module_source_records_real_path() {
+        let mut state = OneCalcHostState::default();
+
+        let runtime = load_vba_module_source_for_host_context(
+            &mut state,
+            VbaModuleSourceLoadRequest::native_file(
+                "SimpleVba.bas".to_string(),
+                "C:\\Temp\\SimpleVba.bas".to_string(),
+                concat!(
+                    "Public Function AddThem(a As Double, b As Double) As Double\n",
+                    "AddThem = a + b\n",
+                    "End Function\n"
+                )
+                .to_string(),
+                Vec::new(),
+            ),
+        )
+        .expect("native .bas source should load into a VBA runtime");
+
+        assert_eq!(runtime.registrations().len(), 1);
+        let association = state
+            .vba_host_context
+            .associations
+            .last()
+            .expect("association should be recorded");
+        assert_eq!(association.display_name, "SimpleVba.bas");
+        assert_eq!(association.source_ref, "C:\\Temp\\SimpleVba.bas");
+        assert_eq!(
+            association.load_status,
+            VbaHostAssociationLoadStatus::Loaded
+        );
+        assert_eq!(association.admitted_udf_count, 1);
+    }
+
+    #[test]
+    fn vba_host_native_module_source_records_command_failure() {
+        let mut state = OneCalcHostState::default();
+
+        let runtime = load_vba_module_source_for_host_context(
+            &mut state,
+            VbaModuleSourceLoadRequest::native_file(
+                "Missing.bas".to_string(),
+                "C:\\Temp\\Missing.bas".to_string(),
+                String::new(),
+                vec!["failed to read VBA module source".to_string()],
+            ),
+        );
+
+        assert!(runtime.is_none());
+        let association = state
+            .vba_host_context
+            .associations
+            .last()
+            .expect("failed association should be recorded");
+        assert_eq!(association.source_ref, "C:\\Temp\\Missing.bas");
+        assert_eq!(
+            association.load_status,
+            VbaHostAssociationLoadStatus::Failed("failed to read VBA module source".to_string())
+        );
     }
 
     #[test]

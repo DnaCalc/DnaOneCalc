@@ -4,6 +4,7 @@
 //! parser for `.dnafml` / `.xml` files (`formula_file`). Slice 1b
 //! adds the host-side projection (`scenario_projection`) and
 //! browser-host file IO (`browser_file_io` — wasm32-only). Tauri
+//! command-backed VBA file selection starts in WS-15; broader Tauri
 //! file IO and the `<dna:CompareBundle>` merge are later slices.
 //!
 //! See `docs/PERSISTENCE_FORMAT_PLAN.md` §10 for the full seam ladder.
@@ -14,6 +15,8 @@ pub mod workspace_storage;
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser_file_io;
+#[cfg(target_arch = "wasm32")]
+pub mod tauri_file_io;
 
 pub use formula_file::{
     apply_bundle_retention_policy, read_formula_xml, write_formula_xml, BundleVerdict, CfRule,

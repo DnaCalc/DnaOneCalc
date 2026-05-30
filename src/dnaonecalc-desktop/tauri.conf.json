@@ -9,6 +9,7 @@
     "frontendDist": "../../target/onecalc-preview"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "DNA OneCalc",

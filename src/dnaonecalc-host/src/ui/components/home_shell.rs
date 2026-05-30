@@ -33,7 +33,7 @@ use crate::app::reducer::{
     close_scenario_breadcrumb, dismiss_completion_popup_on_active_formula_space,
     move_completion_popup_selection_on_active_formula_space,
     toggle_formula_drill_on_active_formula_space, toggle_scenario_breadcrumb,
-    toggle_view_mode_on_workspace,
+    toggle_view_mode_on_workspace, VbaModuleSourceLoadRequest,
 };
 use crate::services::completion_popup::CompletionAcceptance;
 use crate::services::home_shell_view_model::{
@@ -695,23 +695,18 @@ pub fn HomeShell(
         });
     });
     let editor_bridge_for_vba = editor_bridge.clone();
-    let on_vba_module_file_loaded =
-        Callback::new(move |(file_name, source_text): (String, String)| {
-            let mut loaded_runtime = None;
-            state.update(|s| {
-                loaded_runtime = crate::app::reducer::load_vba_module_source_for_host_context(
-                    s,
-                    file_name,
-                    source_text,
-                );
-            });
-            // Install the compiled VBA runtime in the editor bridge so
-            // subsequent formula evaluations can resolve and invoke UDFs.
-            if let (Some(runtime), Some(bridge)) = (loaded_runtime, editor_bridge_for_vba.as_ref())
-            {
-                bridge.install_vba_runtime(runtime);
-            }
+    let on_vba_module_file_loaded = Callback::new(move |request: VbaModuleSourceLoadRequest| {
+        let mut loaded_runtime = None;
+        state.update(|s| {
+            loaded_runtime =
+                crate::app::reducer::load_vba_module_source_for_host_context(s, request);
         });
+        // Install the compiled VBA runtime in the editor bridge so
+        // subsequent formula evaluations can resolve and invoke UDFs.
+        if let (Some(runtime), Some(bridge)) = (loaded_runtime, editor_bridge_for_vba.as_ref()) {
+            bridge.install_vba_runtime(runtime);
+        }
+    });
     let editor_bridge_for_vba_remove = editor_bridge.clone();
     let on_vba_association_remove = Callback::new(move |association_id: String| {
         let mut removed = false;
@@ -2559,7 +2554,7 @@ fn render_vba_host_panel(
     context: Option<VbaHostContextView>,
     on_path_input: Callback<String>,
     on_add_path: Callback<()>,
-    on_vba_module_file_loaded: Callback<(String, String)>,
+    on_vba_module_file_loaded: Callback<VbaModuleSourceLoadRequest>,
     on_remove: Callback<String>,
 ) -> AnyView {
     let Some(context) = context else {
@@ -2572,6 +2567,91 @@ fn render_vba_host_panel(
         .map(|association| render_vba_association_row(association, on_remove))
         .collect::<Vec<_>>();
     let row_count = rows.len().to_string();
+    #[cfg(target_arch = "wasm32")]
+    let native_picker_available =
+        crate::persistence::tauri_file_io::tauri_command_bridge_available();
+    #[cfg(not(target_arch = "wasm32"))]
+    let native_picker_available = false;
+    let module_picker = if native_picker_available {
+        let callback = on_vba_module_file_loaded.clone();
+        view! {
+            <button
+                type="button"
+                class="onecalc-home-shell__formatting-preset"
+                data-vba-action="select-native-module-file"
+                on:click=move |_| {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let callback = callback.clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            match crate::persistence::tauri_file_io::select_vba_module_source().await {
+                                Ok(Some(selection)) => {
+                                    callback.run(VbaModuleSourceLoadRequest::native_file(
+                                        selection.display_name,
+                                        selection.source_path,
+                                        selection.source_text,
+                                        selection.diagnostics,
+                                    ));
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    callback.run(VbaModuleSourceLoadRequest::native_file(
+                                        "VBA module selection failed".to_string(),
+                                        "tauri-command:select_vba_module_source".to_string(),
+                                        String::new(),
+                                        vec![error],
+                                    ));
+                                }
+                            }
+                        });
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let _ = &callback;
+                    }
+                }
+            >
+                "Select .bas"
+            </button>
+        }
+        .into_any()
+    } else {
+        let callback = on_vba_module_file_loaded.clone();
+        view! {
+            <label class="onecalc-home-shell__formatting-field">
+                <span class="onecalc-home-shell__formatting-field-label">".bas file"</span>
+                <input
+                    type="file"
+                    class="onecalc-home-shell__formatting-input"
+                    data-vba-field="module-file"
+                    accept=".bas"
+                    on:change=move |ev| {
+                        let target: web_sys::HtmlInputElement =
+                            event_target::<web_sys::HtmlInputElement>(&ev);
+                        if let Some(files) = target.files() {
+                            if let Some(file) = files.get(0) {
+                                let file_name = file.name();
+                                let callback = callback.clone();
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        if let Ok(text) = crate::persistence::browser_file_io::read_bas_file_as_text(file).await {
+                                            callback.run(VbaModuleSourceLoadRequest::browser_file(file_name, text));
+                                        }
+                                    });
+                                }
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    let _ = (file, file_name, callback);
+                                }
+                            }
+                        }
+                    }
+                />
+            </label>
+        }
+        .into_any()
+    };
     view! {
         <div class="onecalc-home-shell__vba-panel" data-component="vba-host-context">
             <div class="onecalc-home-shell__formatting-row" data-vba-row="picker">
@@ -2600,37 +2680,7 @@ fn render_vba_host_panel(
                 >
                     "Add"
                 </button>
-                <label class="onecalc-home-shell__formatting-field">
-                    <span class="onecalc-home-shell__formatting-field-label">".bas file"</span>
-                    <input
-                        type="file"
-                        class="onecalc-home-shell__formatting-input"
-                        data-vba-field="module-file"
-                        accept=".bas"
-                        on:change=move |ev| {
-                            let target: web_sys::HtmlInputElement =
-                                event_target::<web_sys::HtmlInputElement>(&ev);
-                            if let Some(files) = target.files() {
-                                if let Some(file) = files.get(0) {
-                                    let file_name = file.name();
-                                    let callback = on_vba_module_file_loaded;
-                                    #[cfg(target_arch = "wasm32")]
-                                    {
-                                        wasm_bindgen_futures::spawn_local(async move {
-                                            if let Ok(text) = crate::persistence::browser_file_io::read_bas_file_as_text(file).await {
-                                                callback.run((file_name, text));
-                                            }
-                                        });
-                                    }
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    {
-                                        let _ = (file, file_name, callback);
-                                    }
-                                }
-                            }
-                        }
-                    />
-                </label>
+                {module_picker}
                 <span class="onecalc-home-shell__formatting-field-label" data-vba-summary="true">
                     {context.summary}
                 </span>
