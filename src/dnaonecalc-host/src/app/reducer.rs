@@ -223,6 +223,94 @@ pub fn add_vba_module_source_for_host_context(
     true
 }
 
+/// Load a browser-uploaded `.bas` file: compile the VBA source through OxVba,
+/// extract admitted UDFs, and record the association as Loaded (or Failed).
+pub fn load_vba_module_source_for_host_context(
+    state: &mut OneCalcHostState,
+    file_name: String,
+    source_text: String,
+) -> Option<crate::services::vba_host::VbaHostRuntime> {
+    use crate::services::vba_host::{
+        VbaHostRuntime, VbaProjectAssociation, VbaSourceModule, VbaSourceProject,
+    };
+
+    if file_name.trim().is_empty() || source_text.trim().is_empty() {
+        return None;
+    }
+
+    let module_name = file_name
+        .strip_suffix(".bas")
+        .or_else(|| file_name.strip_suffix(".BAS"))
+        .unwrap_or(&file_name)
+        .to_string();
+
+    let source_ref = format!("browser-file:{file_name}");
+    let association = VbaProjectAssociation::workspace_source("browser-vba-load", &source_ref);
+
+    let project = VbaSourceProject {
+        project_name: module_name.clone(),
+        modules: vec![VbaSourceModule {
+            module_name: module_name.clone(),
+            source: source_text,
+        }],
+    };
+
+    match VbaHostRuntime::load_source_project_for_evaluation(
+        association,
+        project,
+        env!("CARGO_PKG_VERSION"),
+    ) {
+        Ok(runtime) => {
+            let admitted_udfs: Vec<String> = runtime
+                .registrations()
+                .iter()
+                .map(|r| r.formula_name.clone())
+                .collect();
+            let rejected_candidates: Vec<String> = runtime
+                .candidates()
+                .iter()
+                .filter(|c| {
+                    c.admission_status != crate::services::vba_host::VbaUdfAdmissionStatus::Admitted
+                })
+                .map(|c| c.procedure_name.clone())
+                .collect();
+            let admitted_count = admitted_udfs.len();
+            let rejected_count = rejected_candidates.len();
+            let assoc = next_vba_association(
+                state,
+                file_name,
+                source_ref,
+                VbaHostAssociationSourceKind::ModuleSource,
+                VbaHostAssociationLoadStatus::Loaded,
+                admitted_udfs,
+                rejected_candidates,
+            );
+            state
+                .vba_host_context
+                .associations
+                .push(VbaHostAssociationState {
+                    admitted_udf_count: admitted_count,
+                    rejected_candidate_count: rejected_count,
+                    ..assoc
+                });
+            Some(runtime)
+        }
+        Err(diagnostic) => {
+            let assoc = next_vba_association(
+                state,
+                file_name,
+                source_ref,
+                VbaHostAssociationSourceKind::ModuleSource,
+                VbaHostAssociationLoadStatus::Failed(diagnostic),
+                Vec::new(),
+                Vec::new(),
+            );
+            state.vba_host_context.associations.push(assoc);
+            None
+        }
+    }
+}
+
 pub fn remove_vba_host_association(state: &mut OneCalcHostState, association_id: &str) -> bool {
     let before = state.vba_host_context.associations.len();
     state
@@ -1166,6 +1254,42 @@ mod tests {
         assert!(set_manage_formulas_search_query(&mut state, "abc"));
         assert!(!set_manage_formulas_search_query(&mut state, "abc"));
         assert!(set_manage_formulas_search_query(&mut state, "abcd"));
+    }
+
+    #[test]
+    fn vba_host_browser_module_source_loads_admitted_udfs() {
+        let mut state = OneCalcHostState::default();
+
+        let runtime = load_vba_module_source_for_host_context(
+            &mut state,
+            "SimpleVba.bas".to_string(),
+            concat!(
+                "Public Function AddThem(a As Double, b As Double) As Double\n",
+                "AddThem = a + b\n",
+                "End Function\n"
+            )
+            .to_string(),
+        )
+        .expect("browser .bas source should load into a VBA runtime");
+
+        assert_eq!(runtime.registrations().len(), 1);
+        assert!(runtime.registrations()[0]
+            .formula_name
+            .eq_ignore_ascii_case("AddThem"));
+
+        let association = state
+            .vba_host_context
+            .associations
+            .last()
+            .expect("association should be recorded");
+        assert_eq!(association.display_name, "SimpleVba.bas");
+        assert_eq!(association.source_ref, "browser-file:SimpleVba.bas");
+        assert_eq!(
+            association.load_status,
+            VbaHostAssociationLoadStatus::Loaded
+        );
+        assert_eq!(association.admitted_udf_count, 1);
+        assert!(association.admitted_udfs[0].eq_ignore_ascii_case("AddThem"));
     }
 
     #[test]

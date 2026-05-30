@@ -1,6 +1,5 @@
 use std::cell::RefCell;
-use std::fs;
-use std::path::Path;
+use std::collections::BTreeMap;
 
 use oxfml_core::interface::{
     HostFunctionInvocation, HostFunctionProvider, HostFunctionProviderError,
@@ -11,15 +10,32 @@ use oxfml_core::semantics::{
     RegistrationSourceKind,
 };
 use oxfunc_core::value::EvalValue;
+use oxvba_compiler::ModuleKind;
 use oxvba_host::{
-    HostUdfCallContext, HostUdfTypeMapEvidence, HostUdfTypedSignature, HostUdfTypedValue,
+    HostCallContext, HostCaller, HostConfig, PreparedVbaProject, ProjectModuleText, ProjectSource,
+    TypedValue, UdfAdmissionPolicy, UdfAdmissionReport, VbaHost, VbaHostOptions,
+    W093RegistrationRequest,
 };
 
-use crate::adapters::oxvba::{
-    compile_hosted_project_manifest, compile_hosted_source_project, host_udf_catalog,
-    host_udf_typed_signature, invoke_host_udf_typed, OxvbaHostedProjectSession, OxvbaSourceModule,
-    OxvbaSourceProject,
-};
+// ---------------------------------------------------------------------------
+// Source-level input types (used by vba_udf_verification and load paths)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaSourceModule {
+    pub module_name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VbaSourceProject {
+    pub project_name: String,
+    pub modules: Vec<VbaSourceModule>,
+}
+
+// ---------------------------------------------------------------------------
+// Association model (unchanged — DnaOneCalc-owned)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VbaProjectAssociationScope {
@@ -65,6 +81,10 @@ impl VbaProjectAssociation {
     }
 }
 
+// ---------------------------------------------------------------------------
+// UDF admission / registration types (DnaOneCalc-owned, now backed by W093)
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VbaUdfAdmissionStatus {
     Admitted,
@@ -75,8 +95,8 @@ pub enum VbaUdfAdmissionStatus {
 pub struct VbaUdfRegistration {
     pub association_id: String,
     pub formula_name: String,
-    pub stable_host_call_id: String,
-    pub signature: HostUdfTypedSignature,
+    pub callable_id: String,
+    pub registration: W093RegistrationRequest,
     pub admission_status: VbaUdfAdmissionStatus,
     pub type_map_status: String,
     pub excel_oracle_ref: Option<String>,
@@ -88,7 +108,7 @@ pub struct VbaUdfCandidate {
     pub project_name: String,
     pub module_name: String,
     pub procedure_name: String,
-    pub stable_host_call_id: String,
+    pub callable_id: String,
     pub admission_status: VbaUdfAdmissionStatus,
 }
 
@@ -100,38 +120,13 @@ pub struct VbaUdfExcelOracleExpectation {
     pub expected_number: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VbaUdfAdmissionEvidence {
-    ExcelObserved,
-    HostProvisional,
-}
-
-impl VbaUdfAdmissionEvidence {
-    fn oxvba_evidence(self) -> HostUdfTypeMapEvidence {
-        match self {
-            Self::ExcelObserved => HostUdfTypeMapEvidence::ExcelObserved,
-            Self::HostProvisional => HostUdfTypeMapEvidence::HostProvisional,
-        }
-    }
-
-    fn type_map_status(self) -> &'static str {
-        match self {
-            Self::ExcelObserved => "excel-observed-double-first-slice",
-            Self::HostProvisional => "host-provisional-double-first-slice",
-        }
-    }
-
-    fn admission_interface_kind(self) -> &'static str {
-        match self {
-            Self::ExcelObserved => "excel_observed_double_first_slice",
-            Self::HostProvisional => "host_provisional_double_first_slice",
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// VbaHostRuntime — the core runtime, now consuming OxVba directly
+// ---------------------------------------------------------------------------
 
 pub struct VbaHostRuntime {
     association: VbaProjectAssociation,
-    session: RefCell<OxvbaHostedProjectSession>,
+    prepared: RefCell<PreparedVbaProject>,
     candidates: Vec<VbaUdfCandidate>,
     registrations: Vec<VbaUdfRegistration>,
     snapshot: LibraryContextSnapshot,
@@ -140,43 +135,42 @@ pub struct VbaHostRuntime {
 impl VbaHostRuntime {
     pub fn load_source_project(
         association: VbaProjectAssociation,
-        project: OxvbaSourceProject,
+        project: VbaSourceProject,
         application_version: &str,
         oracle_ref: Option<String>,
     ) -> Result<Self, String> {
-        Self::load_source_project_with_evidence(
+        let module_texts = build_module_texts(&project, application_version);
+        let (loaded, project_name) = load_via_vba_host(module_texts)?;
+        let admission_report = UdfAdmissionPolicy::default().admit(loaded.reflection());
+        let prepared = loaded.prepare().map_err(format_host_diagnostic)?;
+        Self::from_prepared(
             association,
-            project,
-            application_version,
+            prepared,
+            admission_report,
+            Some(project_name),
             oracle_ref,
-            VbaUdfAdmissionEvidence::ExcelObserved,
         )
     }
 
     pub fn load_source_project_for_evaluation(
         association: VbaProjectAssociation,
-        project: OxvbaSourceProject,
+        project: VbaSourceProject,
         application_version: &str,
     ) -> Result<Self, String> {
-        Self::load_source_project_with_evidence(
-            association,
-            project,
-            application_version,
-            None,
-            VbaUdfAdmissionEvidence::HostProvisional,
-        )
+        Self::load_source_project(association, project, application_version, None)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_project_path_for_evaluation(
         mut association: VbaProjectAssociation,
-        project_path: impl AsRef<Path>,
+        project_path: impl AsRef<std::path::Path>,
         application_version: &str,
     ) -> Result<Self, String> {
         let project_path = project_path.as_ref();
         let project_ref = project_path.display().to_string();
         association.project_ref = project_ref;
         if project_path.extension().and_then(|ext| ext.to_str()) == Some("bas") {
-            let source = fs::read_to_string(project_path).map_err(|error| {
+            let source = std::fs::read_to_string(project_path).map_err(|error| {
                 format!(
                     "failed to read VBA module source `{}`: {error}",
                     project_path.display()
@@ -197,9 +191,9 @@ impl VbaHostRuntime {
                 .to_string();
             return Self::load_source_project_for_evaluation(
                 association,
-                OxvbaSourceProject {
+                VbaSourceProject {
                     project_name,
-                    modules: vec![OxvbaSourceModule {
+                    modules: vec![VbaSourceModule {
                         module_name,
                         source,
                     }],
@@ -208,101 +202,97 @@ impl VbaHostRuntime {
             );
         }
 
-        let loaded = oxvba_project::load_workspace_target(project_path).map_err(|error| {
-            format!(
-                "failed to load OxVba workspace target `{}`: {error}",
-                project_path.display()
-            )
-        })?;
-        let session = compile_hosted_project_manifest(&loaded.manifest, application_version)
-            .map_err(|err| err.to_string())?;
-        association.project_identity = Some(loaded.manifest.project_name.clone());
-        Self::from_session(
+        // .basproj path — load via oxvba_project, then feed as FileSet
+        let loaded_workspace =
+            oxvba_project::load_workspace_target(project_path).map_err(|error| {
+                format!(
+                    "failed to load OxVba workspace target `{}`: {error}",
+                    project_path.display()
+                )
+            })?;
+        let project_name = loaded_workspace.manifest.project_name.clone();
+
+        // Convert manifest modules to ProjectModuleTexts, prepending Application class
+        let mut module_texts = vec![application_class_module_text(application_version)];
+        for module in &loaded_workspace.manifest.modules {
+            module_texts.push(ProjectModuleText {
+                name_hint: Some(module.module_name.clone()),
+                kind_hint: Some(module.module_kind),
+                text: module.source.clone(),
+            });
+        }
+
+        let host = VbaHost::new(vba_host_options());
+        let loaded = host
+            .load_project(ProjectSource::ModuleTexts(module_texts))
+            .map_err(format_host_diagnostic)?;
+        let admission_report = UdfAdmissionPolicy::default().admit(loaded.reflection());
+        let prepared = loaded.prepare().map_err(format_host_diagnostic)?;
+        association.project_identity = Some(project_name.clone());
+        Self::from_prepared(
             association,
-            session,
-            Some(loaded.manifest.project_name),
+            prepared,
+            admission_report,
+            Some(project_name),
             None,
-            VbaUdfAdmissionEvidence::HostProvisional,
         )
     }
 
-    pub fn load_source_project_with_evidence(
-        association: VbaProjectAssociation,
-        project: OxvbaSourceProject,
-        application_version: &str,
-        oracle_ref: Option<String>,
-        evidence: VbaUdfAdmissionEvidence,
-    ) -> Result<Self, String> {
-        let session = compile_hosted_source_project(&project, application_version)
-            .map_err(|err| err.to_string())?;
-        Self::from_session(
-            association,
-            session,
-            Some(project.project_name),
-            oracle_ref,
-            evidence,
-        )
-    }
-
-    fn from_session(
+    fn from_prepared(
         mut association: VbaProjectAssociation,
-        session: OxvbaHostedProjectSession,
+        prepared: PreparedVbaProject,
+        admission_report: UdfAdmissionReport,
         project_identity: Option<String>,
         oracle_ref: Option<String>,
-        evidence: VbaUdfAdmissionEvidence,
     ) -> Result<Self, String> {
-        let catalog = host_udf_catalog(&session);
         let mut candidates = Vec::new();
         let mut registrations = Vec::new();
-        for function in catalog.functions {
-            if function.module_name.eq_ignore_ascii_case("Application") {
+
+        for admitted in &admission_report.admitted {
+            let reg = &admitted.registration;
+            let meta = &reg.callable_metadata;
+            // Skip the synthetic Application class module
+            if meta.module_name.eq_ignore_ascii_case("Application") {
                 continue;
             }
-            let signature = match host_udf_typed_signature(
-                &session,
-                &function.stable_host_call_id,
-                evidence.oxvba_evidence(),
-            ) {
-                Ok(signature) => signature,
-                Err(err) => {
-                    candidates.push(VbaUdfCandidate {
-                        association_id: association.association_id.clone(),
-                        project_name: function.project_name,
-                        module_name: function.module_name,
-                        procedure_name: function.procedure_name,
-                        stable_host_call_id: function.stable_host_call_id,
-                        admission_status: VbaUdfAdmissionStatus::Rejected {
-                            reason: err.to_string(),
-                        },
-                    });
-                    continue;
-                }
-            };
             candidates.push(VbaUdfCandidate {
                 association_id: association.association_id.clone(),
-                project_name: function.project_name,
-                module_name: function.module_name,
-                procedure_name: function.procedure_name.clone(),
-                stable_host_call_id: function.stable_host_call_id.clone(),
+                project_name: reg.source_identity.project_id.clone(),
+                module_name: meta.module_name.clone(),
+                procedure_name: meta.public_name.clone(),
+                callable_id: reg.invocation_target.callable_id.clone(),
                 admission_status: VbaUdfAdmissionStatus::Admitted,
             });
             registrations.push(VbaUdfRegistration {
                 association_id: association.association_id.clone(),
-                formula_name: function.procedure_name.clone(),
-                stable_host_call_id: function.stable_host_call_id,
-                signature,
+                formula_name: meta.public_name.clone(),
+                callable_id: reg.invocation_target.callable_id.clone(),
+                registration: reg.clone(),
                 admission_status: VbaUdfAdmissionStatus::Admitted,
-                type_map_status: evidence.type_map_status().to_string(),
+                type_map_status: reg.invocation_target.conversion_lane.clone(),
                 excel_oracle_ref: oracle_ref.clone(),
+            });
+        }
+
+        for rejected in &admission_report.rejected {
+            candidates.push(VbaUdfCandidate {
+                association_id: association.association_id.clone(),
+                project_name: String::new(),
+                module_name: String::new(),
+                procedure_name: rejected.procedure_name.clone(),
+                callable_id: rejected.callable_id.clone(),
+                admission_status: VbaUdfAdmissionStatus::Rejected {
+                    reason: rejected.message.clone(),
+                },
             });
         }
 
         association.project_identity = project_identity;
         association.last_load_status = VbaProjectLoadStatus::Loaded;
-        let snapshot = library_snapshot_for_registrations(&association, &registrations, evidence);
+        let snapshot = library_snapshot_for_registrations(&association, &registrations);
         Ok(Self {
             association,
-            session: RefCell::new(session),
+            prepared: RefCell::new(prepared),
             candidates,
             registrations,
             snapshot,
@@ -338,23 +328,27 @@ impl VbaHostRuntime {
 
         let typed_args = args
             .iter()
-            .map(eval_value_to_typed_double)
+            .map(eval_value_to_typed_value)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut session = self
-            .session
+        let context = HostCallContext {
+            caller: Some(HostCaller {
+                source_system: "DnaOneCalc".to_string(),
+                display_text: Some("A1".to_string()),
+                stable_id: None,
+                metadata: BTreeMap::new(),
+            }),
+            locale_id: None,
+            metadata: BTreeMap::new(),
+        };
+        let mut prepared = self
+            .prepared
             .try_borrow_mut()
             .map_err(|_| "VBA runtime session is already borrowed".to_string())?;
-        let result = invoke_host_udf_typed(
-            &mut session,
-            &registration.signature,
-            HostUdfCallContext::new().with_caller("DnaOneCalc!A1"),
-            &typed_args,
-        )
-        .map_err(|err| err.to_string())?;
+        let result = prepared
+            .invoke_callable_typed(&registration.callable_id, context, &typed_args)
+            .map_err(format_host_diagnostic)?;
 
-        match result.value {
-            HostUdfTypedValue::Double(value) => Ok(EvalValue::Number(value)),
-        }
+        typed_value_to_eval_value(result.value)
     }
 }
 
@@ -382,19 +376,98 @@ impl LibraryContextProvider for VbaHostRuntime {
     }
 }
 
-fn eval_value_to_typed_double(value: &EvalValue) -> Result<HostUdfTypedValue, String> {
+// ---------------------------------------------------------------------------
+// VbaHost construction and loading helpers
+// ---------------------------------------------------------------------------
+
+fn format_host_diagnostic(err: oxvba_host::HostDiagnostic) -> String {
+    format!("{}: {}", err.code, err.message)
+}
+
+fn vba_host_options() -> VbaHostOptions {
+    VbaHostOptions {
+        host_config: HostConfig { enable_jit: false },
+    }
+}
+
+fn load_via_vba_host(
+    module_texts: Vec<ProjectModuleText>,
+) -> Result<(oxvba_host::LoadedVbaProject, String), String> {
+    let host = VbaHost::new(vba_host_options());
+    let loaded = host
+        .load_project(ProjectSource::ModuleTexts(module_texts))
+        .map_err(format_host_diagnostic)?;
+    let project_name = loaded.reflection().identity.project_name.clone();
+    Ok((loaded, project_name))
+}
+
+fn build_module_texts(
+    project: &VbaSourceProject,
+    application_version: &str,
+) -> Vec<ProjectModuleText> {
+    let mut texts = Vec::with_capacity(project.modules.len() + 1);
+    texts.push(application_class_module_text(application_version));
+    for module in &project.modules {
+        texts.push(ProjectModuleText {
+            name_hint: Some(module.module_name.clone()),
+            kind_hint: None, // Procedural default
+            text: module.source.clone(),
+        });
+    }
+    texts
+}
+
+fn application_class_module_text(application_version: &str) -> ProjectModuleText {
+    let escaped = application_version.replace('"', "\"\"");
+    ProjectModuleText {
+        name_hint: Some("Application".to_string()),
+        kind_hint: Some(ModuleKind::Class),
+        text: format!(
+            concat!(
+                "Attribute VB_Name = \"Application\"\n",
+                "Attribute VB_PredeclaredId = True\n",
+                "Public Property Get Version() As String\n",
+                "Version = \"{}\"\n",
+                "End Property\n",
+            ),
+            escaped
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type conversion helpers
+// ---------------------------------------------------------------------------
+
+fn eval_value_to_typed_value(value: &EvalValue) -> Result<TypedValue, String> {
     match value {
-        EvalValue::Number(number) => Ok(HostUdfTypedValue::Double(*number)),
+        EvalValue::Number(number) => Ok(TypedValue::Double(*number)),
         other => Err(format!(
             "VBA-UDF-T001 admits only numeric arguments for Double parameters; got {other:?}"
         )),
     }
 }
 
+fn typed_value_to_eval_value(value: TypedValue) -> Result<EvalValue, String> {
+    match value {
+        TypedValue::Double(v) => Ok(EvalValue::Number(v)),
+        TypedValue::Single(v) => Ok(EvalValue::Number(v as f64)),
+        TypedValue::Long(v) => Ok(EvalValue::Number(v as f64)),
+        TypedValue::Integer(v) => Ok(EvalValue::Number(v as f64)),
+        TypedValue::LongLong(v) => Ok(EvalValue::Number(v as f64)),
+        other => Err(format!(
+            "VBA UDF returned a value type not yet mapped to EvalValue: {other:?}"
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OxFml library context snapshot construction
+// ---------------------------------------------------------------------------
+
 fn library_snapshot_for_registrations(
     association: &VbaProjectAssociation,
     registrations: &[VbaUdfRegistration],
-    evidence: VbaUdfAdmissionEvidence,
 ) -> LibraryContextSnapshot {
     LibraryContextSnapshot {
         snapshot_id: format!("dnaonecalc-vba-{}", association.association_id),
@@ -407,13 +480,15 @@ fn library_snapshot_for_registrations(
                     "FUNC.VBA.{}",
                     registration.formula_name.to_ascii_uppercase()
                 )),
-                surface_stable_id: Some(registration.stable_host_call_id.clone()),
+                surface_stable_id: Some(registration.callable_id.clone()),
                 name_resolution_table_ref: Some(format!("vba:{}", association.association_id)),
                 semantic_trait_profile_ref: Some("vba-udf-double.v1".to_string()),
                 gating_profile_ref: None,
                 metadata_status: Some("host_registered".to_string()),
                 special_interface_kind: None,
-                admission_interface_kind: Some(evidence.admission_interface_kind().to_string()),
+                admission_interface_kind: Some(
+                    registration.registration.capability.policy_name.clone(),
+                ),
                 preparation_owner: Some("DnaOneCalc".to_string()),
                 runtime_boundary_kind: Some("vba_host_callback".to_string()),
                 interface_contract_ref: Some("dnaonecalc-vba-udf-first-slice".to_string()),
@@ -427,17 +502,17 @@ fn library_snapshot_for_registrations(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::oxvba::{
-        invoke_procedure_with_variants, OxvbaSourceModule, OxvbaSourceProject,
-    };
     use oxfml_core::format::oxfml_en_us_locale_context;
     use oxfml_core::interface::TypedContextQueryBundle;
     use oxfml_core::EvaluationBackend;
     use oxfunc_core::functions::rand_fn::RandomProvider;
-    use oxvba_runtime::bstr::BStr;
 
     struct FixedRandomProvider {
         value: f64,
@@ -451,10 +526,10 @@ mod tests {
 
     static FIXED_RANDOM_PROVIDER_05: FixedRandomProvider = FixedRandomProvider { value: 0.5 };
 
-    fn add_them_project(extra_source: &str) -> OxvbaSourceProject {
-        OxvbaSourceProject {
+    fn add_them_project(extra_source: &str) -> VbaSourceProject {
+        VbaSourceProject {
             project_name: "DnaVbaFixture".to_string(),
-            modules: vec![OxvbaSourceModule {
+            modules: vec![VbaSourceModule {
                 module_name: "Module1".to_string(),
                 source: format!(
                     "{}{}",
@@ -485,24 +560,30 @@ mod tests {
 
     #[test]
     fn hosted_project_injects_application_version_module() {
-        let mut hosted = crate::adapters::oxvba::compile_hosted_source_project(
+        let module_texts = build_module_texts(
             &add_them_project(concat!(
                 "Public Function HostVersion() As String\n",
                 "HostVersion = Application.Version\n",
                 "End Function\n"
             )),
             "0.1.0-test",
-        )
-        .expect("hosted project should compile");
+        );
+        let (loaded, _project_name) =
+            load_via_vba_host(module_texts).expect("hosted project should load");
+        let mut prepared = loaded.prepare().expect("hosted project should prepare");
 
-        let result = invoke_procedure_with_variants(&mut hosted, "Module1", "HostVersion")
+        let result = prepared
+            .invoke_by_name_variant("Module1", "HostVersion", &[])
             .expect("HostVersion should run");
 
-        assert_eq!(result.as_bstr(), Some(BStr::from("0.1.0-test")));
+        assert_eq!(
+            result.as_bstr(),
+            Some(oxvba_runtime::bstr::BStr::from("0.1.0-test"))
+        );
     }
 
     #[test]
-    fn vba_host_admits_addthem_as_excel_observed_double_udf() {
+    fn vba_host_admits_addthem_as_double_udf() {
         let runtime = VbaHostRuntime::load_source_project(
             VbaProjectAssociation::workspace_source("vba-assoc-1", "memory:AddThem"),
             add_them_project(""),
@@ -519,20 +600,19 @@ mod tests {
         );
         assert_eq!(runtime.registrations().len(), 1);
         let registration = &runtime.registrations()[0];
-        assert_eq!(registration.formula_name, "addthem");
-        assert_eq!(registration.signature.parameters.len(), 2);
+        // W093 callable metadata preserves original procedure casing
+        assert!(registration.formula_name.eq_ignore_ascii_case("AddThem"));
         assert_eq!(
-            registration.type_map_status,
-            "excel-observed-double-first-slice"
+            registration.registration.callable_metadata.parameter_count,
+            2
         );
         assert_eq!(
             registration.excel_oracle_ref.as_deref(),
             Some("states/excel/xlplay_vba_udf_addthem_001/views/normalized-replay.json")
         );
-        assert_eq!(
-            runtime.current_snapshot().entries[0].surface_name,
-            "addthem"
-        );
+        assert!(runtime.current_snapshot().entries[0]
+            .surface_name
+            .eq_ignore_ascii_case("AddThem"));
         assert_eq!(
             runtime.current_snapshot().entries[0]
                 .runtime_boundary_kind
@@ -580,6 +660,49 @@ mod tests {
     }
 
     #[test]
+    fn vba_host_end_to_end_vba_udf_in_compound_formula() {
+        // End-to-end: VBA source → OxVba compile → UDF admission → OxFml registration
+        // → formula evaluation with the VBA UDF embedded in a larger arithmetic expression.
+        // Formula: =3*AddThem(4,5) → 3 * (4+5) = 27
+        let runtime = VbaHostRuntime::load_source_project(
+            VbaProjectAssociation::workspace_source("e2e-compound-1", "memory:AddThem"),
+            add_them_project(""),
+            "0.1.0-test",
+            None,
+        )
+        .expect("runtime should load");
+
+        let locale = oxfml_en_us_locale_context();
+        let query_bundle = TypedContextQueryBundle::new(
+            None,
+            None,
+            Some(&locale),
+            Some(46000.0),
+            Some(&FIXED_RANDOM_PROVIDER_05),
+        )
+        .with_host_function_provider(Some(&runtime));
+
+        let mut host = oxfml_core::consumer::runtime::SingleFormulaHost::new(
+            "e2e-compound-vba-udf",
+            "=3*AddThem(4,5)",
+        );
+
+        let result = host
+            .recalc_with_interfaces(
+                EvaluationBackend::OxFuncBacked,
+                query_bundle,
+                Some(&runtime),
+            )
+            .expect("=3*AddThem(4,5) should evaluate through VBA host provider");
+
+        assert_eq!(
+            result.published_worksheet_value,
+            EvalValue::Number(27.0),
+            "3 * AddThem(4,5) = 3 * (4+5) = 27"
+        );
+    }
+
+    #[test]
     fn vba_host_rejects_non_numeric_arguments_for_first_slice() {
         let runtime = VbaHostRuntime::load_source_project(
             VbaProjectAssociation::workspace_source("vba-assoc-1", "memory:AddThem"),
@@ -604,13 +727,11 @@ mod tests {
 
     #[test]
     fn vba_host_keeps_rejected_udf_candidate_visible() {
+        // UdfAdmissionPolicy rejects Subs (not Functions) and class members.
+        // Add a Sub alongside AddThem to verify rejected candidates are retained.
         let runtime = VbaHostRuntime::load_source_project(
             VbaProjectAssociation::workspace_source("vba-assoc-1", "memory:AddThem"),
-            add_them_project(concat!(
-                "\nPublic Function EchoText(value As String) As String\n",
-                "EchoText = value\n",
-                "End Function\n"
-            )),
+            add_them_project(concat!("\nPublic Sub DoNothing()\n", "End Sub\n")),
             "0.1.0-test",
             None,
         )
@@ -621,14 +742,14 @@ mod tests {
         let rejected = runtime
             .candidates()
             .iter()
-            .find(|candidate| candidate.procedure_name.eq_ignore_ascii_case("EchoText"))
-            .expect("EchoText should remain visible as a rejected candidate");
+            .find(|candidate| candidate.procedure_name.eq_ignore_ascii_case("DoNothing"))
+            .expect("DoNothing should remain visible as a rejected candidate");
 
         match &rejected.admission_status {
             VbaUdfAdmissionStatus::Rejected { reason } => {
-                assert!(reason.contains("not admitted by the typed first slice"));
+                assert!(!reason.is_empty(), "rejection reason must not be empty");
             }
-            VbaUdfAdmissionStatus::Admitted => panic!("EchoText must not be admitted"),
+            VbaUdfAdmissionStatus::Admitted => panic!("DoNothing must not be admitted"),
         }
     }
 }

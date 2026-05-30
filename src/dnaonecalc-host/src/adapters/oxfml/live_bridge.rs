@@ -23,6 +23,8 @@ use oxfml_core::{BindContext, FormulaChannelKind};
 use oxfunc_core::functions::rand_fn::RandomProvider;
 use oxfunc_core::locale_format::{format_profile, LocaleProfileId, WorkbookDateSystem};
 
+use crate::services::vba_host::VbaHostRuntime;
+
 use super::bridge::{
     FormulaEditRequest, FormulaEditResult, FormulaFormattingCfDataBarDirection,
     FormulaFormattingCfRank, FormulaFormattingCfThreshold, FormulaFormattingCfTypedRule,
@@ -34,6 +36,17 @@ use super::types::{
     FormulaArrayPreview, FormulaValuePresentation, FormulaWalkNode, FormulaWalkNodeState,
     ParseSummary, ProvenanceSummary,
 };
+
+// Thread-local storage for the active VBA runtime. The OxVba
+// `PreparedVbaProject` contains raw pointers (`Variant.ptr_val`)
+// that make it `!Send`, so we cannot store it inside `Mutex` or
+// `Arc`. Thread-local is sound because all UI + evaluation calls
+// run on the main thread (WASM is single-threaded; native Leptos
+// dispatches on the spawning thread).
+thread_local! {
+    static VBA_RUNTIME_SLOT: std::cell::RefCell<Option<VbaHostRuntime>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 #[derive(Debug, Default)]
 pub struct LiveOxfmlBridge {
@@ -120,11 +133,12 @@ impl FormulaEditFingerprint {
 // catalog — those would all be mirrors of the OxFunc registry and
 // exactly what these worksets retired.
 //
-// When DNA OneCalc grows UDF support, this site will build a
-// `FunctionRegistry` clone via
-// `FunctionRegistry::built_ins().register_udf(...)` and pass it via
-// `EditorEnvironment::with_function_registry(...)`. Capability gating
-// (e.g. RTD provider unavailable in browser builds) flows through a
+// VBA UDFs are wired via `LibraryContextProvider` /
+// `HostFunctionProvider` on the installed `VbaHostRuntime`. The
+// editor sees them during bind (library context supplies the
+// function surface), and the runtime invokes them via the host
+// function provider. Capability gating (e.g. RTD provider
+// unavailable in browser builds) flows through a
 // `CapabilityOverlay` rather than through removing entries.
 
 impl OxfmlEditorBridge for LiveOxfmlBridge {
@@ -158,12 +172,40 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
         .with_formula_channel_kind(FormulaChannelKind::WorksheetA1);
 
         let previous_document = self.previous_document(&request)?;
-        // `EditorEnvironment::new` binds the OxFunc built-in registry
-        // as the default function registry. That is the canonical
-        // source for both completion proposals and function help in
-        // every editor surface — no `with_library_context_provider`,
-        // no `with_function_registry`, no host-supplied catalog.
-        let environment = EditorEnvironment::new(BindContext::default());
+
+        // The VBA runtime lives in a thread-local (`VBA_RUNTIME_SLOT`)
+        // because OxVba's `PreparedVbaProject` contains raw pointers
+        // that make it `!Send`. All evaluation runs on the UI thread,
+        // so thread-local access is safe and avoids cross-thread
+        // concerns. We borrow it for the full evaluation scope below.
+        VBA_RUNTIME_SLOT.with(|slot| {
+            let vba_guard = slot.borrow();
+            let vba_runtime_ref = vba_guard.as_ref();
+            self.apply_formula_edit_with_vba(
+                request,
+                fingerprint,
+                source,
+                previous_document,
+                vba_runtime_ref,
+            )
+        })
+    }
+}
+
+impl LiveOxfmlBridge {
+    fn apply_formula_edit_with_vba(
+        &self,
+        request: FormulaEditRequest,
+        fingerprint: FormulaEditFingerprint,
+        source: FormulaSourceRecord,
+        previous_document: Option<UpstreamEditorDocument>,
+        vba_runtime_ref: Option<&VbaHostRuntime>,
+    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+        let environment = if let Some(runtime) = vba_runtime_ref {
+            EditorEnvironment::new(BindContext::default()).with_library_context_provider(runtime)
+        } else {
+            EditorEnvironment::new(BindContext::default())
+        };
         let service = EditorEditService::new(environment);
         // `apply_edit` parses + binds; the returned `EditorInteractionResult`
         // does NOT carry completion proposals / signature help / function
@@ -216,6 +258,9 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                 Some(&locale_ctx),
                 Some(now_serial),
                 Some(random_provider.as_ref()),
+            )
+            .with_host_function_provider(
+                vba_runtime_ref.map(|r| r as &dyn oxfml_core::interface::HostFunctionProvider),
             );
             let mut runtime_request = RuntimeFormulaRequest::new(source.clone(), typed_context);
             if let Some(formatting) = request.formatting_request.as_ref() {
@@ -238,12 +283,13 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
                 }
             };
             runtime_request = runtime_request.with_trace_mode(upstream_trace_mode);
-            RuntimeEnvironment::new()
-                .with_formal_input_bindings(runtime_formal_input_bindings(
-                    &request.formal_input_bindings,
-                ))
-                .execute(runtime_request)
-                .ok()
+            let mut runtime_env = RuntimeEnvironment::new().with_formal_input_bindings(
+                runtime_formal_input_bindings(&request.formal_input_bindings),
+            );
+            if let Some(runtime) = vba_runtime_ref {
+                runtime_env = runtime_env.with_library_context_provider(runtime);
+            }
+            runtime_env.execute(runtime_request).ok()
         } else {
             None
         };
@@ -301,6 +347,26 @@ fn runtime_formal_input_bindings(
 }
 
 impl LiveOxfmlBridge {
+    /// Install a compiled VBA runtime for UDF resolution and invocation.
+    /// Replaces any previously installed runtime. Invalidates all cached
+    /// binding state since the function surface has changed.
+    pub fn install_vba_runtime(&self, runtime: VbaHostRuntime) {
+        VBA_RUNTIME_SLOT.with(|slot| {
+            *slot.borrow_mut() = Some(runtime);
+        });
+        // Invalidate caches — the function surface just changed.
+        let _ = self.invalidate_all_binding_state();
+    }
+
+    /// Remove the installed VBA runtime (if any). The bridge reverts to
+    /// built-in-only function resolution.
+    pub fn clear_vba_runtime(&self) {
+        VBA_RUNTIME_SLOT.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+        let _ = self.invalidate_all_binding_state();
+    }
+
     /// Clear cached editor and runtime projections for one formula. Future
     /// UDF registration, unregister, disable, and source-change events should
     /// call this after publishing a bind-visible function-surface generation.

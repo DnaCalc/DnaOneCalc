@@ -12,11 +12,12 @@ use oxfunc_core::value::EvalValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::adapters::oxvba::{OxvbaSourceModule, OxvbaSourceProject};
 use crate::services::programmatic_testing::{
     ProgrammaticComparisonStatus, ProgrammaticOpenModeHint,
 };
-use crate::services::vba_host::{VbaHostRuntime, VbaProjectAssociation, VbaUdfAdmissionStatus};
+use crate::services::vba_host::{
+    VbaHostRuntime, VbaProjectAssociation, VbaSourceModule, VbaSourceProject, VbaUdfAdmissionStatus,
+};
 
 const DEFAULT_CASE_ID: &str = "VBA-UDF-T001";
 const DEFAULT_FORMULA: &str = "=AddThem(2,3)";
@@ -153,9 +154,9 @@ pub fn run_vba_udf_verification(
     } else if request.excel_oracle_ref.is_some() {
         VbaHostRuntime::load_source_project(
             association,
-            OxvbaSourceProject {
+            VbaSourceProject {
                 project_name: request.project_name.clone(),
-                modules: vec![OxvbaSourceModule {
+                modules: vec![VbaSourceModule {
                     module_name: request.module_name.clone(),
                     source: request.module_source.clone(),
                 }],
@@ -166,9 +167,9 @@ pub fn run_vba_udf_verification(
     } else {
         VbaHostRuntime::load_source_project_for_evaluation(
             association,
-            OxvbaSourceProject {
+            VbaSourceProject {
                 project_name: request.project_name.clone(),
-                modules: vec![OxvbaSourceModule {
+                modules: vec![VbaSourceModule {
                     module_name: request.module_name.clone(),
                     source: request.module_source.clone(),
                 }],
@@ -431,21 +432,17 @@ fn values_match(left: &Value, right: &Value) -> bool {
 }
 
 fn registration_to_json(registration: &crate::services::vba_host::VbaUdfRegistration) -> Value {
+    let meta = &registration.registration.callable_metadata;
     json!({
-        "project": &registration.signature.project_name,
-        "module": &registration.signature.module_name,
-        "function": &registration.signature.procedure_name,
+        "project": &registration.registration.source_identity.project_id,
+        "module": &meta.module_name,
+        "function": &meta.public_name,
         "formula_name": &registration.formula_name,
-        "stable_host_call_id": &registration.stable_host_call_id,
-        "parameters": registration.signature.parameters.iter().map(|parameter| {
-            json!({
-                "name": &parameter.name,
-                "vba_type": format!("{:?}", parameter.vba_type),
-                "evidence": format!("{:?}", parameter.evidence)
-            })
-        }).collect::<Vec<_>>(),
-        "return_type": format!("{:?}", registration.signature.return_type),
-        "return_evidence": format!("{:?}", registration.signature.evidence),
+        "callable_id": &registration.callable_id,
+        "parameter_count": meta.parameter_count,
+        "parameter_types": &meta.parameter_type_text,
+        "return_type": &meta.return_type_text,
+        "conversion_lane": &registration.registration.invocation_target.conversion_lane,
         "type_map_status": &registration.type_map_status,
         "excel_oracle_ref": &registration.excel_oracle_ref
     })
@@ -461,7 +458,7 @@ fn candidate_to_json(candidate: &crate::services::vba_host::VbaUdfCandidate) -> 
         "project_name": &candidate.project_name,
         "module_name": &candidate.module_name,
         "procedure_name": &candidate.procedure_name,
-        "stable_host_call_id": &candidate.stable_host_call_id,
+        "callable_id": &candidate.callable_id,
         "admission_status": status,
         "reason": reason
     })

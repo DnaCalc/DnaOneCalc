@@ -1500,12 +1500,6 @@ fn vba_source_ref_label(association: &VbaHostAssociationState) -> String {
 
 fn vba_load_status_label(association: &VbaHostAssociationState) -> String {
     match &association.load_status {
-        crate::state::VbaHostAssociationLoadStatus::PendingLoad
-            if association.source_kind == VbaHostAssociationSourceKind::ModuleSource
-                && association.source_ref.starts_with("browser-file:") =>
-        {
-            "selected; browser runtime unavailable".to_string()
-        }
         crate::state::VbaHostAssociationLoadStatus::PendingLoad => "pending load".to_string(),
         crate::state::VbaHostAssociationLoadStatus::Loaded => "loaded".to_string(),
         crate::state::VbaHostAssociationLoadStatus::Failed(reason) => {
@@ -3089,10 +3083,10 @@ mod tests {
                 source_ref: "browser-file:SimpleVba.bas".to_string(),
                 source_kind: VbaHostAssociationSourceKind::ModuleSource,
                 enabled: true,
-                load_status: VbaHostAssociationLoadStatus::PendingLoad,
-                admitted_udf_count: 0,
+                load_status: VbaHostAssociationLoadStatus::Loaded,
+                admitted_udf_count: 1,
                 rejected_candidate_count: 0,
-                admitted_udfs: Vec::new(),
+                admitted_udfs: vec!["AddThem".to_string()],
                 rejected_candidates: Vec::new(),
             });
 
@@ -3101,10 +3095,7 @@ mod tests {
 
         assert_eq!(association.source_kind, "browser .bas");
         assert_eq!(association.source_ref, "SimpleVba.bas");
-        assert_eq!(
-            association.status_label,
-            "selected; browser runtime unavailable"
-        );
+        assert_eq!(association.status_label, "loaded");
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::adapters::oxfml::LiveOxfmlBridge;
-use crate::adapters::oxfml::OxfmlEditorBridge;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostMountTarget {
@@ -24,15 +23,14 @@ pub fn bootstrap_spec(target: HostMountTarget) -> HostBootstrapSpec {
     }
 }
 
-pub fn bootstrap_editor_bridge(
-    _target: HostMountTarget,
-) -> Arc<dyn OxfmlEditorBridge + Send + Sync> {
+pub fn bootstrap_editor_bridge(_target: HostMountTarget) -> Arc<LiveOxfmlBridge> {
     Arc::new(LiveOxfmlBridge::default())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::oxfml::OxfmlEditorBridge;
 
     #[test]
     fn bootstrap_editor_bridge_is_available_for_desktop_and_web() {

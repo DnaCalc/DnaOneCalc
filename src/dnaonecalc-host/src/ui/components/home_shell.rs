@@ -25,7 +25,7 @@ use web_sys::{
     MouseEvent as WebMouseEvent,
 };
 
-use crate::adapters::oxfml::{FormulaTextSpan, OxfmlEditorBridge};
+use crate::adapters::oxfml::{FormulaTextSpan, LiveOxfmlBridge};
 use crate::app::reducer::{
     accept_completion_by_proposal_id_on_active_formula_space,
     accept_selected_completion_with_suppression_on_active_formula_space,
@@ -62,7 +62,7 @@ use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 #[component]
 pub fn HomeShell(
     initial_state: OneCalcHostState,
-    #[prop(default = None)] editor_bridge: Option<Arc<dyn OxfmlEditorBridge + Send + Sync>>,
+    #[prop(default = None)] editor_bridge: Option<Arc<LiveOxfmlBridge>>,
 ) -> impl IntoView {
     // Hydrate from `localStorage["dnaonecalc.workspace.v1"]` before
     // the state signal sees its first subscriber, so the user's
@@ -694,21 +694,35 @@ pub fn HomeShell(
             let _ = crate::app::reducer::add_pending_vba_project_path(s);
         });
     });
-    let on_vba_module_file_selected = Callback::new(move |file_name: String| {
-        state.update(|s| {
-            let _ = crate::app::reducer::add_vba_module_source_for_host_context(
-                s,
-                file_name.clone(),
-                format!("browser-file:{file_name}"),
-                Vec::new(),
-                Vec::new(),
-            );
+    let editor_bridge_for_vba = editor_bridge.clone();
+    let on_vba_module_file_loaded =
+        Callback::new(move |(file_name, source_text): (String, String)| {
+            let mut loaded_runtime = None;
+            state.update(|s| {
+                loaded_runtime = crate::app::reducer::load_vba_module_source_for_host_context(
+                    s,
+                    file_name,
+                    source_text,
+                );
+            });
+            // Install the compiled VBA runtime in the editor bridge so
+            // subsequent formula evaluations can resolve and invoke UDFs.
+            if let (Some(runtime), Some(bridge)) = (loaded_runtime, editor_bridge_for_vba.as_ref())
+            {
+                bridge.install_vba_runtime(runtime);
+            }
         });
-    });
+    let editor_bridge_for_vba_remove = editor_bridge.clone();
     let on_vba_association_remove = Callback::new(move |association_id: String| {
+        let mut removed = false;
         state.update(|s| {
-            let _ = crate::app::reducer::remove_vba_host_association(s, &association_id);
+            removed = crate::app::reducer::remove_vba_host_association(s, &association_id);
         });
+        if removed {
+            if let Some(bridge) = editor_bridge_for_vba_remove.as_ref() {
+                bridge.clear_vba_runtime();
+            }
+        }
     });
     // Manual recalculate trigger. Wired both to the F9 key
     // (handled in `on_textarea_keydown`) and to a small button in
@@ -1511,7 +1525,7 @@ pub fn HomeShell(
                             view_model.get().map(|vm| vm.vba_host_context),
                             on_vba_project_path_input,
                             on_vba_project_path_add,
-                            on_vba_module_file_selected,
+                            on_vba_module_file_loaded,
                             on_vba_association_remove,
                         )}
                     </section>
@@ -2545,7 +2559,7 @@ fn render_vba_host_panel(
     context: Option<VbaHostContextView>,
     on_path_input: Callback<String>,
     on_add_path: Callback<()>,
-    on_module_file_selected: Callback<String>,
+    on_vba_module_file_loaded: Callback<(String, String)>,
     on_remove: Callback<String>,
 ) -> AnyView {
     let Some(context) = context else {
@@ -2598,7 +2612,20 @@ fn render_vba_host_panel(
                                 event_target::<web_sys::HtmlInputElement>(&ev);
                             if let Some(files) = target.files() {
                                 if let Some(file) = files.get(0) {
-                                    on_module_file_selected.run(file.name());
+                                    let file_name = file.name();
+                                    let callback = on_vba_module_file_loaded;
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            if let Ok(text) = crate::persistence::browser_file_io::read_bas_file_as_text(file).await {
+                                                callback.run((file_name, text));
+                                            }
+                                        });
+                                    }
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        let _ = (file, file_name, callback);
+                                    }
                                 }
                             }
                         }

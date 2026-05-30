@@ -10,7 +10,6 @@ pub mod live_edit;
 pub mod programmatic_testing;
 pub mod retained_artifacts;
 pub mod spreadsheet_xml;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod vba_host;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod vba_udf_verification;

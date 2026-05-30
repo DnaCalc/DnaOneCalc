@@ -210,6 +210,12 @@ pub async fn open_xml_via_file_input() -> Result<Option<OpenedFormulaFile>, Stri
     Ok(Some(OpenedFormulaFile { filename, xml }))
 }
 
+/// Read a `.bas` file's text content via the browser FileReader API.
+/// Called from the VBA host panel's file-input change handler.
+pub async fn read_bas_file_as_text(file: File) -> Result<String, String> {
+    read_file_as_text(file).await
+}
+
 async fn read_file_as_text(file: File) -> Result<String, String> {
     let reader = FileReader::new().map_err(|error| {
         format!(
