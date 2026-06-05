@@ -1,7 +1,7 @@
 //! SEAM-ONECALC-EXTENDED-VALUE-ROUTING
 //! SEAM-ONECALC-EXCEL-VALUE-INTO-EXTENDED
 //!
-//! Target: route upstream `EvalValue` / `ExtendedValue` / `PresentationHint`
+//! Target: route upstream `CalcValue` / `ExtendedValue` / `PresentationHint`
 //! through `FormulaSpaceState` so the result cluster renders structurally.
 //! Today `derive_formula_presentation` hand-evaluates a few patterns; the
 //! real typed value path is unimplemented.

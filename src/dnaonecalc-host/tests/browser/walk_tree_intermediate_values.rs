@@ -7,7 +7,7 @@
 //! `args: 2 · profile: AllAsValues`).
 //!
 //! Backed by upstream `PreparedCall.returned_value` and
-//! `PreparedArgument.resolved_value`, both `Option<EvalValue>`,
+//! `PreparedArgument.resolved_value`, both `Option<CalcValue>`,
 //! consumed by `live_bridge::map_formula_walk`. When upstream
 //! exposes `None` (e.g. `ReferencePreserved` args, helper-parameter
 //! name slots, lazy-skipped IF branches) the host falls back to

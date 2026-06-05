@@ -1,7 +1,7 @@
 //! Runtime metadata propagation scenarios.
 
 use dnaonecalc_host::adapters::oxfml::{
-    EditorAnalysisStage, EvalValue, FormulaEditRequest, FormulaInputBindingRequest,
+    CalcValue, EditorAnalysisStage, FormulaEditRequest, FormulaInputBindingRequest,
     LiveOxfmlBridge, OxfmlEditorBridge, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
 };
 use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest};
@@ -40,7 +40,7 @@ fn live_bridge_request(id: &str, entered_text: &str) -> FormulaEditRequest {
     }
 }
 
-fn evaluate_live_formula(id: &str, entered_text: &str) -> EvalValue {
+fn evaluate_live_formula(id: &str, entered_text: &str) -> CalcValue {
     let bridge = LiveOxfmlBridge::default();
     bridge
         .apply_formula_edit(live_bridge_request(id, entered_text))
@@ -52,10 +52,12 @@ fn evaluate_live_formula(id: &str, entered_text: &str) -> EvalValue {
 }
 
 fn assert_live_number(id: &str, entered_text: &str, expected: f64) {
-    match evaluate_live_formula(id, entered_text) {
-        EvalValue::Number(actual) => assert_eq!(actual, expected),
-        other => panic!("expected numeric {expected} for {entered_text}, got {other:?}"),
-    }
+    let actual = evaluate_live_formula(id, entered_text);
+    assert_eq!(
+        actual.as_number(),
+        Some(expected),
+        "expected numeric {expected} for {entered_text}, got {actual:?}"
+    );
 }
 
 #[test]
@@ -123,7 +125,7 @@ fn formal_input_binding_affects_single_formula_evaluation() {
                 label: "Rate".to_string(),
                 reference_descriptor: "name:Rate".to_string(),
                 reference_handle: None,
-                value: EvalValue::Number(0.2),
+                value: CalcValue::number(0.2),
             }],
         })
         .expect("live bridge should evaluate with formal input");
@@ -197,7 +199,7 @@ fn ordinary_single_formula_runtime_uses_no_host_extension_providers() {
         .expect("ordinary single-formula runtime should evaluate without host providers");
     let families = &result.typed_query_bundle_spec.families;
 
-    assert_eq!(result.published_worksheet_value, EvalValue::Number(6.0));
+    assert_eq!(result.published_worksheet_value, CalcValue::number(6.0));
     assert!(families.contains(&TypedContextQueryFamily::LocaleFormatContext));
     assert!(families.contains(&TypedContextQueryFamily::NowSerial));
     assert!(families.contains(&TypedContextQueryFamily::RandomProvider));

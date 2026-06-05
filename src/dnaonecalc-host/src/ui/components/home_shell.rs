@@ -59,6 +59,8 @@ use crate::ui::editor::commands::{classify_dom_input, EditorInputEvent, EditorIn
 use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 
+type HostStateSignal = RwSignal<OneCalcHostState, LocalStorage>;
+
 #[component]
 pub fn HomeShell(
     initial_state: OneCalcHostState,
@@ -74,7 +76,7 @@ pub fn HomeShell(
     let mut initial_state = initial_state;
     crate::persistence::hydrate_state_from_local_storage(&mut initial_state);
 
-    let state: RwSignal<OneCalcHostState> = RwSignal::new(initial_state);
+    let state: HostStateSignal = RwSignal::new_local(initial_state);
 
     // Auto-save the workspace envelope to localStorage on every
     // state change. The serialise + write path is cheap (<1 ms for
@@ -1607,7 +1609,7 @@ fn render_command_palette(
     palette: Option<CommandPaletteView>,
     on_query: Callback<String>,
     on_dispatch: Callback<CommandPaletteEntryKind>,
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
 ) -> AnyView {
     let Some(palette) = palette else {
         return view! { <></> }.into_any();
@@ -4164,10 +4166,7 @@ mod tests {
 /// Render the appropriate result-block content per `ResultView` variant.
 /// All variants reach into the result-block container and supply class +
 /// content; the container's CSS supplies the layout (centered, large).
-fn render_result_view(
-    view: Option<ResultView>,
-    state: RwSignal<crate::state::OneCalcHostState>,
-) -> AnyView {
+fn render_result_view(view: Option<ResultView>, state: HostStateSignal) -> AnyView {
     match view {
         None => view! { <em class="muted">"awaiting input"</em> }.into_any(),
         Some(ResultView::Empty) => view! { <em class="muted">"awaiting input"</em> }.into_any(),
@@ -4243,7 +4242,7 @@ fn render_array_browser(
     cells: Vec<Vec<String>>,
     cell_format: Option<Vec<Vec<ArrayCellFormatView>>>,
     truncated: bool,
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
 ) -> AnyView {
     let preview_rows = cells.len();
     let preview_cols = cells.first().map(|row| row.len()).unwrap_or(0);
@@ -4595,7 +4594,7 @@ fn render_array_browser(
 /// display-option toggles, current-selection summary, and a Copy
 /// button for the rectangular block selection.
 fn render_array_browser_toolbar(
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
     zoom: f32,
     selection: Option<crate::state::ArrayBlockSelection>,
     display: crate::state::ArrayBrowserDisplaySettings,
@@ -4741,7 +4740,7 @@ fn cell_range_label(r0: usize, c0: usize, r1: usize, c1: usize) -> String {
 /// wasm this writes to the system clipboard via the async
 /// Clipboard API; on non-wasm this is a no-op (tests don't have
 /// a clipboard).
-fn copy_array_browser_selection_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>) {
+fn copy_array_browser_selection_to_clipboard(state: HostStateSignal) {
     let cells = state.with(|s| {
         s.workspace_shell
             .active_formula_space_id
@@ -4755,7 +4754,7 @@ fn copy_array_browser_selection_to_clipboard(state: RwSignal<crate::state::OneCa
 }
 
 #[cfg(target_arch = "wasm32")]
-fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cells: &[Vec<String>]) {
+fn copy_cells_to_clipboard(state: HostStateSignal, cells: &[Vec<String>]) {
     let selection = state.with(|s| {
         s.workspace_shell
             .active_formula_space_id
@@ -4773,7 +4772,7 @@ fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cell
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn copy_cells_to_clipboard(state: RwSignal<crate::state::OneCalcHostState>, cells: &[Vec<String>]) {
+fn copy_cells_to_clipboard(state: HostStateSignal, cells: &[Vec<String>]) {
     // No clipboard access on the SSR / test path. The
     // serialisation logic still runs here so native builds keep
     // the same selection-to-TSV path type-checked.
@@ -4840,7 +4839,7 @@ fn render_array_browser_cell(
     cell_value: String,
     cell_format: Option<&ArrayCellFormatView>,
     is_selected: bool,
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
 ) -> AnyView {
     let cell_for_attr = cell_value.clone();
     let mut style = String::new();
@@ -4962,12 +4961,7 @@ fn render_array_browser_cell(
 /// the new cell. The continuing-drag-extends behaviour is wired
 /// at the cell level via `on:mouseenter` while the mouse button
 /// is held.
-fn start_block_selection_drag(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    row: usize,
-    col: usize,
-    extend: bool,
-) {
+fn start_block_selection_drag(state: HostStateSignal, row: usize, col: usize, extend: bool) {
     use crate::state::ArrayBlockSelection;
     state.update(|state| {
         let next = if extend {
@@ -4992,11 +4986,7 @@ fn start_block_selection_drag(
     });
 }
 
-fn extend_block_selection_drag(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    row: usize,
-    col: usize,
-) {
+fn extend_block_selection_drag(state: HostStateSignal, row: usize, col: usize) {
     use crate::state::ArrayBlockSelection;
     state.update(|state| {
         let prior = state
@@ -5018,12 +5008,7 @@ fn extend_block_selection_drag(
 /// the pure helper [`crate::app::reducer::compute_column_header_selection`],
 /// and stores the result. Plain click replaces the selection;
 /// Shift+click extends from the prior anchor.
-fn select_column(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    col: usize,
-    preview_rows: usize,
-    extend: bool,
-) {
+fn select_column(state: HostStateSignal, col: usize, preview_rows: usize, extend: bool) {
     state.update(|state| {
         let prior = state
             .workspace_shell
@@ -5041,12 +5026,7 @@ fn select_column(
 /// [`select_column`] — see
 /// [`crate::app::reducer::compute_row_header_selection`] for the
 /// computation rule.
-fn select_row(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    row: usize,
-    preview_cols: usize,
-    extend: bool,
-) {
+fn select_row(state: HostStateSignal, row: usize, preview_cols: usize, extend: bool) {
     state.update(|state| {
         let prior = state
             .workspace_shell
@@ -5065,11 +5045,7 @@ fn select_row(
 /// shortcut. The selection covers exactly the rendered preview
 /// rectangle — if the bridge truncated the array, hidden cells
 /// remain unselected.
-fn select_all_visible_cells(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    preview_rows: usize,
-    preview_cols: usize,
-) {
+fn select_all_visible_cells(state: HostStateSignal, preview_rows: usize, preview_cols: usize) {
     let next =
         crate::app::reducer::compute_select_all_visible_selection(preview_rows, preview_cols);
     state.update(|state| {
@@ -5085,19 +5061,14 @@ fn select_all_visible_cells(
 /// to its own initial width plus the same delta, so the user's
 /// proportional layout survives the drag.
 #[cfg(target_arch = "wasm32")]
-fn start_column_resize(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    column: usize,
-    initial_rem: f32,
-    initial_x: i32,
-) {
+fn start_column_resize(state: HostStateSignal, column: usize, initial_rem: f32, initial_x: i32) {
     let targets = resolve_column_resize_targets(state, column, initial_rem);
     install_resize_drag(state, ResizeAxis::Columns(targets), initial_x);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn start_column_resize(
-    _state: RwSignal<crate::state::OneCalcHostState>,
+    _state: HostStateSignal,
     _column: usize,
     _initial_rem: f32,
     _initial_x: i32,
@@ -5105,24 +5076,13 @@ fn start_column_resize(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn start_row_resize(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    row: usize,
-    initial_rem: f32,
-    initial_y: i32,
-) {
+fn start_row_resize(state: HostStateSignal, row: usize, initial_rem: f32, initial_y: i32) {
     let targets = resolve_row_resize_targets(state, row, initial_rem);
     install_resize_drag(state, ResizeAxis::Rows(targets), initial_y);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn start_row_resize(
-    _state: RwSignal<crate::state::OneCalcHostState>,
-    _row: usize,
-    _initial_rem: f32,
-    _initial_y: i32,
-) {
-}
+fn start_row_resize(_state: HostStateSignal, _row: usize, _initial_rem: f32, _initial_y: i32) {}
 
 /// One axis-target captured at drag start. Holds the (index,
 /// initial-rem) pair so the drag closure can compute every
@@ -5150,7 +5110,7 @@ enum ResizeAxis {
 /// drag preserves any existing relative widths.
 #[cfg(target_arch = "wasm32")]
 fn resolve_column_resize_targets(
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
     column: usize,
     initial_rem: f32,
 ) -> Vec<ResizeTarget> {
@@ -5198,7 +5158,7 @@ fn resolve_column_resize_targets(
 /// Mirror of [`resolve_column_resize_targets`] for rows.
 #[cfg(target_arch = "wasm32")]
 fn resolve_row_resize_targets(
-    state: RwSignal<crate::state::OneCalcHostState>,
+    state: HostStateSignal,
     row: usize,
     initial_rem: f32,
 ) -> Vec<ResizeTarget> {
@@ -5244,11 +5204,7 @@ fn resolve_row_resize_targets(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn install_resize_drag(
-    state: RwSignal<crate::state::OneCalcHostState>,
-    axis: ResizeAxis,
-    initial_pos: i32,
-) {
+fn install_resize_drag(state: HostStateSignal, axis: ResizeAxis, initial_pos: i32) {
     use std::cell::RefCell;
     use std::rc::Rc;
     use wasm_bindgen::closure::Closure;

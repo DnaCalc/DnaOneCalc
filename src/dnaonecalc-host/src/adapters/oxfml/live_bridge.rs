@@ -32,7 +32,7 @@ use super::bridge::{
     OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
 };
 use super::types::{
-    worksheet_error_literal, ArrayCellValue, BindSummary, EditorDocument, EvalSummary, EvalValue,
+    worksheet_error_literal, BindSummary, CalcValue, CoreValue, EditorDocument, EvalSummary,
     FormulaArrayPreview, FormulaValuePresentation, FormulaWalkNode, FormulaWalkNodeState,
     ParseSummary, ProvenanceSummary,
 };
@@ -46,23 +46,15 @@ use super::types::{
 thread_local! {
     static VBA_RUNTIME_SLOT: std::cell::RefCell<Option<VbaHostRuntime>> =
         const { std::cell::RefCell::new(None) };
+    // Cached EditorDocument values contain native CalcValue rich state
+    // backed by Rc, so the cache must stay on the UI/evaluation thread.
+    static LAST_RESULT_SLOT: std::cell::RefCell<BTreeMap<String, CachedFormulaEditResult>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 #[derive(Debug, Default)]
 pub struct LiveOxfmlBridge {
     cached_documents: Mutex<BTreeMap<String, UpstreamEditorDocument>>,
-    /// Per-formula cache of the most recent fully-computed
-    /// `EditorDocument` keyed by the request's
-    /// `(entered_text, cursor_offset, formatting_request,
-    /// scenario_policy, recalc_mode, skip_runtime_evaluation)`
-    /// tuple. When the next request arrives with an identical
-    /// fingerprint AND the runtime-evaluation pass would not
-    /// change anything (volatile-free formulas, deterministic
-    /// seeds, or skip-runtime mode), the bridge returns the
-    /// cached document without re-running parse / bind / popups
-    /// / runtime. Skipped automatically for `LiveRecalc` since
-    /// volatile functions advance per round-trip.
-    last_result: Mutex<BTreeMap<String, CachedFormulaEditResult>>,
 }
 
 #[derive(Debug, Clone)]
@@ -329,7 +321,7 @@ fn formal_input_binding_fingerprint(binding: &FormulaInputBindingRequest) -> Str
     )
 }
 
-fn eval_value_fingerprint(value: &EvalValue) -> String {
+fn eval_value_fingerprint(value: &CalcValue) -> String {
     format!("{value:?}")
 }
 
@@ -381,14 +373,8 @@ impl LiveOxfmlBridge {
             })?;
             invalidated += usize::from(cached_documents.remove(formula_stable_id).is_some());
         }
-        {
-            let mut last_result = self.last_result.lock().map_err(|_| {
-                OxfmlEditorBridgeError::UpstreamFailure(
-                    "Live bridge result cache poisoned".to_string(),
-                )
-            })?;
-            invalidated += usize::from(last_result.remove(formula_stable_id).is_some());
-        }
+        invalidated += LAST_RESULT_SLOT
+            .with(|slot| usize::from(slot.borrow_mut().remove(formula_stable_id).is_some()));
         Ok(invalidated)
     }
 
@@ -399,12 +385,10 @@ impl LiveOxfmlBridge {
         let mut cached_documents = self.cached_documents.lock().map_err(|_| {
             OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
         })?;
-        let mut last_result = self.last_result.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
-        })?;
-        let invalidated = cached_documents.len() + last_result.len();
+        let last_result_len = LAST_RESULT_SLOT.with(|slot| slot.borrow().len());
+        let invalidated = cached_documents.len() + last_result_len;
         cached_documents.clear();
-        last_result.clear();
+        LAST_RESULT_SLOT.with(|slot| slot.borrow_mut().clear());
         Ok(invalidated)
     }
 
@@ -442,13 +426,12 @@ impl LiveOxfmlBridge {
         formula_stable_id: &str,
         fingerprint: &FormulaEditFingerprint,
     ) -> Result<Option<EditorDocument>, OxfmlEditorBridgeError> {
-        let last_result = self.last_result.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
-        })?;
-        Ok(last_result
-            .get(formula_stable_id)
-            .filter(|cached| &cached.fingerprint == fingerprint)
-            .map(|cached| cached.document.clone()))
+        Ok(LAST_RESULT_SLOT.with(|slot| {
+            slot.borrow()
+                .get(formula_stable_id)
+                .filter(|cached| &cached.fingerprint == fingerprint)
+                .map(|cached| cached.document.clone())
+        }))
     }
 
     fn cache_result(
@@ -457,16 +440,15 @@ impl LiveOxfmlBridge {
         fingerprint: FormulaEditFingerprint,
         document: EditorDocument,
     ) -> Result<(), OxfmlEditorBridgeError> {
-        let mut last_result = self.last_result.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge result cache poisoned".to_string())
-        })?;
-        last_result.insert(
-            formula_stable_id,
-            CachedFormulaEditResult {
-                fingerprint,
-                document,
-            },
-        );
+        LAST_RESULT_SLOT.with(|slot| {
+            slot.borrow_mut().insert(
+                formula_stable_id,
+                CachedFormulaEditResult {
+                    fingerprint,
+                    document,
+                },
+            );
+        });
         Ok(())
     }
 }
@@ -800,8 +782,8 @@ fn fallback_formula_walk_node(
 
 fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresentation {
     let blocked_reason = blocked_reason_from_runtime(result);
-    let array_preview = match &result.published_worksheet_value {
-        EvalValue::Array(array) => {
+    let array_preview = match result.published_worksheet_value.core() {
+        CoreValue::Array(array) => {
             let shape = array.shape();
             // Result-hero array browser cap. The user's intent is
             // "don't truncate after a sliver — show the full array
@@ -1010,23 +992,30 @@ fn blocked_reason_from_runtime(result: &RuntimeFormulaResult) -> Option<String> 
 }
 
 /// Produce the host's compact `evaluation_summary` string directly from
-/// the upstream typed `EvalValue`. Replaces an earlier helper that
+/// the upstream typed `CalcValue`. Replaces an earlier helper that
 /// re-parsed `RuntimeFormulaResult.evaluation.result.payload_summary`
 /// with `strip_prefix("Number(")` etc., which silently lost the typed
 /// discriminator and forced a downstream string round-trip to recover it.
-fn evaluation_summary_from_value(value: &EvalValue) -> String {
-    match value {
-        EvalValue::Number(number) => format!("Number · {}", format_number(*number)),
-        EvalValue::Text(text) => format!("Text · {}", text.to_string_lossy()),
-        EvalValue::Logical(true) => "Logical · TRUE".to_string(),
-        EvalValue::Logical(false) => "Logical · FALSE".to_string(),
-        EvalValue::Error(code) => format!("Error · {}", worksheet_error_literal(*code)),
-        EvalValue::Array(array) => {
+fn evaluation_summary_from_value(value: &CalcValue) -> String {
+    if value.callable_value().is_some() {
+        return "Callable · host value".to_string();
+    }
+    if value.rich().is_some() {
+        return "Rich value".to_string();
+    }
+    match value.core() {
+        CoreValue::Number(number) => format!("Number · {}", format_number(*number)),
+        CoreValue::Text(text) => format!("Text · {}", text.to_string_lossy()),
+        CoreValue::Logical(true) => "Logical · TRUE".to_string(),
+        CoreValue::Logical(false) => "Logical · FALSE".to_string(),
+        CoreValue::Error(code) => format!("Error · {}", worksheet_error_literal(*code)),
+        CoreValue::Empty => "Empty".to_string(),
+        CoreValue::Missing => "Missing".to_string(),
+        CoreValue::Array(array) => {
             let shape = array.shape();
             format!("Array · {}x{} dynamic result", shape.rows, shape.cols)
         }
-        EvalValue::Reference(reference) => format!("Reference · {}", reference.target),
-        EvalValue::Lambda(lambda) => format!("Lambda · {}", lambda.callable_token),
+        CoreValue::Reference(reference) => format!("Reference · {}", reference.target()),
     }
 }
 
@@ -1295,9 +1284,9 @@ fn current_random_provider() -> Box<dyn RandomProvider> {
 /// `Array[rows×cols] {a, b, c, …}` so the drill stays compact even
 /// when the formula returns thousands of cells. The first six cells
 /// in row-major order are shown; "…" when the array has more.
-fn format_walk_value_preview(value: &EvalValue) -> String {
-    match value {
-        EvalValue::Array(array) => {
+fn format_walk_value_preview(value: &CalcValue) -> String {
+    match value.core() {
+        CoreValue::Array(array) => {
             let shape = array.shape();
             let total = shape.rows.saturating_mul(shape.cols);
             let preview_cap = 6usize;
@@ -1324,21 +1313,28 @@ fn format_walk_value_preview(value: &EvalValue) -> String {
 }
 
 fn format_eval_value_for_display(
-    value: &EvalValue,
+    value: &CalcValue,
     array_preview: Option<&FormulaArrayPreview>,
 ) -> String {
-    match value {
-        EvalValue::Number(number) => format_number(*number),
-        EvalValue::Text(text) => text.to_string_lossy(),
-        EvalValue::Logical(value) => {
+    if value.callable_value().is_some() {
+        return "Callable value".to_string();
+    }
+    if value.rich().is_some() {
+        return "Rich value".to_string();
+    }
+    match value.core() {
+        CoreValue::Number(number) => format_number(*number),
+        CoreValue::Text(text) => text.to_string_lossy(),
+        CoreValue::Logical(value) => {
             if *value {
                 "TRUE".to_string()
             } else {
                 "FALSE".to_string()
             }
         }
-        EvalValue::Error(code) => worksheet_error_literal(*code).to_string(),
-        EvalValue::Array(_) => array_preview
+        CoreValue::Error(code) => worksheet_error_literal(*code).to_string(),
+        CoreValue::Empty | CoreValue::Missing => String::new(),
+        CoreValue::Array(_) => array_preview
             .map(|preview| {
                 format!(
                     "{{{}}}",
@@ -1351,25 +1347,12 @@ fn format_eval_value_for_display(
                 )
             })
             .unwrap_or_else(|| "Array result".to_string()),
-        EvalValue::Reference(reference) => reference.target.clone(),
-        EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
+        CoreValue::Reference(reference) => reference.target().to_string(),
     }
 }
 
-fn format_array_cell_value(cell: &ArrayCellValue) -> String {
-    match cell {
-        ArrayCellValue::Number(number) => format_number(*number),
-        ArrayCellValue::Text(text) => text.to_string_lossy(),
-        ArrayCellValue::Logical(value) => {
-            if *value {
-                "TRUE".to_string()
-            } else {
-                "FALSE".to_string()
-            }
-        }
-        ArrayCellValue::Error(code) => worksheet_error_literal(*code).to_string(),
-        ArrayCellValue::EmptyCell => String::new(),
-    }
+fn format_array_cell_value(cell: &CalcValue) -> String {
+    format_eval_value_for_display(cell, None)
 }
 
 fn format_number(number: f64) -> String {

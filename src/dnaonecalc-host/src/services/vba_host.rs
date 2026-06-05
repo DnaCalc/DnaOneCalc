@@ -9,13 +9,13 @@ use oxfml_core::semantics::{
     LibraryAvailabilityState, LibraryContextSnapshot, LibraryContextSnapshotEntry,
     RegistrationSourceKind,
 };
-use oxfunc_core::value::EvalValue;
-use oxvba_compiler::ModuleKind;
+use oxfunc_core::value::{CalcValue, CoreValue, ExcelText, WorksheetErrorCode};
+use oxvba_compiler::{ModuleKind, VbaType};
 use oxvba_host::{
     HostCallContext, HostCaller, HostConfig, PreparedVbaProject, ProjectModuleText, ProjectSource,
-    TypedValue, UdfAdmissionPolicy, UdfAdmissionReport, VbaHost, VbaHostOptions,
-    W093RegistrationRequest,
+    UdfAdmissionPolicy, UdfAdmissionReport, VbaHost, VbaHostOptions, W093RegistrationRequest,
 };
+use oxvba_runtime::{VarType, Variant};
 
 // ---------------------------------------------------------------------------
 // Source-level input types (used by vba_udf_verification and load paths)
@@ -141,7 +141,7 @@ impl VbaHostRuntime {
     ) -> Result<Self, String> {
         let module_texts = build_module_texts(&project, application_version);
         let (loaded, project_name) = load_via_vba_host(module_texts)?;
-        let admission_report = UdfAdmissionPolicy::default().admit(loaded.reflection());
+        let admission_report = dnaonecalc_udf_admission_policy().admit(loaded.reflection());
         let prepared = loaded.prepare().map_err(format_host_diagnostic)?;
         Self::from_prepared(
             association,
@@ -226,7 +226,7 @@ impl VbaHostRuntime {
         let loaded = host
             .load_project(ProjectSource::ModuleTexts(module_texts))
             .map_err(format_host_diagnostic)?;
-        let admission_report = UdfAdmissionPolicy::default().admit(loaded.reflection());
+        let admission_report = dnaonecalc_udf_admission_policy().admit(loaded.reflection());
         let prepared = loaded.prepare().map_err(format_host_diagnostic)?;
         association.project_identity = Some(project_name.clone());
         Self::from_prepared(
@@ -314,8 +314,8 @@ impl VbaHostRuntime {
     pub fn invoke_registered_udf(
         &self,
         function_name: &str,
-        args: &[EvalValue],
-    ) -> Result<EvalValue, String> {
+        args: &[CalcValue],
+    ) -> Result<CalcValue, String> {
         let registration = self
             .registrations
             .iter()
@@ -326,9 +326,9 @@ impl VbaHostRuntime {
             })
             .ok_or_else(|| format!("VBA UDF `{function_name}` is not admitted"))?;
 
-        let typed_args = args
+        let variant_args = args
             .iter()
-            .map(eval_value_to_typed_value)
+            .map(eval_value_to_variant)
             .collect::<Result<Vec<_>, _>>()?;
         let context = HostCallContext {
             caller: Some(HostCaller {
@@ -345,10 +345,10 @@ impl VbaHostRuntime {
             .try_borrow_mut()
             .map_err(|_| "VBA runtime session is already borrowed".to_string())?;
         let result = prepared
-            .invoke_callable_typed(&registration.callable_id, context, &typed_args)
+            .invoke_callable_variant(&registration.callable_id, context, &variant_args)
             .map_err(format_host_diagnostic)?;
 
-        typed_value_to_eval_value(result.value)
+        variant_to_eval_value(result.value)
     }
 }
 
@@ -356,7 +356,7 @@ impl HostFunctionProvider for VbaHostRuntime {
     fn invoke_host_function(
         &self,
         invocation: &HostFunctionInvocation,
-    ) -> Result<EvalValue, HostFunctionProviderError> {
+    ) -> Result<CalcValue, HostFunctionProviderError> {
         self.invoke_registered_udf(&invocation.function_name, &invocation.args)
             .map_err(HostFunctionProviderError::new)
     }
@@ -387,6 +387,25 @@ fn format_host_diagnostic(err: oxvba_host::HostDiagnostic) -> String {
 fn vba_host_options() -> VbaHostOptions {
     VbaHostOptions {
         host_config: HostConfig { enable_jit: false },
+    }
+}
+
+fn dnaonecalc_udf_admission_policy() -> UdfAdmissionPolicy {
+    UdfAdmissionPolicy {
+        allowed_scalar_types: vec![
+            VbaType::Variant,
+            VbaType::Boolean,
+            VbaType::Byte,
+            VbaType::Integer,
+            VbaType::Long,
+            VbaType::LongLong,
+            VbaType::Single,
+            VbaType::Double,
+            VbaType::Currency,
+            VbaType::Date,
+            VbaType::String,
+        ],
+        ..UdfAdmissionPolicy::default()
     }
 }
 
@@ -439,25 +458,135 @@ fn application_class_module_text(application_version: &str) -> ProjectModuleText
 // Type conversion helpers
 // ---------------------------------------------------------------------------
 
-fn eval_value_to_typed_value(value: &EvalValue) -> Result<TypedValue, String> {
-    match value {
-        EvalValue::Number(number) => Ok(TypedValue::Double(*number)),
+fn eval_value_to_variant(value: &CalcValue) -> Result<Variant, String> {
+    if value.rich().is_some() {
+        return Err("VBA UDF arguments do not admit rich CalcValue payloads".to_string());
+    }
+    match value.core() {
+        CoreValue::Number(number) => Ok(Variant::from_f64(*number)),
+        CoreValue::Text(text) => Ok(Variant::from_string(text.to_string_lossy())),
+        CoreValue::Logical(value) => Ok(Variant::from_bool(*value)),
+        CoreValue::Empty | CoreValue::Missing => Ok(Variant::empty()),
+        CoreValue::Error(code) => Ok(Variant::from_error_code(
+            worksheet_error_to_variant_error_code(*code),
+        )),
+        CoreValue::Array(_) => {
+            Err("VBA UDF arguments do not yet admit CalcValue array payloads".to_string())
+        }
+        CoreValue::Reference(_) => {
+            Err("VBA UDF arguments do not yet admit CalcValue reference payloads".to_string())
+        }
+    }
+}
+
+fn variant_to_eval_value(value: Variant) -> Result<CalcValue, String> {
+    match value.vtype() {
+        VarType::Empty | VarType::Null => Ok(CalcValue::empty()),
+        VarType::Integer => value
+            .as_i16()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant Integer return could not be read".to_string()),
+        VarType::SignedByte => value
+            .as_i8()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant SignedByte return could not be read".to_string()),
+        VarType::Byte => value
+            .as_u8()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant Byte return could not be read".to_string()),
+        VarType::UnsignedInteger => value
+            .as_u16()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant UnsignedInteger return could not be read".to_string()),
+        VarType::Long => value
+            .as_i32()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant Long return could not be read".to_string()),
+        VarType::UnsignedLong | VarType::UnsignedInt => value
+            .as_u32()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant unsigned Long return could not be read".to_string()),
+        VarType::LongLong => value
+            .as_i64()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant LongLong return could not be read".to_string()),
+        VarType::UnsignedLongLong => value
+            .as_u64()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant UnsignedLongLong return could not be read".to_string()),
+        VarType::Single => value
+            .as_f32()
+            .map(|v| CalcValue::number(v as f64))
+            .ok_or_else(|| "VBA Variant Single return could not be read".to_string()),
+        VarType::Double => value
+            .as_f64()
+            .map(CalcValue::number)
+            .ok_or_else(|| "VBA Variant Double return could not be read".to_string()),
+        VarType::Currency => value
+            .as_currency_scaled_i64()
+            .map(|v| CalcValue::number(v as f64 / 10_000.0))
+            .ok_or_else(|| "VBA Variant Currency return could not be read".to_string()),
+        VarType::Date => value
+            .as_date_f64()
+            .map(CalcValue::number)
+            .ok_or_else(|| "VBA Variant Date return could not be read".to_string()),
+        VarType::Boolean => value
+            .as_bool()
+            .map(CalcValue::logical)
+            .ok_or_else(|| "VBA Variant Boolean return could not be read".to_string()),
+        VarType::String => value
+            .as_bstr()
+            .map(|v| {
+                let text = v.as_str();
+                CalcValue::text(ExcelText::from_interop_assignment(&text))
+            })
+            .ok_or_else(|| "VBA Variant String return could not be read".to_string()),
+        VarType::Error => value
+            .as_error_code()
+            .map(|code| CalcValue::error(variant_error_code_to_worksheet_error(code)))
+            .ok_or_else(|| "VBA Variant Error return could not be read".to_string()),
         other => Err(format!(
-            "VBA-UDF-T001 admits only numeric arguments for Double parameters; got {other:?}"
+            "VBA UDF returned a Variant type not yet mapped to CalcValue: {other:?}"
         )),
     }
 }
 
-fn typed_value_to_eval_value(value: TypedValue) -> Result<EvalValue, String> {
-    match value {
-        TypedValue::Double(v) => Ok(EvalValue::Number(v)),
-        TypedValue::Single(v) => Ok(EvalValue::Number(v as f64)),
-        TypedValue::Long(v) => Ok(EvalValue::Number(v as f64)),
-        TypedValue::Integer(v) => Ok(EvalValue::Number(v as f64)),
-        TypedValue::LongLong(v) => Ok(EvalValue::Number(v as f64)),
-        other => Err(format!(
-            "VBA UDF returned a value type not yet mapped to EvalValue: {other:?}"
-        )),
+fn worksheet_error_to_variant_error_code(code: WorksheetErrorCode) -> i32 {
+    match code {
+        WorksheetErrorCode::Null => 2000,
+        WorksheetErrorCode::Div0 => 2007,
+        WorksheetErrorCode::Value => 2015,
+        WorksheetErrorCode::Ref => 2023,
+        WorksheetErrorCode::Name => 2029,
+        WorksheetErrorCode::Num => 2036,
+        WorksheetErrorCode::NA => 2042,
+        WorksheetErrorCode::GettingData => 2043,
+        WorksheetErrorCode::Spill => 2045,
+        WorksheetErrorCode::Calc => 2050,
+        WorksheetErrorCode::Field => 2049,
+        WorksheetErrorCode::Busy => 2051,
+        WorksheetErrorCode::Blocked => 2047,
+        WorksheetErrorCode::Connect => 2046,
+    }
+}
+
+fn variant_error_code_to_worksheet_error(code: i32) -> WorksheetErrorCode {
+    match code {
+        2000 => WorksheetErrorCode::Null,
+        2007 => WorksheetErrorCode::Div0,
+        2015 => WorksheetErrorCode::Value,
+        2023 => WorksheetErrorCode::Ref,
+        2029 => WorksheetErrorCode::Name,
+        2036 => WorksheetErrorCode::Num,
+        2042 => WorksheetErrorCode::NA,
+        2043 => WorksheetErrorCode::GettingData,
+        2045 => WorksheetErrorCode::Spill,
+        2050 => WorksheetErrorCode::Calc,
+        2049 => WorksheetErrorCode::Field,
+        2051 => WorksheetErrorCode::Busy,
+        2047 => WorksheetErrorCode::Blocked,
+        2046 => WorksheetErrorCode::Connect,
+        _ => WorksheetErrorCode::Value,
     }
 }
 
@@ -482,7 +611,7 @@ fn library_snapshot_for_registrations(
                 )),
                 surface_stable_id: Some(registration.callable_id.clone()),
                 name_resolution_table_ref: Some(format!("vba:{}", association.association_id)),
-                semantic_trait_profile_ref: Some("vba-udf-double.v1".to_string()),
+                semantic_trait_profile_ref: Some("vba-udf-typed-scalar.v1".to_string()),
                 gating_profile_ref: None,
                 metadata_status: Some("host_registered".to_string()),
                 special_interface_kind: None,
@@ -491,7 +620,7 @@ fn library_snapshot_for_registrations(
                 ),
                 preparation_owner: Some("DnaOneCalc".to_string()),
                 runtime_boundary_kind: Some("vba_host_callback".to_string()),
-                interface_contract_ref: Some("dnaonecalc-vba-udf-first-slice".to_string()),
+                interface_contract_ref: Some("dnaonecalc-vba-udf-typed-scalar".to_string()),
                 registration_source_kind: RegistrationSourceKind::Vba,
                 parse_bind_state: LibraryAvailabilityState::CatalogKnown,
                 semantic_plan_state: LibraryAvailabilityState::CatalogKnown,
@@ -652,7 +781,7 @@ mod tests {
             )
             .expect("formula should evaluate through VBA host provider");
 
-        assert_eq!(result.published_worksheet_value, EvalValue::Number(5.0));
+        assert_eq!(result.published_worksheet_value, CalcValue::number(5.0));
         assert!(result
             .typed_query_bundle_spec
             .families
@@ -697,13 +826,142 @@ mod tests {
 
         assert_eq!(
             result.published_worksheet_value,
-            EvalValue::Number(27.0),
+            CalcValue::number(27.0),
             "3 * AddThem(4,5) = 3 * (4+5) = 27"
         );
     }
 
     #[test]
-    fn vba_host_rejects_non_numeric_arguments_for_first_slice() {
+    fn vba_host_invokes_text_boolean_integer_and_variant_scalar_udfs() {
+        let runtime = VbaHostRuntime::load_source_project(
+            VbaProjectAssociation::workspace_source("vba-assoc-typed", "memory:TypedScalars"),
+            VbaSourceProject {
+                project_name: "DnaVbaFixture".to_string(),
+                modules: vec![VbaSourceModule {
+                    module_name: "Module1".to_string(),
+                    source: concat!(
+                        "Public Function EchoText(ByVal value As String) As String\n",
+                        "EchoText = value & \"!\"\n",
+                        "End Function\n",
+                        "Public Function NotIt(ByVal value As Boolean) As Boolean\n",
+                        "NotIt = Not value\n",
+                        "End Function\n",
+                        "Public Function AddLongs(ByVal a As Long, ByVal b As Long) As Long\n",
+                        "AddLongs = a + b\n",
+                        "End Function\n",
+                        "Public Function PickVariant(ByVal value As Variant) As Variant\n",
+                        "PickVariant = value\n",
+                        "End Function\n",
+                    )
+                    .to_string(),
+                }],
+            },
+            "0.1.0-test",
+            None,
+        )
+        .expect("runtime should load");
+
+        let names: Vec<_> = runtime
+            .registrations()
+            .iter()
+            .map(|registration| registration.formula_name.to_ascii_lowercase())
+            .collect();
+        assert!(names.contains(&"echotext".to_string()));
+        assert!(names.contains(&"notit".to_string()));
+        assert!(names.contains(&"addlongs".to_string()));
+        assert!(names.contains(&"pickvariant".to_string()));
+
+        assert_eq!(
+            runtime
+                .invoke_registered_udf(
+                    "EchoText",
+                    &[CalcValue::text(ExcelText::from_interop_assignment("abc"))],
+                )
+                .expect("text UDF should run"),
+            CalcValue::text(ExcelText::from_interop_assignment("abc!"))
+        );
+        assert_eq!(
+            runtime
+                .invoke_registered_udf("NotIt", &[CalcValue::logical(true)])
+                .expect("boolean UDF should run"),
+            CalcValue::logical(false)
+        );
+        assert_eq!(
+            runtime
+                .invoke_registered_udf(
+                    "AddLongs",
+                    &[CalcValue::number(2.0), CalcValue::number(3.0)],
+                )
+                .expect("Long UDF should run"),
+            CalcValue::number(5.0)
+        );
+        assert_eq!(
+            runtime
+                .invoke_registered_udf(
+                    "PickVariant",
+                    &[CalcValue::text(ExcelText::from_interop_assignment(
+                        "variant"
+                    ))],
+                )
+                .expect("Variant-returning UDF should run"),
+            CalcValue::text(ExcelText::from_interop_assignment("variant"))
+        );
+
+        let locale = oxfml_en_us_locale_context();
+        let query_bundle = TypedContextQueryBundle::new(
+            None,
+            None,
+            Some(&locale),
+            Some(46000.0),
+            Some(&FIXED_RANDOM_PROVIDER_05),
+        )
+        .with_host_function_provider(Some(&runtime));
+
+        let mut text_host =
+            oxfml_core::consumer::runtime::SingleFormulaHost::new("vba-text", "=EchoText(\"abc\")");
+        let text_result = text_host
+            .recalc_with_interfaces(
+                EvaluationBackend::OxFuncBacked,
+                query_bundle.clone(),
+                Some(&runtime),
+            )
+            .expect("text UDF formula should evaluate");
+        assert_eq!(
+            text_result.published_worksheet_value,
+            CalcValue::text(ExcelText::from_interop_assignment("abc!"))
+        );
+
+        let mut bool_host =
+            oxfml_core::consumer::runtime::SingleFormulaHost::new("vba-bool", "=NotIt(TRUE)");
+        let bool_result = bool_host
+            .recalc_with_interfaces(
+                EvaluationBackend::OxFuncBacked,
+                query_bundle.clone(),
+                Some(&runtime),
+            )
+            .expect("boolean UDF formula should evaluate");
+        assert_eq!(
+            bool_result.published_worksheet_value,
+            CalcValue::logical(false)
+        );
+
+        let mut long_host =
+            oxfml_core::consumer::runtime::SingleFormulaHost::new("vba-long", "=AddLongs(2,3)");
+        let long_result = long_host
+            .recalc_with_interfaces(
+                EvaluationBackend::OxFuncBacked,
+                query_bundle,
+                Some(&runtime),
+            )
+            .expect("Long UDF formula should evaluate");
+        assert_eq!(
+            long_result.published_worksheet_value,
+            CalcValue::number(5.0)
+        );
+    }
+
+    #[test]
+    fn vba_host_rejects_unmapped_calcvalue_payloads_explicitly() {
         let runtime = VbaHostRuntime::load_source_project(
             VbaProjectAssociation::workspace_source("vba-assoc-1", "memory:AddThem"),
             add_them_project(""),
@@ -715,14 +973,14 @@ mod tests {
         let err = runtime
             .invoke_registered_udf(
                 "AddThem",
-                &[
-                    EvalValue::Number(2.0),
-                    EvalValue::Text(oxfunc_core::value::ExcelText::from_interop_assignment("3")),
-                ],
+                &[CalcValue::array(
+                    oxfunc_core::value::CalcArray::from_scalar(CalcValue::number(2.0))
+                        .expect("1x1 array"),
+                )],
             )
-            .expect_err("text coercion is not admitted in first slice");
+            .expect_err("array arguments should remain outside the scalar VBA UDF lane");
 
-        assert!(err.contains("VBA-UDF-T001 admits only numeric arguments"));
+        assert!(err.contains("array payloads"));
     }
 
     #[test]

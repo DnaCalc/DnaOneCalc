@@ -6,7 +6,7 @@
 //! `ResultView`, and a `StatusView` for the status-foot dot + green-tree key.
 //!
 //! The result projection dispatches **typed**: it reads the bridge's typed
-//! `published_value: EvalValue` from `editor_document.value_presentation`,
+//! `published_value: CalcValue` from `editor_document.value_presentation`,
 //! the live diagnostics list from `editor_document.live_diagnostics`, the
 //! provenance blocked reason from `editor_document.provenance_summary`, and
 //! the host-derived `context.blocked_reason` — never re-parsing the
@@ -16,7 +16,9 @@
 //!
 //! Reference: `docs/WS14_PRE_MVP_PATH.md` §4 Step 2.
 
-use crate::adapters::oxfml::{worksheet_error_literal, EvalValue, LiveDiagnosticSeverity};
+use crate::adapters::oxfml::{
+    worksheet_error_literal, CalcValue, CoreValue, LiveDiagnosticSeverity,
+};
 use crate::services::capability_snapshot::build_capability_ledger_snapshot;
 use crate::services::completion_popup::{CompletionPopupKind, CompletionPopupState};
 use crate::services::function_semantic_profile::{
@@ -1277,7 +1279,7 @@ pub enum ResultView {
         surface_repr: Option<String>,
     },
     /// An array result. `total_rows` / `total_cols` are the full
-    /// shape from the upstream `EvalValue::Array`; `cells` is a
+    /// shape from the upstream `CalcValue::Array`; `cells` is a
     /// (possibly-truncated) preview window the bridge ships back.
     /// `truncated` is `true` when either dimension was clamped —
     /// the renderer surfaces a `+N rows / +M cols hidden` chip in
@@ -1548,24 +1550,30 @@ fn project_capability_context(
     }
 }
 
-fn eval_value_preview(value: &EvalValue) -> String {
-    match value {
-        EvalValue::Number(number) => format!("{number}"),
-        EvalValue::Text(text) => text.to_string_lossy(),
-        EvalValue::Logical(value) => {
+fn eval_value_preview(value: &CalcValue) -> String {
+    if value.callable_value().is_some() {
+        return "Callable value".to_string();
+    }
+    if value.rich().is_some() {
+        return "Rich value".to_string();
+    }
+    match value.core() {
+        CoreValue::Number(number) => format!("{number}"),
+        CoreValue::Text(text) => text.to_string_lossy(),
+        CoreValue::Logical(value) => {
             if *value {
                 "TRUE".to_string()
             } else {
                 "FALSE".to_string()
             }
         }
-        EvalValue::Error(code) => worksheet_error_literal(*code).to_string(),
-        EvalValue::Array(array) => {
+        CoreValue::Error(code) => worksheet_error_literal(*code).to_string(),
+        CoreValue::Empty | CoreValue::Missing => String::new(),
+        CoreValue::Array(array) => {
             let shape = array.shape();
             format!("Array[{} x {}]", shape.rows, shape.cols)
         }
-        EvalValue::Reference(reference) => reference.target.clone(),
-        EvalValue::Lambda(lambda) => format!("Lambda({})", lambda.callable_token),
+        CoreValue::Reference(reference) => reference.target().to_string(),
     }
 }
 
@@ -2545,7 +2553,7 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         // active formula has CF rules attached; rendering applies
         // the per-cell font / fill / data-bar / icon overrides.
         // The carrier dimensions come from OxFml's full shape
-        // (matching `EvalValue::Array`), which can exceed the
+        // (matching `CalcValue::Array`), which can exceed the
         // preview-window dimensions — in that case the renderer
         // only consumes the first `preview_rows × preview_cols`
         // entries to stay aligned with `cells`.
@@ -2605,7 +2613,7 @@ fn project_result_view(formula_space: &FormulaSpaceState) -> ResultView {
         }
     }
 
-    // Typed dispatch on the bridge's published `EvalValue`.
+    // Typed dispatch on the bridge's published `CalcValue`.
     if let Some(published_value) = bridge_published_value(formula_space) {
         return project_typed_value(formula_space, published_value);
     }
@@ -2647,7 +2655,7 @@ fn has_published_value(formula_space: &FormulaSpaceState) -> bool {
     bridge_published_value(formula_space).is_some()
 }
 
-fn bridge_published_value(formula_space: &FormulaSpaceState) -> Option<&EvalValue> {
+fn bridge_published_value(formula_space: &FormulaSpaceState) -> Option<&CalcValue> {
     formula_space
         .editor_document
         .as_ref()
@@ -2655,7 +2663,7 @@ fn bridge_published_value(formula_space: &FormulaSpaceState) -> Option<&EvalValu
         .map(|vp| &vp.published_value)
 }
 
-fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> ResultView {
+fn project_typed_value(formula_space: &FormulaSpaceState, value: &CalcValue) -> ResultView {
     let display_text = || {
         formula_space
             .effective_display_summary
@@ -2663,30 +2671,44 @@ fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> 
             .unwrap_or_default()
     };
     let (applied_font_color, applied_fill_color) = applied_cf_colours(formula_space);
-    match value {
-        EvalValue::Number(_) => ResultView::Display {
+    if value.callable_value().is_some() || value.rich().is_some() {
+        return ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Other,
+            applied_font_color,
+            applied_fill_color,
+        };
+    }
+    match value.core() {
+        CoreValue::Number(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Number,
             applied_font_color,
             applied_fill_color,
         },
-        EvalValue::Text(_) => ResultView::Display {
+        CoreValue::Text(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Text,
             applied_font_color,
             applied_fill_color,
         },
-        EvalValue::Logical(_) => ResultView::Display {
+        CoreValue::Logical(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Logical,
             applied_font_color,
             applied_fill_color,
         },
-        EvalValue::Error(code) => ResultView::Error {
+        CoreValue::Error(code) => ResultView::Error {
             code: worksheet_error_literal(*code).to_string(),
             surface_repr: None,
         },
-        EvalValue::Array(_) => {
+        CoreValue::Empty | CoreValue::Missing => ResultView::Display {
+            text: display_text(),
+            kind: ResultKind::Other,
+            applied_font_color,
+            applied_fill_color,
+        },
+        CoreValue::Array(_) => {
             // Array path normally goes through `formula_space.array_preview`
             // (handled above). If we reach here without a preview, surface
             // the effective display string. CF colours apply per-cell on
@@ -2702,7 +2724,7 @@ fn project_typed_value(formula_space: &FormulaSpaceState, value: &EvalValue) -> 
                 applied_fill_color: None,
             }
         }
-        EvalValue::Reference(_) | EvalValue::Lambda(_) => ResultView::Display {
+        CoreValue::Reference(_) => ResultView::Display {
             text: display_text(),
             kind: ResultKind::Other,
             applied_font_color,
@@ -3020,7 +3042,7 @@ mod tests {
             effective_display_summary: Some(display.to_string()),
             array_preview: None,
             blocked_reason: None,
-            published_value: EvalValue::Number(number),
+            published_value: CalcValue::number(number),
             number_format_hint: None,
             effective_font_color: None,
             effective_fill_color: None,

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::adapters::oxfml::{EditorDocument, EvalValue};
+use crate::adapters::oxfml::{CalcValue, EditorDocument};
 use crate::domain::ids::FormulaSpaceId;
 use crate::extensions::{
     default_extension_provider_catalog, default_extension_rtd_host,
@@ -228,7 +228,7 @@ impl Default for WorkspaceShellState {
     }
 }
 
-// `Eq` cannot be derived: the upstream `EvalValue` carried inside
+// `Eq` cannot be derived: the upstream `CalcValue` carried inside
 // `FormulaValuePresentation.published_value` contains `f64` (not `Eq`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FormulaSpaceCollectionState {
@@ -251,7 +251,7 @@ impl FormulaSpaceCollectionState {
 }
 
 // `Eq` cannot be derived: `editor_document.value_presentation.published_value`
-// is an upstream `EvalValue` containing `f64` (not `Eq`).
+// is an upstream `CalcValue` containing `f64` (not `Eq`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaSpaceState {
     pub formula_space_id: FormulaSpaceId,
@@ -698,7 +698,7 @@ pub struct FormulaInputBindingState {
     pub label: String,
     pub reference_descriptor: String,
     pub reference_handle: Option<String>,
-    pub value: EvalValue,
+    pub value: CalcValue,
 }
 
 impl FormulaInputBindingState {
@@ -708,7 +708,7 @@ impl FormulaInputBindingState {
             reference_descriptor: format!("name:{label}"),
             label,
             reference_handle: None,
-            value: EvalValue::Number(value),
+            value: CalcValue::number(value),
         }
     }
 }

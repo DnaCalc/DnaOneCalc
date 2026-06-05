@@ -14,9 +14,9 @@ pub use bridge::{
 };
 pub use live_bridge::LiveOxfmlBridge;
 pub use types::{
-    worksheet_error_literal, ArrayCellFormat, ArrayCellFormatGrid, ArrayCellValue, BindSummary,
-    CfIcon, CompletionProposal, CompletionProposalKind, DataBarDirection, DataBarFill,
-    EditorAnalysisStage, EditorDocument, EditorSyntaxSnapshot, EditorToken, EvalSummary, EvalValue,
+    worksheet_error_literal, ArrayCellFormat, ArrayCellFormatGrid, BindSummary, CalcValue, CfIcon,
+    CompletionProposal, CompletionProposalKind, CoreValue, DataBarDirection, DataBarFill,
+    EditorAnalysisStage, EditorDocument, EditorSyntaxSnapshot, EditorToken, EvalSummary,
     FormulaArrayPreview, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan,
     FormulaValueKind, FormulaValuePresentation, FormulaWalkNode, FormulaWalkNodeState,
     FunctionHelpPacket, FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSeverity,

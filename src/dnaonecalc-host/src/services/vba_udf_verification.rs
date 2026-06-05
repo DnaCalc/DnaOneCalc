@@ -8,7 +8,7 @@ use oxfml_core::interface::{
 };
 use oxfml_core::EvaluationBackend;
 use oxfunc_core::functions::rand_fn::RandomProvider;
-use oxfunc_core::value::EvalValue;
+use oxfunc_core::value::CalcValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -235,8 +235,8 @@ pub fn run_vba_udf_verification(
         "signature": runtime.registrations().first().map(registration_to_json),
         "type_map": {
             "status": runtime.registrations().first().map(|registration| registration.type_map_status.as_str()).unwrap_or("none"),
-            "argument_rules": ["number-to-double"],
-            "return_rule": "double-to-number"
+            "argument_rules": ["calc-scalar-to-vba-variant"],
+            "return_rule": "vba-variant-scalar-to-calcvalue"
         },
         "dna_result": {
             "comparison_value": dna_value,
@@ -261,8 +261,8 @@ pub fn run_vba_udf_verification(
         "candidates": runtime.candidates().iter().map(candidate_to_json).collect::<Vec<_>>(),
         "library_context_snapshot": library_snapshot_to_json(&runtime.current_snapshot()),
         "typed_matrix": {
-            "admitted": ["VBA-UDF-T001"],
-            "blocked": ["VBA-UDF-T002", "VBA-UDF-T003", "VBA-UDF-T004", "VBA-UDF-T005", "VBA-UDF-T006", "VBA-UDF-T007", "VBA-UDF-T008"]
+            "admitted": ["VBA-UDF-T001", "VBA-UDF-T002", "VBA-UDF-T003", "VBA-UDF-T004", "VBA-UDF-T005", "VBA-UDF-T006", "VBA-UDF-T007", "VBA-UDF-T008"],
+            "blocked": ["array-arguments", "object-arguments", "reference-arguments", "rich-calcvalue-arguments"]
         }
     });
     write_json_file(&capability_snapshot_path, &capability_snapshot)?;
@@ -407,9 +407,22 @@ fn verify_oracle_matches_formula(
     Ok(())
 }
 
-fn eval_value_to_oracle_shape(value: &EvalValue) -> Value {
-    match value {
-        EvalValue::Number(number) => json!({ "kind": "number", "number": number }),
+fn eval_value_to_oracle_shape(value: &CalcValue) -> Value {
+    match value.core() {
+        oxfunc_core::value::CoreValue::Number(number) => {
+            json!({ "kind": "number", "number": number })
+        }
+        oxfunc_core::value::CoreValue::Text(text) => {
+            json!({ "kind": "text", "text": text.to_string_lossy() })
+        }
+        oxfunc_core::value::CoreValue::Logical(value) => {
+            json!({ "kind": "logical", "logical": value })
+        }
+        oxfunc_core::value::CoreValue::Error(code) => {
+            json!({ "kind": "error", "code": format!("{code:?}") })
+        }
+        oxfunc_core::value::CoreValue::Empty => json!({ "kind": "empty" }),
+        oxfunc_core::value::CoreValue::Missing => json!({ "kind": "missing" }),
         other => json!({ "kind": "unsupported", "debug": format!("{other:?}") }),
     }
 }
@@ -491,13 +504,10 @@ fn library_snapshot_to_json(snapshot: &oxfml_core::semantics::LibraryContextSnap
 
 fn blocked_matrix_rows() -> Value {
     json!([
-        { "row_id": "VBA-UDF-T002", "formula_call": "=AddThem(TRUE,3)", "status": "blocked", "reason": "Excel oracle row required before admission" },
-        { "row_id": "VBA-UDF-T003", "formula_call": "=AddThem(\"2\",3)", "status": "blocked", "reason": "Excel oracle row required before admission" },
-        { "row_id": "VBA-UDF-T004", "formula_call": "=AddThem(\"\",3)", "status": "blocked", "reason": "Excel oracle row required before admission" },
-        { "row_id": "VBA-UDF-T005", "formula_call": "=AddThem(A1,3) with blank A1", "status": "blocked", "reason": "Excel oracle row required before admission" },
-        { "row_id": "VBA-UDF-T006", "formula_call": "=AddThem(A1,3) with #DIV/0! A1", "status": "blocked", "reason": "Excel oracle row required before admission" },
-        { "row_id": "VBA-UDF-T007", "formula_call": "=EchoText(\"abc\")", "status": "blocked", "reason": "second scalar family requires retained Excel oracle evidence" },
-        { "row_id": "VBA-UDF-T008", "formula_call": "=NotIt(TRUE)", "status": "blocked", "reason": "second scalar family requires retained Excel oracle evidence" }
+        { "row_id": "array-arguments", "status": "blocked", "reason": "CalcValue arrays do not yet have a native OxVba UDF argument mapping" },
+        { "row_id": "object-arguments", "status": "blocked", "reason": "VBA object bindings require an admitted host object policy" },
+        { "row_id": "reference-arguments", "status": "blocked", "reason": "CalcValue references require an admitted range/reference marshaling policy" },
+        { "row_id": "rich-calcvalue-arguments", "status": "blocked", "reason": "rich values and callables are not scalar VBA Variant payloads" }
     ])
 }
 
@@ -632,6 +642,52 @@ mod tests {
         assert_eq!(
             report.dna_value,
             json!({ "kind": "number", "number": 24.0 })
+        );
+    }
+
+    #[test]
+    fn vba_udf_evaluation_reports_text_and_logical_scalar_results_without_oracle() {
+        let output_root = repo_root()
+            .expect("repo root")
+            .join("DnaOneCalc")
+            .join("target")
+            .join("onecalc-verification-tests")
+            .join("vba-udf-text-logical-no-oracle");
+        let _ = fs::remove_dir_all(&output_root);
+
+        let mut text_request = default_vba_udf_evaluation_request();
+        text_request.case_id = "VBA-UDF-ECHO-TEXT".to_string();
+        text_request.formula = "=EchoText(\"abc\")".to_string();
+        text_request.module_source = concat!(
+            "Public Function EchoText(ByVal value As String) As String\n",
+            "  EchoText = value & \"!\"\n",
+            "End Function\n"
+        )
+        .to_string();
+        let text_report = run_vba_udf_verification(&text_request, output_root.join("text"))
+            .expect("text VBA UDF evaluation");
+        assert_eq!(text_report.oracle_status, "not_requested");
+        assert_eq!(
+            text_report.dna_value,
+            json!({ "kind": "text", "text": "abc!" })
+        );
+
+        let mut logical_request = default_vba_udf_evaluation_request();
+        logical_request.case_id = "VBA-UDF-NOT-IT".to_string();
+        logical_request.formula = "=NotIt(TRUE)".to_string();
+        logical_request.module_source = concat!(
+            "Public Function NotIt(ByVal value As Boolean) As Boolean\n",
+            "  NotIt = Not value\n",
+            "End Function\n"
+        )
+        .to_string();
+        let logical_report =
+            run_vba_udf_verification(&logical_request, output_root.join("logical"))
+                .expect("logical VBA UDF evaluation");
+        assert_eq!(logical_report.oracle_status, "not_requested");
+        assert_eq!(
+            logical_report.dna_value,
+            json!({ "kind": "logical", "logical": false })
         );
     }
 

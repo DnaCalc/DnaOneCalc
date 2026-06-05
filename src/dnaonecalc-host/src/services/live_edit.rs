@@ -378,10 +378,10 @@ enum ValueShapeForHint {
 }
 
 impl ValueShapeForHint {
-    fn from_eval_value(value: &crate::adapters::oxfml::EvalValue) -> Self {
-        use crate::adapters::oxfml::EvalValue;
-        match value {
-            EvalValue::Number(number) if number.is_finite() => {
+    fn from_eval_value(value: &crate::adapters::oxfml::CalcValue) -> Self {
+        use crate::adapters::oxfml::CoreValue;
+        match value.core() {
+            CoreValue::Number(number) if number.is_finite() => {
                 if number.fract() == 0.0 {
                     Self::IntegerSerial
                 } else {

@@ -20,13 +20,13 @@ pub use oxfml_core::consumer::editor::{
     LiveDiagnosticStage, SignatureHelpContext,
 };
 pub use oxfml_core::syntax::token::TextSpan as FormulaTextSpan;
-pub use oxfunc_core::value::{ArrayCellValue, EvalValue, WorksheetErrorCode};
+pub use oxfunc_core::value::{CalcValue, CoreValue, WorksheetErrorCode};
 
 // ---------------------------------------------------------------------------
 // Host-side bundle types.
 // ---------------------------------------------------------------------------
 
-/// Discriminator-only view of an `EvalValue`. Convenience for matching
+/// Discriminator-only view of a `CalcValue`. Convenience for matching
 /// when the payload isn't needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FormulaValueKind {
@@ -34,21 +34,31 @@ pub enum FormulaValueKind {
     Text,
     Logical,
     Error,
+    Empty,
+    Missing,
     Array,
     Reference,
-    Lambda,
+    Callable,
+    RichValue,
 }
 
 impl FormulaValueKind {
-    pub fn of(value: &EvalValue) -> Self {
-        match value {
-            EvalValue::Number(_) => Self::Number,
-            EvalValue::Text(_) => Self::Text,
-            EvalValue::Logical(_) => Self::Logical,
-            EvalValue::Error(_) => Self::Error,
-            EvalValue::Array(_) => Self::Array,
-            EvalValue::Reference(_) => Self::Reference,
-            EvalValue::Lambda(_) => Self::Lambda,
+    pub fn of(value: &CalcValue) -> Self {
+        if value.callable_value().is_some() {
+            return Self::Callable;
+        }
+        if value.rich().is_some() {
+            return Self::RichValue;
+        }
+        match value.core() {
+            CoreValue::Number(_) => Self::Number,
+            CoreValue::Text(_) => Self::Text,
+            CoreValue::Logical(_) => Self::Logical,
+            CoreValue::Error(_) => Self::Error,
+            CoreValue::Empty => Self::Empty,
+            CoreValue::Missing => Self::Missing,
+            CoreValue::Array(_) => Self::Array,
+            CoreValue::Reference(_) => Self::Reference,
         }
     }
 }
@@ -217,8 +227,9 @@ pub struct FormulaValuePresentation {
     pub blocked_reason: Option<String>,
     /// Typed value passed through verbatim from `RuntimeFormulaResult.published_worksheet_value`.
     /// View-models dispatch on this discriminator (Number / Text / Logical /
-    /// Error / Array / Reference / Lambda) instead of parsing strings.
-    pub published_value: EvalValue,
+    /// Error / Empty / Missing / Array / Reference / Callable / RichValue)
+    /// instead of parsing strings.
+    pub published_value: CalcValue,
     /// Function-emitted presentation hint, lifted from
     /// `RuntimeFormulaResult.returned_value_surface.presentation_hint`.
     /// `None` for ordinary values; `Some` when a function (e.g. NOW,
@@ -240,7 +251,7 @@ pub struct FormulaValuePresentation {
     /// `#RRGGBB`. `None` means "no fill applied".
     pub effective_fill_color: Option<String>,
     /// Per-cell CF outcomes for array results. `Some` when the
-    /// published value is an `EvalValue::Array`; `None` for scalar
+    /// published value has `CoreValue::Array`; `None` for scalar
     /// values. Each cell carries its own font / fill / data-bar /
     /// icon override based on the active CF rules with the array
     /// as the implicit "selected range" (see

@@ -1,4 +1,4 @@
-use super::types::{EditorAnalysisStage, EditorDocument, EvalValue};
+use super::types::{CalcValue, EditorAnalysisStage, EditorDocument};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaEditRequest {
@@ -69,7 +69,7 @@ pub struct FormulaInputBindingRequest {
     pub label: String,
     pub reference_descriptor: String,
     pub reference_handle: Option<String>,
-    pub value: EvalValue,
+    pub value: CalcValue,
 }
 
 /// Mirror of `oxfml_core::eval::EvaluationTraceMode` at the
@@ -227,7 +227,7 @@ pub enum ScenarioPolicyRequest {
 }
 
 // `Eq` cannot be derived: `EditorDocument.value_presentation.published_value`
-// is the upstream `EvalValue`, which contains `f64` (not `Eq`).
+// is the upstream `CalcValue`, which contains `f64` (not `Eq`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaEditResult {
     pub document: EditorDocument,

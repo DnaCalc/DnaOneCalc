@@ -28,11 +28,11 @@ pub fn validate_formula_input_bindings(
                 binding.label
             ));
         }
-        match binding.value {
-            crate::adapters::oxfml::EvalValue::Number(_)
-            | crate::adapters::oxfml::EvalValue::Text(_)
-            | crate::adapters::oxfml::EvalValue::Logical(_)
-            | crate::adapters::oxfml::EvalValue::Error(_) => {}
+        match binding.value.core() {
+            crate::adapters::oxfml::CoreValue::Number(_)
+            | crate::adapters::oxfml::CoreValue::Text(_)
+            | crate::adapters::oxfml::CoreValue::Logical(_)
+            | crate::adapters::oxfml::CoreValue::Error(_) => {}
             _ => {
                 return Err(format!(
                     "formula input {} uses a non-scalar value; v1 admits scalar inputs only",
@@ -58,7 +58,8 @@ mod tests {
         assert_eq!(bindings[0].reference_descriptor, "name:Rate");
         assert!(matches!(
             bindings[0].binding,
-            oxfml_core::DefinedNameBinding::Value(crate::adapters::oxfml::EvalValue::Number(0.2))
+            oxfml_core::DefinedNameBinding::Value(ref value)
+                if value.as_number() == Some(0.2)
         ));
     }
 }
