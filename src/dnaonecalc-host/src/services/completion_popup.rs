@@ -70,6 +70,7 @@ pub enum CompletionPopupKind {
     TableColumn,
     StructuredSelector,
     SyntaxAssist,
+    ProfileReference,
 }
 
 impl CompletionPopupKind {
@@ -81,6 +82,7 @@ impl CompletionPopupKind {
             CompletionProposalKind::TableColumn => Self::TableColumn,
             CompletionProposalKind::StructuredSelector => Self::StructuredSelector,
             CompletionProposalKind::SyntaxAssist => Self::SyntaxAssist,
+            CompletionProposalKind::ProfileReference => Self::ProfileReference,
         }
     }
 }
@@ -537,6 +539,10 @@ mod tests {
         assert_eq!(
             CompletionPopupKind::from_proposal_kind(Up::SyntaxAssist),
             CompletionPopupKind::SyntaxAssist
+        );
+        assert_eq!(
+            CompletionPopupKind::from_proposal_kind(Up::ProfileReference),
+            CompletionPopupKind::ProfileReference
         );
     }
 }

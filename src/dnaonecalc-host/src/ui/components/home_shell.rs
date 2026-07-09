@@ -3,7 +3,7 @@
 //! Single-component shell that replaces (eventually retires) the legacy
 //! `OneCalcShellApp` + mode shells. The pre-MVP slice mounts only a
 //! formula caption + native `<textarea>` + result block + status foot,
-//! driven through the existing `LiveOxfmlBridge`.
+//! driven through the existing `NativeOxfmlHostSession`.
 //!
 //! Subsequent WS-14 phases grow this file into the progressive-disclosure
 //! home (drill-downs, scenario breadcrumb, compare entry, command palette,
@@ -25,7 +25,7 @@ use web_sys::{
     MouseEvent as WebMouseEvent,
 };
 
-use crate::adapters::oxfml::{FormulaTextSpan, LiveOxfmlBridge};
+use crate::adapters::oxfml::{FormulaTextSpan, NativeOxfmlHostSession};
 use crate::app::reducer::{
     accept_completion_by_proposal_id_on_active_formula_space,
     accept_selected_completion_with_suppression_on_active_formula_space,
@@ -64,7 +64,7 @@ type HostStateSignal = RwSignal<OneCalcHostState, LocalStorage>;
 #[component]
 pub fn HomeShell(
     initial_state: OneCalcHostState,
-    #[prop(default = None)] editor_bridge: Option<Arc<LiveOxfmlBridge>>,
+    #[prop(default = None)] editor_bridge: Option<Arc<NativeOxfmlHostSession>>,
 ) -> impl IntoView {
     // Hydrate from `localStorage["dnaonecalc.workspace.v1"]` before
     // the state signal sees its first subscriber, so the user's
@@ -4295,7 +4295,20 @@ fn render_array_browser(
             tracks.push_str("minmax(4rem, max-content) ");
         }
     }
-    let grid_template = format!("grid-template-columns: {tracks};");
+    let mut row_tracks = if show_headers {
+        String::from("minmax(1.6rem, max-content) ")
+    } else {
+        String::new()
+    };
+    for row in 0..preview_rows.max(1) {
+        if let Some(height) = row_heights.get(&row) {
+            row_tracks.push_str(&format!("{height:.2}rem "));
+        } else {
+            row_tracks.push_str("minmax(1.6rem, max-content) ");
+        }
+    }
+    let grid_template =
+        format!("grid-template-columns: {tracks}; grid-template-rows: {row_tracks};");
     let mut header_cells: Vec<AnyView> = if show_headers {
         Vec::with_capacity(preview_cols + 1)
     } else {
@@ -5914,6 +5927,7 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
     let state_slug = formula_drill_state_slug(node.state);
     let value_preview_full = node.value_preview.clone();
     let value_preview = value_preview_full.clone().unwrap_or_default();
+    let array_preview = render_formula_drill_array_preview(node.array_preview.clone());
     let aria_level = (depth + 1).to_string();
     let mode_attr = view_mode.slug();
     let span_start_attr = node
@@ -6014,6 +6028,7 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
                 <summary class="onecalc-home-shell__formula-drill-row-summary">
                     {row_inner}
                 </summary>
+                {array_preview}
                 <div class="onecalc-home-shell__formula-drill-row-children">
                     {children_view}
                 </div>
@@ -6037,10 +6052,93 @@ fn render_formula_drill_row(node: FormulaDrillNode, view_mode: ViewMode, depth: 
                 data-branch=branch_attr
             >
                 {row_inner}
+                {array_preview}
             </div>
         }
         .into_any()
     }
+}
+
+fn render_formula_drill_array_preview(
+    preview: Option<crate::adapters::oxfml::FormulaDrillArrayPreview>,
+) -> AnyView {
+    let Some(preview) = preview else {
+        return view! { <></> }.into_any();
+    };
+    if preview.rows.is_empty() {
+        return view! { <></> }.into_any();
+    }
+    let preview_rows = preview.rows.len();
+    let preview_cols = preview.rows.iter().map(|row| row.len()).max().unwrap_or(0);
+    if preview_cols == 0 {
+        return view! { <></> }.into_any();
+    }
+    let hidden_rows = preview.total_rows.saturating_sub(preview_rows);
+    let hidden_cols = preview.total_cols.saturating_sub(preview_cols);
+    let hidden = if preview.truncated {
+        let mut bits = Vec::new();
+        if hidden_rows > 0 {
+            bits.push(format!("+{hidden_rows} rows"));
+        }
+        if hidden_cols > 0 {
+            bits.push(format!("+{hidden_cols} cols"));
+        }
+        if bits.is_empty() {
+            Some("more cells".to_string())
+        } else {
+            Some(bits.join(" · "))
+        }
+    } else {
+        None
+    };
+    let grid_style = format!(
+        "grid-template-columns: repeat({}, minmax(2.75rem, max-content));",
+        preview_cols.max(1)
+    );
+    let cells: Vec<AnyView> = preview
+        .rows
+        .iter()
+        .enumerate()
+        .flat_map(|(row_index, row)| {
+            (0..preview_cols).map(move |col_index| {
+                let value = row.get(col_index).cloned().unwrap_or_default();
+                view! {
+                    <span
+                        class="onecalc-home-shell__formula-drill-array-cell"
+                        data-row=row_index.to_string()
+                        data-col=col_index.to_string()
+                        title=value.clone()
+                    >
+                        {value.clone()}
+                    </span>
+                }
+                .into_any()
+            })
+        })
+        .collect();
+    view! {
+        <details
+            class="onecalc-home-shell__formula-drill-array"
+            data-total-rows=preview.total_rows.to_string()
+            data-total-cols=preview.total_cols.to_string()
+            data-preview-rows=preview_rows.to_string()
+            data-preview-cols=preview_cols.to_string()
+            data-truncated=if preview.truncated { "true" } else { "false" }
+        >
+            <summary class="onecalc-home-shell__formula-drill-array-summary">
+                {format!("Array[{} × {}] preview", preview.total_rows, preview.total_cols)}
+                {hidden.map(|hidden| view! {
+                    <span class="onecalc-home-shell__formula-drill-array-hidden">
+                        {hidden}
+                    </span>
+                })}
+            </summary>
+            <div class="onecalc-home-shell__formula-drill-array-grid" style=grid_style>
+                {cells}
+            </div>
+        </details>
+    }
+    .into_any()
 }
 
 /// Render the view-mode toggle inside the drill-down panel
@@ -6152,12 +6250,12 @@ fn render_formula_drill_diagnostics(
 /// needs to notice.
 fn render_formula_drill_row_user_mode(
     label: String,
-    state: crate::adapters::oxfml::FormulaWalkNodeState,
+    state: crate::adapters::oxfml::FormulaDrillNodeState,
     branch_disposition: Option<String>,
     error_message: Option<String>,
     value_preview: Option<String>,
 ) -> AnyView {
-    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+    use crate::adapters::oxfml::FormulaDrillNodeState as State;
     let label_view = view! {
         <span class="onecalc-home-shell__formula-drill-label">{label.clone()}</span>
     };
@@ -6328,8 +6426,8 @@ fn render_formula_drill_phase_chip(chip: FormulaDrillPhaseChip) -> AnyView {
     .into_any()
 }
 
-fn formula_drill_state_slug(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
-    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+fn formula_drill_state_slug(state: crate::adapters::oxfml::FormulaDrillNodeState) -> &'static str {
+    use crate::adapters::oxfml::FormulaDrillNodeState as State;
     match state {
         State::Pending => "pending",
         State::Evaluated => "evaluated",
@@ -6341,8 +6439,8 @@ fn formula_drill_state_slug(state: crate::adapters::oxfml::FormulaWalkNodeState)
     }
 }
 
-fn formula_drill_state_label(state: crate::adapters::oxfml::FormulaWalkNodeState) -> &'static str {
-    use crate::adapters::oxfml::FormulaWalkNodeState as State;
+fn formula_drill_state_label(state: crate::adapters::oxfml::FormulaDrillNodeState) -> &'static str {
+    use crate::adapters::oxfml::FormulaDrillNodeState as State;
     match state {
         State::Pending => "pending",
         State::Evaluated => "evaluated",

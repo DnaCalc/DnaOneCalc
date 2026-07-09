@@ -19,8 +19,11 @@ pub use oxfml_core::consumer::editor::{
     FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot,
     LiveDiagnosticStage, SignatureHelpContext,
 };
+pub use oxfml_core::publication::{
+    ArrayCellFormat, ArrayCellFormatGrid, CfIcon, DataBarDirection, DataBarFill,
+};
 pub use oxfml_core::syntax::token::TextSpan as FormulaTextSpan;
-pub use oxfunc_core::value::{CalcValue, CoreValue, WorksheetErrorCode};
+pub use oxfunc_core::value::{CalcValue, CoreValue, NumberFormatHint, WorksheetErrorCode};
 
 // ---------------------------------------------------------------------------
 // Host-side bundle types.
@@ -90,7 +93,7 @@ pub fn worksheet_error_literal(code: WorksheetErrorCode) -> &'static str {
 /// richer `SemanticPlan` / `GreenTreeRoot`; this is the UX-shaped slice
 /// the formula drill-down renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FormulaWalkNode {
+pub struct FormulaDrillNodeViewModel {
     pub node_id: String,
     pub label: String,
     pub developer_label: Option<String>,
@@ -103,12 +106,21 @@ pub struct FormulaWalkNode {
     pub argument_role: Option<String>,
     pub error_message: Option<String>,
     pub value_preview: Option<String>,
-    pub state: FormulaWalkNodeState,
-    pub children: Vec<FormulaWalkNode>,
+    pub array_preview: Option<FormulaDrillArrayPreview>,
+    pub state: FormulaDrillNodeState,
+    pub children: Vec<FormulaDrillNodeViewModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaDrillArrayPreview {
+    pub total_rows: usize,
+    pub total_cols: usize,
+    pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormulaWalkNodeState {
+pub enum FormulaDrillNodeState {
     Pending,
     Evaluated,
     Bound,
@@ -155,72 +167,11 @@ pub struct FormulaArrayPreview {
     pub truncated: bool,
 }
 
-/// Mirror of `oxfml_core::publication::ArrayCellFormatGrid`. Carries
-/// per-cell CF outcomes when the formula's published value is an
-/// array. Row-major: `rows[row_index][col_index]`. `None` for non-
-/// array values.
-///
-/// Lands as a result of OxFml's W071 + W072 work — the per-cell
-/// carrier introduced by `HANDOFF_OXFML_CF_ARRAY_PER_CELL.md` and
-/// extended by `HANDOFF_OXFML_CF_AGGREGATE_VISUALIZATION_RULES.md`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArrayCellFormatGrid {
-    pub rows: Vec<Vec<ArrayCellFormat>>,
-}
-
-/// One cell's CF / format outcome. Mirrors
-/// `oxfml_core::publication::ArrayCellFormat`. `effective_*` fields
-/// carry the post-CF override (or fall back to the visible-value
-/// text and default chrome when no rule fired). `data_bar` /
-/// `icon` are populated when an aggregate visualization rule
-/// (W072) fired for this cell.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArrayCellFormat {
-    pub effective_display_text: String,
-    pub effective_font_color: Option<String>,
-    pub effective_fill_color: Option<String>,
-    pub data_bar: Option<DataBarFill>,
-    pub icon: Option<CfIcon>,
-}
-
-/// Mirror of `oxfml_core::publication::DataBarFill`. Per-cell data-
-/// bar metadata.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DataBarFill {
-    /// `0.0`–`1.0`; the cell's value's position in the array's
-    /// numeric range.
-    pub fill_ratio: f64,
-    /// Hex `#RRGGBB`.
-    pub bar_color: String,
-    /// `Left` (positive bar grows right) or `Right` (negative bar
-    /// grows left). Excel's default is `Left`.
-    pub direction: DataBarDirection,
-    /// True when Excel's "show bar only" flag is set.
-    pub show_bar_only: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataBarDirection {
-    Left,
-    Right,
-}
-
-/// Mirror of `oxfml_core::publication::CfIcon`. Per-cell icon-set
-/// outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CfIcon {
-    /// Icon-set kind label — `"3Arrows"` / `"3TrafficLights1"` /
-    /// `"4Rating"` / `"5Quarters"` / etc.
-    pub set_kind: String,
-    /// 0-based index into the kind's icon array.
-    pub icon_index: usize,
-}
-
 /// What the host shows for the cell's value. Bundles the upstream typed
 /// value with display strings so the UI layer can pick the right rendering
 /// without re-running OxFml.
 #[derive(Debug, Clone, PartialEq)]
-pub struct FormulaValuePresentation {
+pub struct FormulaResultViewModel {
     pub evaluation_summary: String,
     pub effective_display_summary: Option<String>,
     pub array_preview: Option<FormulaArrayPreview>,
@@ -233,7 +184,7 @@ pub struct FormulaValuePresentation {
     /// Function-emitted presentation hint, lifted from
     /// `RuntimeFormulaResult.returned_value_surface.presentation_hint`.
     /// `None` for ordinary values; `Some` when a function (e.g. NOW,
-    /// TODAY) returned an `ExtendedValue::ValueWithPresentation`. Drives
+    /// TODAY) returned a `CalcValue` with a presentation hint. Drives
     /// the host's "auto-format on General default" behaviour: when the
     /// formatting state is empty (General), the host applies the hint's
     /// default code so a fresh `=NOW()` reads as a date+time without
@@ -269,20 +220,6 @@ pub struct FormulaValuePresentation {
     pub exercised_capability_keys: Vec<String>,
 }
 
-/// Host-side mirror of `oxfunc_value_types::NumberFormatHint`. Kept as
-/// its own type at the bridge boundary so view-models and tests do not
-/// take a transitive dependency on `oxfunc_value_types`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NumberFormatHint {
-    General,
-    DateLike,
-    Percentage,
-    Currency,
-    Scientific,
-    Fraction,
-    Custom,
-}
-
 /// Host's bundle of upstream editor-interaction + runtime-result. This
 /// is what a single `apply_formula_edit` call produces and what the
 /// host stores per formula space. Field types reference upstream types
@@ -297,12 +234,12 @@ pub struct EditorDocument {
     pub signature_help: Option<SignatureHelpContext>,
     pub function_help: Option<FunctionHelpPacket>,
     pub completion_proposals: Vec<CompletionProposal>,
-    pub formula_walk: Vec<FormulaWalkNode>,
+    pub formula_walk: Vec<FormulaDrillNodeViewModel>,
     pub parse_summary: Option<ParseSummary>,
     pub bind_summary: Option<BindSummary>,
     pub eval_summary: Option<EvalSummary>,
     pub provenance_summary: Option<ProvenanceSummary>,
-    pub value_presentation: Option<FormulaValuePresentation>,
+    pub value_presentation: Option<FormulaResultViewModel>,
 }
 
 impl EditorDocument {

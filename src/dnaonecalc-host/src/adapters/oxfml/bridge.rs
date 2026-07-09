@@ -234,13 +234,13 @@ pub struct FormulaEditResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OxfmlEditorBridgeError {
+pub enum OxfmlHostSessionError {
     UpstreamFailure(String),
 }
 
-pub trait OxfmlEditorBridge {
+pub trait OxfmlHostSession {
     fn apply_formula_edit(
         &self,
         request: FormulaEditRequest,
-    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError>;
+    ) -> Result<FormulaEditResult, OxfmlHostSessionError>;
 }

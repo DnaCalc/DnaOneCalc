@@ -2,7 +2,7 @@
 //!
 //! Each scenario walks a user action from `OneCalcHostState::default()`
 //! through the reducer / live-edit entry points (using the real
-//! `LiveOxfmlBridge` where possible), builds the home-shell projection,
+//! `NativeOxfmlHostSession` where possible), builds the home-shell projection,
 //! and asserts on user-visible result fields only. Cross-layer composition
 //! is the point; tests are named for the user action.
 

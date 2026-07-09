@@ -1,6 +1,6 @@
 use crate::adapters::oxfml::{
-    EditorDocument, FormulaEditRequest, FormulaInputBindingRequest, FormulaValuePresentation,
-    OxfmlEditorBridge, OxfmlEditorBridgeError,
+    EditorDocument, FormulaEditRequest, FormulaInputBindingRequest, FormulaResultViewModel,
+    OxfmlHostSession, OxfmlHostSessionError,
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::domain::ids::FormulaSpaceId;
@@ -16,7 +16,7 @@ pub struct EditorSessionService;
 
 impl EditorSessionService {
     pub fn handle_formula_edit_intent(
-        bridge: &dyn OxfmlEditorBridge,
+        bridge: &dyn OxfmlHostSession,
         formula_spaces: &mut FormulaSpaceCollectionState,
         intent: ApplyFormulaEditIntent,
     ) -> Result<(), EditorSessionError> {
@@ -123,8 +123,8 @@ impl EditorSessionService {
 /// that data.
 #[derive(Debug, Clone, PartialEq)]
 struct SkippedRuntimeFields {
-    value_presentation: Option<FormulaValuePresentation>,
-    formula_walk: Vec<crate::adapters::oxfml::FormulaWalkNode>,
+    value_presentation: Option<FormulaResultViewModel>,
+    formula_walk: Vec<crate::adapters::oxfml::FormulaDrillNodeViewModel>,
     eval_summary: Option<crate::adapters::oxfml::EvalSummary>,
     bind_summary: Option<crate::adapters::oxfml::BindSummary>,
     provenance_summary: Option<crate::adapters::oxfml::ProvenanceSummary>,
@@ -320,7 +320,7 @@ fn derive_formula_presentation(
 }
 
 fn derived_presentation_from_value_presentation(
-    value_presentation: &FormulaValuePresentation,
+    value_presentation: &FormulaResultViewModel,
 ) -> DerivedFormulaPresentation {
     DerivedFormulaPresentation {
         evaluation_summary: Some(value_presentation.evaluation_summary.clone()),
@@ -347,7 +347,7 @@ fn format_number(value: f64) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorSessionError {
     UnknownFormulaSpace(FormulaSpaceId),
-    Bridge(OxfmlEditorBridgeError),
+    Bridge(OxfmlHostSessionError),
 }
 
 #[cfg(test)]
@@ -387,6 +387,7 @@ mod tests {
                 insert_text: "SUM(".to_string(),
                 replacement_span: None,
                 documentation_ref: None,
+                profile_payload: None,
                 requires_revalidation: true,
             }],
             formula_walk: vec![],
@@ -447,11 +448,11 @@ mod tests {
         document: EditorDocument,
     }
 
-    impl OxfmlEditorBridge for FakeBridge {
+    impl OxfmlHostSession for FakeBridge {
         fn apply_formula_edit(
             &self,
             request: FormulaEditRequest,
-        ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+        ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
             assert_eq!(request.formula_stable_id, "formula-1");
             assert_eq!(request.entered_text, "=SUM(1,2,3)");
             assert_eq!(request.cursor_offset, 4);

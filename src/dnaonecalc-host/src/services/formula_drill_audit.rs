@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::adapters::oxfml::{FormulaWalkNodeState, LiveOxfmlBridge};
+use crate::adapters::oxfml::{FormulaDrillNodeState, NativeOxfmlHostSession};
 use crate::app::case_lifecycle::new_formula_space;
 use crate::services::home_shell_view_model::{
     build_home_shell_view_model, FormulaDrillNode, FormulaDrillPhaseChip, FormulaDrillPhaseState,
@@ -87,7 +87,7 @@ pub fn build_formula_drill_audit_report(cases: &[(&str, &str)]) -> FormulaDrillA
 }
 
 pub fn audit_formula_drill_case(case_id: &str, formula: &str) -> FormulaDrillAuditCase {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let mut state = OneCalcHostState::default();
     let _ = new_formula_space(&mut state);
     if let Some(active_id) = state.workspace_shell.active_formula_space_id.clone() {
@@ -277,15 +277,15 @@ fn render_node_lines(
     let value = node.value_preview.as_deref().unwrap_or("...");
     let line = match mode {
         ViewMode::User => {
-            if node.state == FormulaWalkNodeState::Blocked
-                || node.state == FormulaWalkNodeState::Error
+            if node.state == FormulaDrillNodeState::Blocked
+                || node.state == FormulaDrillNodeState::Error
             {
                 if label_includes_value(&node.label) {
                     format!("{indent}{} blocked", node.label)
                 } else {
                     format!("{indent}{} blocked {}", node.label, value)
                 }
-            } else if node.state == FormulaWalkNodeState::Skipped {
+            } else if node.state == FormulaDrillNodeState::Skipped {
                 if node.label.to_ascii_lowercase().contains("skipped") {
                     format!("{indent}{}", node.label)
                 } else {
@@ -554,15 +554,15 @@ fn label_includes_value(label: &str) -> bool {
     label.contains(" = ")
 }
 
-fn formula_walk_state_slug(state: FormulaWalkNodeState) -> &'static str {
+fn formula_walk_state_slug(state: FormulaDrillNodeState) -> &'static str {
     match state {
-        FormulaWalkNodeState::Pending => "pending",
-        FormulaWalkNodeState::Evaluated => "evaluated",
-        FormulaWalkNodeState::Bound => "bound",
-        FormulaWalkNodeState::Skipped => "skipped",
-        FormulaWalkNodeState::Opaque => "opaque",
-        FormulaWalkNodeState::Blocked => "blocked",
-        FormulaWalkNodeState::Error => "error",
+        FormulaDrillNodeState::Pending => "pending",
+        FormulaDrillNodeState::Evaluated => "evaluated",
+        FormulaDrillNodeState::Bound => "bound",
+        FormulaDrillNodeState::Skipped => "skipped",
+        FormulaDrillNodeState::Opaque => "opaque",
+        FormulaDrillNodeState::Blocked => "blocked",
+        FormulaDrillNodeState::Error => "error",
     }
 }
 

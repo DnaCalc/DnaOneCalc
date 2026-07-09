@@ -834,7 +834,7 @@ pub struct FormulaDrillView {
 }
 
 /// One row in the formula walk-tree panel. Mirrors
-/// [`crate::adapters::oxfml::FormulaWalkNode`] with nested
+/// [`crate::adapters::oxfml::FormulaDrillNodeViewModel`] with nested
 /// children preserved so the renderer can use `<details>`
 /// elements for click-to-collapse per-node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -851,7 +851,8 @@ pub struct FormulaDrillNode {
     pub argument_role: Option<String>,
     pub error_message: Option<String>,
     pub value_preview: Option<String>,
-    pub state: crate::adapters::oxfml::FormulaWalkNodeState,
+    pub array_preview: Option<crate::adapters::oxfml::FormulaDrillArrayPreview>,
+    pub state: crate::adapters::oxfml::FormulaDrillNodeState,
     pub children: Vec<FormulaDrillNode>,
 }
 
@@ -1009,6 +1010,7 @@ impl CompletionPopupItemView {
             CompletionPopupKind::TableColumn => '⫶',
             CompletionPopupKind::StructuredSelector => '#',
             CompletionPopupKind::SyntaxAssist => '·',
+            CompletionPopupKind::ProfileReference => 'R',
         }
     }
 
@@ -1020,6 +1022,7 @@ impl CompletionPopupItemView {
             CompletionPopupKind::TableColumn => "Column",
             CompletionPopupKind::StructuredSelector => "Selector",
             CompletionPopupKind::SyntaxAssist => "Syntax",
+            CompletionPopupKind::ProfileReference => "Reference",
         }
     }
 }
@@ -2097,11 +2100,11 @@ fn project_formula_drill(formula_space: &FormulaSpaceState) -> FormulaDrillView 
     }
 }
 
-/// Project a `FormulaWalkNode` into the view-model shape, recursing
+/// Project a `FormulaDrillNodeViewModel` into the view-model shape, recursing
 /// into children so the tree stays nested. The renderer uses
 /// `<details>` elements to give the user click-to-collapse on each
 /// node — matching how the eye reads a function-call structure.
-fn project_walk_node(node: &crate::adapters::oxfml::FormulaWalkNode) -> FormulaDrillNode {
+fn project_walk_node(node: &crate::adapters::oxfml::FormulaDrillNodeViewModel) -> FormulaDrillNode {
     FormulaDrillNode {
         node_id: node.node_id.clone(),
         label: node.label.clone(),
@@ -2115,6 +2118,7 @@ fn project_walk_node(node: &crate::adapters::oxfml::FormulaWalkNode) -> FormulaD
         argument_role: node.argument_role.clone(),
         error_message: node.error_message.clone(),
         value_preview: node.value_preview.clone(),
+        array_preview: node.array_preview.clone(),
         state: node.state,
         children: node.children.iter().map(project_walk_node).collect(),
     }
@@ -2135,10 +2139,9 @@ fn project_function_help_card(formula_space: &FormulaSpaceState) -> Option<Funct
         return None;
     }
     let packet = document.function_help.as_ref()?;
-    let signature = packet
-        .signature_forms
-        .first()
-        .map(|form| form.display_signature.clone());
+    let signature = packet.signature_forms.first().and_then(|form| {
+        non_placeholder_signature(&packet.display_name, &form.display_signature).map(str::to_string)
+    });
     Some(FunctionHelpCardView {
         lookup_key: packet.lookup_key.clone(),
         display_name: packet.display_name.clone(),
@@ -2147,6 +2150,23 @@ fn project_function_help_card(formula_space: &FormulaSpaceState) -> Option<Funct
         availability_summary: packet.availability_summary.clone(),
         deferred_or_profile_limited: packet.deferred_or_profile_limited,
     })
+}
+
+fn non_placeholder_signature<'a>(display_name: &str, signature: &'a str) -> Option<&'a str> {
+    let trimmed = signature.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let display_name = display_name.trim();
+    if !display_name.is_empty()
+        && trimmed.eq_ignore_ascii_case(&format!("{}(...)", display_name.to_ascii_uppercase()))
+    {
+        return None;
+    }
+    if !display_name.is_empty() && trimmed.eq_ignore_ascii_case(&format!("{display_name}(...)")) {
+        return None;
+    }
+    Some(trimmed)
 }
 
 /// Project the bridge's signature-help context into the home shell's
@@ -2765,10 +2785,10 @@ fn format_literal_number(value: f64) -> String {
 /// the synthetic default label (the `formula_space_id.as_str()`
 /// auto-set by `FormulaSpaceState::new`); a user-named scenario
 /// shows its name verbatim. The dirty marker tracks live edits
-/// against the last commit point. Recent always lists the active
-/// scenario first; the workspace's `recent_formula_space_order`
-/// follows, deduplicated against the active id. Pinned reads
-/// from the workspace's stable id-ordered set.
+/// against the last commit point. Recent lists the active formula,
+/// then other open formulas, then closed recents, deduplicated
+/// against the active id. Pinned reads from the workspace's stable
+/// id-ordered set.
 ///
 /// Actions are a fixed list. Most carry a `SEAM-ONECALC-SCENARIO-PERSIST`
 /// id today — the dropdown surfaces them as honest stubs until
@@ -2802,8 +2822,44 @@ fn project_scenario_breadcrumb(
     };
     let active_id = formula_space.formula_space_id.clone();
     let mut recent = vec![active_entry];
+    for open_id in &state.workspace_shell.open_formula_space_order {
+        if recent.len() >= 5 {
+            break;
+        }
+        if open_id == &active_id {
+            continue;
+        }
+        let Some(open_space) = state.formula_spaces.get(open_id) else {
+            continue;
+        };
+        let display_name = open_space.context.scenario_label.clone();
+        let synthetic_default = display_name == open_id.as_str();
+        recent.push(ScenarioBreadcrumbEntry {
+            formula_space_id: open_id.as_str().to_string(),
+            display_name: if synthetic_default {
+                "unsaved".to_string()
+            } else {
+                display_name
+            },
+            meta: "open".to_string(),
+            is_active: false,
+            is_pinned: state
+                .workspace_shell
+                .pinned_formula_space_ids
+                .contains(open_id),
+        });
+    }
     for recent_id in &state.workspace_shell.recent_formula_space_order {
+        if recent.len() >= 5 {
+            break;
+        }
         if recent_id == &active_id {
+            continue;
+        }
+        if recent
+            .iter()
+            .any(|entry| entry.formula_space_id == recent_id.as_str())
+        {
             continue;
         }
         let display_name = state
@@ -2827,9 +2883,6 @@ fn project_scenario_breadcrumb(
                 .pinned_formula_space_ids
                 .contains(recent_id),
         });
-        if recent.len() >= 5 {
-            break;
-        }
     }
     let pinned: Vec<ScenarioBreadcrumbEntry> = state
         .workspace_shell
@@ -2883,7 +2936,7 @@ fn project_scenario_breadcrumb(
     // is a real "Save as…" with a native file picker, which is the
     // label there.
     #[cfg(target_arch = "wasm32")]
-    let save_as_label = "Download Formula File";
+    let save_as_label = "Download formula XML";
     #[cfg(not(target_arch = "wasm32"))]
     let save_as_label = "Save as…";
 
@@ -3005,7 +3058,7 @@ fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::oxfml::{FormulaValuePresentation, ProvenanceSummary};
+    use crate::adapters::oxfml::{FormulaResultViewModel, ProvenanceSummary};
     use crate::domain::ids::FormulaSpaceId;
     use crate::state::{
         AppMode, ClosedFormulaSpaceRecord, FormulaArrayPreviewState, FormulaSpaceState,
@@ -3037,7 +3090,7 @@ mod tests {
         number: f64,
         display: &str,
     ) {
-        document.value_presentation = Some(FormulaValuePresentation {
+        document.value_presentation = Some(FormulaResultViewModel {
             evaluation_summary: format!("Number · {display}"),
             effective_display_summary: Some(display.to_string()),
             array_preview: None,
@@ -4029,6 +4082,22 @@ mod tests {
         assert!(card.signature.is_none());
     }
 
+    #[test]
+    fn function_help_card_suppresses_placeholder_signature() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let mut document = sample_editor_document("=SUM(1,2)");
+        if let Some(ref mut packet) = document.function_help {
+            packet.signature_forms[0].display_signature = "SUM(...)".to_string();
+        }
+        formula_space.editor_document = Some(document);
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("vm");
+        let card = vm.function_help_card.expect("card projected");
+        assert_eq!(card.lookup_key, "SUM");
+        assert!(card.signature.is_none());
+    }
+
     // -----------------------------------------------------------------
     // View mode
     // -----------------------------------------------------------------
@@ -4078,11 +4147,13 @@ mod tests {
 
     #[test]
     fn formula_drill_flattens_walk_tree_in_preorder_with_depth() {
-        use crate::adapters::oxfml::{FormulaWalkNode, FormulaWalkNodeState};
+        use crate::adapters::oxfml::{
+            FormulaDrillArrayPreview, FormulaDrillNodeState, FormulaDrillNodeViewModel,
+        };
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=LET(x,1,x)");
         let mut document = sample_editor_document("=LET(x,1,x)");
-        document.formula_walk = vec![FormulaWalkNode {
+        document.formula_walk = vec![FormulaDrillNodeViewModel {
             node_id: "let".to_string(),
             label: "LET".to_string(),
             developer_label: None,
@@ -4095,9 +4166,18 @@ mod tests {
             argument_role: None,
             error_message: None,
             value_preview: Some("1".to_string()),
-            state: FormulaWalkNodeState::Evaluated,
+            array_preview: Some(FormulaDrillArrayPreview {
+                total_rows: 2,
+                total_cols: 2,
+                rows: vec![
+                    vec!["1".to_string(), "2".to_string()],
+                    vec!["3".to_string(), "4".to_string()],
+                ],
+                truncated: false,
+            }),
+            state: FormulaDrillNodeState::Evaluated,
             children: vec![
-                FormulaWalkNode {
+                FormulaDrillNodeViewModel {
                     node_id: "x-bind".to_string(),
                     label: "x".to_string(),
                     developer_label: None,
@@ -4110,10 +4190,11 @@ mod tests {
                     argument_role: None,
                     error_message: None,
                     value_preview: Some("1".to_string()),
-                    state: FormulaWalkNodeState::Bound,
+                    array_preview: None,
+                    state: FormulaDrillNodeState::Bound,
                     children: vec![],
                 },
-                FormulaWalkNode {
+                FormulaDrillNodeViewModel {
                     node_id: "x-use".to_string(),
                     label: "x".to_string(),
                     developer_label: None,
@@ -4126,7 +4207,8 @@ mod tests {
                     argument_role: None,
                     error_message: None,
                     value_preview: Some("1".to_string()),
-                    state: FormulaWalkNodeState::Evaluated,
+                    array_preview: None,
+                    state: FormulaDrillNodeState::Evaluated,
                     children: vec![],
                 },
             ],
@@ -4139,6 +4221,14 @@ mod tests {
         let nodes = &vm.formula_drill.tree;
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_id, "let");
+        assert_eq!(
+            nodes[0].array_preview.as_ref().map(|preview| (
+                preview.total_rows,
+                preview.total_cols,
+                preview.rows.len()
+            )),
+            Some((2, 2, 2))
+        );
         assert_eq!(nodes[0].children.len(), 2);
         assert_eq!(nodes[0].children[0].node_id, "x-bind");
         assert!(nodes[0].children[0].children.is_empty());
@@ -4340,6 +4430,42 @@ mod tests {
             assert!(!entry.is_active);
             assert_eq!(entry.meta, "recent");
         }
+    }
+
+    #[test]
+    fn breadcrumb_recent_includes_other_open_formula_spaces_before_closed_recents() {
+        let active = FormulaSpaceState::new(FormulaSpaceId::new("space-active"), "");
+        let mut state = host_state_with(active);
+        let open_id = FormulaSpaceId::new("space-open");
+        let mut open_space = FormulaSpaceState::new(open_id.clone(), "");
+        open_space.context.scenario_label = "Open friend".to_string();
+        state.formula_spaces.insert(open_space);
+        state
+            .workspace_shell
+            .open_formula_space_order
+            .push(open_id.clone());
+        let closed_id = FormulaSpaceId::new("space-closed");
+        let mut closed_space = FormulaSpaceState::new(closed_id.clone(), "");
+        closed_space.context.scenario_label = "Closed recent".to_string();
+        state
+            .workspace_shell
+            .recent_formula_space_order
+            .push(closed_id.clone());
+        state.workspace_shell.recent_formula_spaces.insert(
+            closed_id,
+            ClosedFormulaSpaceRecord {
+                formula_space: closed_space,
+                last_active_mode: AppMode::Explore,
+            },
+        );
+
+        let vm = build_home_shell_view_model(&state).expect("active");
+        let recent = &vm.scenario_breadcrumb.recent;
+        assert_eq!(recent[0].formula_space_id, "space-active");
+        assert_eq!(recent[1].formula_space_id, "space-open");
+        assert_eq!(recent[1].meta, "open");
+        assert_eq!(recent[2].formula_space_id, "space-closed");
+        assert_eq!(recent[2].meta, "recent");
     }
 
     #[test]

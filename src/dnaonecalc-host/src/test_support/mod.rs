@@ -1,9 +1,9 @@
 use crate::adapters::oxfml::{
     BindSummary, CompletionProposal, CompletionProposalKind, EditorDocument, EditorSyntaxSnapshot,
-    EditorToken, EvalSummary, FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan,
-    FormulaWalkNode, FormulaWalkNodeState, FunctionHelpPacket, FunctionHelpSignatureForm,
-    LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot, LiveDiagnosticStage,
-    ParseSummary, ProvenanceSummary, SignatureHelpContext,
+    EditorToken, EvalSummary, FormulaDrillNodeState, FormulaDrillNodeViewModel,
+    FormulaEditReuseSummary, FormulaTextChangeRange, FormulaTextSpan, FunctionHelpPacket,
+    FunctionHelpSignatureForm, LiveDiagnostic, LiveDiagnosticSeverity, LiveDiagnosticSnapshot,
+    LiveDiagnosticStage, ParseSummary, ProvenanceSummary, SignatureHelpContext,
 };
 use oxfml_core::source::FormulaChannelKind;
 use oxfml_core::syntax::green::SyntaxKind;
@@ -81,9 +81,10 @@ pub fn sample_editor_document_with_green_key(
             insert_text: "SUM(".to_string(),
             replacement_span: Some(FormulaTextSpan { start: 1, len: 3 }),
             documentation_ref: Some("preview:function:SUM".to_string()),
+            profile_payload: None,
             requires_revalidation: true,
         }],
-        formula_walk: vec![FormulaWalkNode {
+        formula_walk: vec![FormulaDrillNodeViewModel {
             node_id: "node-1".to_string(),
             label: "SUM".to_string(),
             developer_label: None,
@@ -96,7 +97,8 @@ pub fn sample_editor_document_with_green_key(
             argument_role: None,
             error_message: None,
             value_preview: Some("3".to_string()),
-            state: FormulaWalkNodeState::Evaluated,
+            array_preview: None,
+            state: FormulaDrillNodeState::Evaluated,
             children: vec![],
         }],
         parse_summary: Some(ParseSummary {
@@ -172,7 +174,7 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
         active_argument_index: 1,
         invocation_kind: SyntaxKind::CallExpr,
     });
-    document.formula_walk = vec![FormulaWalkNode {
+    document.formula_walk = vec![FormulaDrillNodeViewModel {
         node_id: "node-sequence".to_string(),
         label: "SEQUENCE".to_string(),
         developer_label: None,
@@ -185,9 +187,18 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
         argument_role: None,
         error_message: None,
         value_preview: Some("{1,2;3,4}".to_string()),
-        state: FormulaWalkNodeState::Evaluated,
+        array_preview: Some(crate::adapters::oxfml::FormulaDrillArrayPreview {
+            total_rows: 2,
+            total_cols: 2,
+            rows: vec![
+                vec!["1".to_string(), "2".to_string()],
+                vec!["3".to_string(), "4".to_string()],
+            ],
+            truncated: false,
+        }),
+        state: FormulaDrillNodeState::Evaluated,
         children: vec![
-            FormulaWalkNode {
+            FormulaDrillNodeViewModel {
                 node_id: "node-rows".to_string(),
                 label: "rows".to_string(),
                 developer_label: None,
@@ -200,10 +211,11 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
                 argument_role: None,
                 error_message: None,
                 value_preview: Some("2".to_string()),
-                state: FormulaWalkNodeState::Bound,
+                array_preview: None,
+                state: FormulaDrillNodeState::Bound,
                 children: vec![],
             },
-            FormulaWalkNode {
+            FormulaDrillNodeViewModel {
                 node_id: "node-cols".to_string(),
                 label: "columns".to_string(),
                 developer_label: None,
@@ -216,7 +228,8 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
                 argument_role: None,
                 error_message: None,
                 value_preview: Some("2".to_string()),
-                state: FormulaWalkNodeState::Bound,
+                array_preview: None,
+                state: FormulaDrillNodeState::Bound,
                 children: vec![],
             },
         ],
@@ -230,7 +243,7 @@ pub fn array_editor_document(source_text: &str) -> EditorDocument {
 
 pub fn blocked_editor_document(source_text: &str) -> EditorDocument {
     let mut document = sample_editor_document_with_green_key(source_text, "green-blocked-1");
-    document.formula_walk = vec![FormulaWalkNode {
+    document.formula_walk = vec![FormulaDrillNodeViewModel {
         node_id: "node-xlookup".to_string(),
         label: "XLOOKUP".to_string(),
         developer_label: None,
@@ -243,7 +256,8 @@ pub fn blocked_editor_document(source_text: &str) -> EditorDocument {
         argument_role: None,
         error_message: None,
         value_preview: None,
-        state: FormulaWalkNodeState::Blocked,
+        array_preview: None,
+        state: FormulaDrillNodeState::Blocked,
         children: vec![],
     }];
     document.provenance_summary = Some(ProvenanceSummary {

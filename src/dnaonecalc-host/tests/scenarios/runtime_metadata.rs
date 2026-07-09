@@ -2,7 +2,8 @@
 
 use dnaonecalc_host::adapters::oxfml::{
     CalcValue, EditorAnalysisStage, FormulaEditRequest, FormulaInputBindingRequest,
-    LiveOxfmlBridge, OxfmlEditorBridge, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
+    NativeOxfmlHostSession, OxfmlHostSession, RecalcModeRequest, ScenarioPolicyRequest,
+    TraceModeRequest,
 };
 use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest};
 use oxfml_core::format::oxfml_en_us_locale_context;
@@ -41,7 +42,7 @@ fn live_bridge_request(id: &str, entered_text: &str) -> FormulaEditRequest {
 }
 
 fn evaluate_live_formula(id: &str, entered_text: &str) -> CalcValue {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     bridge
         .apply_formula_edit(live_bridge_request(id, entered_text))
         .expect("live bridge should evaluate guardrail formula")
@@ -62,7 +63,7 @@ fn assert_live_number(id: &str, entered_text: &str, expected: f64) {
 
 #[test]
 fn sum_value_presentation_carries_oxfunc_kernel_and_admission_versions() {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let result = bridge
         .apply_formula_edit(FormulaEditRequest {
             formula_stable_id: "metadata-sum".to_string(),
@@ -107,7 +108,7 @@ fn sum_value_presentation_carries_oxfunc_kernel_and_admission_versions() {
 
 #[test]
 fn formal_input_binding_affects_single_formula_evaluation() {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let result = bridge
         .apply_formula_edit(FormulaEditRequest {
             formula_stable_id: "formal-input-rate".to_string(),
@@ -140,7 +141,7 @@ fn formal_input_binding_affects_single_formula_evaluation() {
 
 #[test]
 fn deterministic_randarray_uses_provider_stream_not_one_scalar_seed() {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let result = bridge
         .apply_formula_edit(FormulaEditRequest {
             formula_stable_id: "deterministic-randarray-provider".to_string(),
@@ -255,7 +256,7 @@ fn let_and_lambda_lexical_machinery_stays_internal_to_oxfml() {
 
 #[test]
 fn live_bridge_exposes_udf_registration_invalidation_hooks() {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     bridge
         .apply_formula_edit(live_bridge_request("guard-invalidate-one", "=SUM(1,2,3)"))
         .expect("first formula should populate bridge caches");

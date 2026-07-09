@@ -3,15 +3,15 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use oxfml_core::consumer::editor::{
-    EditorDocument as UpstreamEditorDocument, EditorEditService, EditorEnvironment,
+    EditorDocument as UpstreamEditorDocument,
     EditorInteractionResult as UpstreamEditorInteractionResult,
 };
 use oxfml_core::consumer::runtime::{
     FormulaDrillEvaluationState, FormulaDrillTrace, FormulaDrillTraceNode, RuntimeEnvironment,
-    RuntimeFormalInputBinding, RuntimeFormulaRequest, RuntimeFormulaResult,
+    RuntimeFormulaResult,
 };
 use oxfml_core::format::{oxfml_en_us_locale_context, oxfml_locale_context};
-use oxfml_core::interface::{HostProviderOutcomeKind, TypedContextQueryBundle};
+use oxfml_core::interface::HostProviderOutcomeKind;
 use oxfml_core::publication::{
     AverageRuleOptions, ColorScaleRuleOptions, ColorScaleRuleStop, ConditionalFormattingRank,
     ConditionalFormattingThreshold, ConditionalFormattingTypedRule, DataBarDirection,
@@ -19,7 +19,7 @@ use oxfml_core::publication::{
     VerificationPublicationContext,
 };
 use oxfml_core::source::FormulaSourceRecord;
-use oxfml_core::{BindContext, FormulaChannelKind};
+use oxfml_core::FormulaChannelKind;
 use oxfunc_core::functions::rand_fn::RandomProvider;
 use oxfunc_core::locale_format::{format_profile, LocaleProfileId, WorkbookDateSystem};
 
@@ -28,13 +28,13 @@ use crate::services::vba_host::VbaHostRuntime;
 use super::bridge::{
     FormulaEditRequest, FormulaEditResult, FormulaFormattingCfDataBarDirection,
     FormulaFormattingCfRank, FormulaFormattingCfThreshold, FormulaFormattingCfTypedRule,
-    FormulaFormattingRequest, FormulaInputBindingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest,
+    FormulaFormattingRequest, FormulaInputBindingRequest, OxfmlHostSession, OxfmlHostSessionError,
+    RecalcModeRequest, ScenarioPolicyRequest,
 };
 use super::types::{
     worksheet_error_literal, BindSummary, CalcValue, CoreValue, EditorDocument, EvalSummary,
-    FormulaArrayPreview, FormulaValuePresentation, FormulaWalkNode, FormulaWalkNodeState,
-    ParseSummary, ProvenanceSummary,
+    FormulaArrayPreview, FormulaDrillArrayPreview, FormulaDrillNodeState,
+    FormulaDrillNodeViewModel, FormulaResultViewModel, ParseSummary, ProvenanceSummary,
 };
 
 // Thread-local storage for the active VBA runtime. The OxVba
@@ -53,7 +53,7 @@ thread_local! {
 }
 
 #[derive(Debug, Default)]
-pub struct LiveOxfmlBridge {
+pub struct NativeOxfmlHostSession {
     cached_documents: Mutex<BTreeMap<String, UpstreamEditorDocument>>,
 }
 
@@ -133,11 +133,11 @@ impl FormulaEditFingerprint {
 // unavailable in browser builds) flows through a
 // `CapabilityOverlay` rather than through removing entries.
 
-impl OxfmlEditorBridge for LiveOxfmlBridge {
+impl OxfmlHostSession for NativeOxfmlHostSession {
     fn apply_formula_edit(
         &self,
         request: FormulaEditRequest,
-    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+    ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
         let fingerprint = FormulaEditFingerprint::from_request(&request);
 
         // Input-equality short-circuit. When the request is identical
@@ -184,110 +184,30 @@ impl OxfmlEditorBridge for LiveOxfmlBridge {
     }
 }
 
-impl LiveOxfmlBridge {
+impl NativeOxfmlHostSession {
     fn apply_formula_edit_with_vba(
         &self,
         request: FormulaEditRequest,
         fingerprint: FormulaEditFingerprint,
-        source: FormulaSourceRecord,
+        _source: FormulaSourceRecord,
         previous_document: Option<UpstreamEditorDocument>,
-        vba_runtime_ref: Option<&VbaHostRuntime>,
-    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
-        let environment = if let Some(runtime) = vba_runtime_ref {
-            EditorEnvironment::new(BindContext::default()).with_library_context_provider(runtime)
-        } else {
-            EditorEnvironment::new(BindContext::default())
-        };
-        let service = EditorEditService::new(environment);
-        // `apply_edit` parses + binds; the returned `EditorInteractionResult`
-        // does NOT carry completion proposals / signature help / function
-        // help. Run `interact_at_cursor` on the resulting document at the
-        // request's cursor offset to populate those — without this the
-        // popup, signature line, and hover surfaces have nothing to
-        // render. The two calls share the green-tree from `apply_edit`,
-        // so re-running interaction is cheap.
-        let edit_result = service.apply_edit(
-            source.clone(),
-            previous_document.as_ref(),
-            request.analysis_stage,
-            None,
-        );
-        let interaction = service.interact_at_cursor(&edit_result.document, request.cursor_offset);
-
-        // Decide whether to run the runtime-evaluation pass. The
-        // runtime pass is the dominant cost on a heavy formula
-        // (`HANDOFF_OXFUNC_REDUCE_HOTLOOP_PERF.md`,
-        // `HANDOFF_OXFML_LAMBDA_INVOCATION_PERF.md`); skipping it
-        // is the host's lever for keeping the editor responsive.
-        // - `skip_runtime_evaluation` is set per-event by the host
-        //   (caret-only navigation skips, text-input doesn't).
-        // - `RecalcModeRequest::Manual` skips on every event — only
-        //   an explicit Calculate / F9 surfaces a runtime pass.
-        let should_run_runtime = !request.skip_runtime_evaluation
-            && !matches!(request.recalc_mode, RecalcModeRequest::Manual);
-
-        let runtime_result = if should_run_runtime {
-            // Resolve the runtime locale from the workspace's
-            // BCP-47 language tag (W094 OxFunc + OxFml landed
-            // 2026-05-06). An unset / unknown tag falls back to
-            // en-US so the runtime always has a usable locale.
-            // The `date1904` flag flows through the formatting
-            // request — when the user toggles 1904 dates in the
-            // formatting panel, the locale context picks up the
-            // matching `WorkbookDateSystem`.
-            let locale_ctx = build_runtime_locale_context(
-                &request.language_tag,
-                request
-                    .formatting_request
-                    .as_ref()
-                    .map(|formatting| formatting.date1904)
-                    .unwrap_or(false),
-            );
-            let (now_serial, random_provider) = scenario_runtime_context(request.scenario_policy);
-            let typed_context = TypedContextQueryBundle::new(
-                None,
-                None,
-                Some(&locale_ctx),
-                Some(now_serial),
-                Some(random_provider.as_ref()),
-            )
-            .with_host_function_provider(
-                vba_runtime_ref.map(|r| r as &dyn oxfml_core::interface::HostFunctionProvider),
-            );
-            let mut runtime_request = RuntimeFormulaRequest::new(source.clone(), typed_context);
-            if let Some(formatting) = request.formatting_request.as_ref() {
-                if let Some(context) = build_publication_context(formatting) {
-                    runtime_request =
-                        runtime_request.with_verification_publication_context(context);
+        _vba_runtime_ref: Option<&VbaHostRuntime>,
+    ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
+        let native_result = super::native_session::NativeOxfmlHost
+            .apply_formula_edit(request.clone(), previous_document.as_ref())
+            .map_err(|error| match error {
+                super::native_session::NativeOxfmlHostError::UpstreamFailure(message) => {
+                    OxfmlHostSessionError::UpstreamFailure(message)
                 }
-            }
-            // Trace mode: opt into per-prepared-call tracing only
-            // when the caller asks (the formula-drill panel needs
-            // it to render the walk tree). The cheap default (the
-            // upstream's `EvaluationTraceMode::ValueOnly` since
-            // OxFml W075) skips per-step bookkeeping.
-            let upstream_trace_mode = match request.trace_mode {
-                super::bridge::TraceModeRequest::ValueOnly => {
-                    oxfml_core::EvaluationTraceMode::ValueOnly
-                }
-                super::bridge::TraceModeRequest::PreparedCalls => {
-                    oxfml_core::EvaluationTraceMode::PreparedCalls
-                }
-            };
-            runtime_request = runtime_request.with_trace_mode(upstream_trace_mode);
-            let mut runtime_env = RuntimeEnvironment::new().with_formal_input_bindings(
-                runtime_formal_input_bindings(&request.formal_input_bindings),
-            );
-            if let Some(runtime) = vba_runtime_ref {
-                runtime_env = runtime_env.with_library_context_provider(runtime);
-            }
-            runtime_env.execute(runtime_request).ok()
-        } else {
-            None
-        };
+            })?;
+        let interaction = native_result.editor_interaction;
+        let runtime_result = native_result.runtime_result;
 
         let projection_drill_trace = if runtime_result.is_none() {
-            Some(RuntimeEnvironment::new().formula_drill_trace_for_source(source.clone()))
+            Some(
+                RuntimeEnvironment::new()
+                    .formula_drill_trace_for_source(native_result.source.clone()),
+            )
         } else {
             None
         };
@@ -325,20 +245,7 @@ fn eval_value_fingerprint(value: &CalcValue) -> String {
     format!("{value:?}")
 }
 
-fn runtime_formal_input_bindings(
-    bindings: &[FormulaInputBindingRequest],
-) -> Vec<RuntimeFormalInputBinding> {
-    bindings
-        .iter()
-        .map(|binding| RuntimeFormalInputBinding {
-            reference_handle: binding.reference_handle.clone(),
-            reference_descriptor: binding.reference_descriptor.clone(),
-            binding: oxfml_core::DefinedNameBinding::Value(binding.value.clone()),
-        })
-        .collect()
-}
-
-impl LiveOxfmlBridge {
+impl NativeOxfmlHostSession {
     /// Install a compiled VBA runtime for UDF resolution and invocation.
     /// Replaces any previously installed runtime. Invalidates all cached
     /// binding state since the function surface has changed.
@@ -365,11 +272,11 @@ impl LiveOxfmlBridge {
     pub fn invalidate_formula_binding_state(
         &self,
         formula_stable_id: &str,
-    ) -> Result<usize, OxfmlEditorBridgeError> {
+    ) -> Result<usize, OxfmlHostSessionError> {
         let mut invalidated = 0;
         {
             let mut cached_documents = self.cached_documents.lock().map_err(|_| {
-                OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+                OxfmlHostSessionError::UpstreamFailure("Live bridge cache poisoned".to_string())
             })?;
             invalidated += usize::from(cached_documents.remove(formula_stable_id).is_some());
         }
@@ -381,9 +288,9 @@ impl LiveOxfmlBridge {
     /// Clear all cached editor and runtime projections. This is the coarse
     /// invalidation hook for a workspace-level function-surface generation
     /// change until formula-level dependency targeting is available.
-    pub fn invalidate_all_binding_state(&self) -> Result<usize, OxfmlEditorBridgeError> {
+    pub fn invalidate_all_binding_state(&self) -> Result<usize, OxfmlHostSessionError> {
         let mut cached_documents = self.cached_documents.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+            OxfmlHostSessionError::UpstreamFailure("Live bridge cache poisoned".to_string())
         })?;
         let last_result_len = LAST_RESULT_SLOT.with(|slot| slot.borrow().len());
         let invalidated = cached_documents.len() + last_result_len;
@@ -395,9 +302,9 @@ impl LiveOxfmlBridge {
     fn previous_document(
         &self,
         request: &FormulaEditRequest,
-    ) -> Result<Option<UpstreamEditorDocument>, OxfmlEditorBridgeError> {
+    ) -> Result<Option<UpstreamEditorDocument>, OxfmlHostSessionError> {
         let cached_documents = self.cached_documents.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+            OxfmlHostSessionError::UpstreamFailure("Live bridge cache poisoned".to_string())
         })?;
         let previous = cached_documents.get(&request.formula_stable_id).cloned();
         Ok(previous.filter(|document| {
@@ -410,9 +317,9 @@ impl LiveOxfmlBridge {
         &self,
         formula_stable_id: String,
         document: UpstreamEditorDocument,
-    ) -> Result<(), OxfmlEditorBridgeError> {
+    ) -> Result<(), OxfmlHostSessionError> {
         let mut cached_documents = self.cached_documents.lock().map_err(|_| {
-            OxfmlEditorBridgeError::UpstreamFailure("Live bridge cache poisoned".to_string())
+            OxfmlHostSessionError::UpstreamFailure("Live bridge cache poisoned".to_string())
         })?;
         cached_documents.insert(formula_stable_id, document);
         Ok(())
@@ -425,7 +332,7 @@ impl LiveOxfmlBridge {
         &self,
         formula_stable_id: &str,
         fingerprint: &FormulaEditFingerprint,
-    ) -> Result<Option<EditorDocument>, OxfmlEditorBridgeError> {
+    ) -> Result<Option<EditorDocument>, OxfmlHostSessionError> {
         Ok(LAST_RESULT_SLOT.with(|slot| {
             slot.borrow()
                 .get(formula_stable_id)
@@ -439,7 +346,7 @@ impl LiveOxfmlBridge {
         formula_stable_id: String,
         fingerprint: FormulaEditFingerprint,
         document: EditorDocument,
-    ) -> Result<(), OxfmlEditorBridgeError> {
+    ) -> Result<(), OxfmlHostSessionError> {
         LAST_RESULT_SLOT.with(|slot| {
             slot.borrow_mut().insert(
                 formula_stable_id,
@@ -499,11 +406,11 @@ fn build_editor_document(
                     "CellEntry",
                     Some(document.source.entered_formula_text.clone()),
                     if blocked_reason.is_some() {
-                        FormulaWalkNodeState::Blocked
+                        FormulaDrillNodeState::Blocked
                     } else if document.bound_formula.is_some() {
-                        FormulaWalkNodeState::Evaluated
+                        FormulaDrillNodeState::Evaluated
                     } else {
-                        FormulaWalkNodeState::Opaque
+                        FormulaDrillNodeState::Opaque
                     },
                 )]
             }),
@@ -568,13 +475,13 @@ fn build_editor_document(
     }
 }
 
-fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
+fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaDrillNodeViewModel> {
     if result.evaluation.trace.prepared_calls.is_empty() {
         return vec![fallback_formula_walk_node(
             "node:formula",
             "Formula",
             Some(format_walk_value_preview(&result.published_worksheet_value)),
-            FormulaWalkNodeState::Evaluated,
+            FormulaDrillNodeState::Evaluated,
         )];
     }
 
@@ -584,7 +491,7 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
         .prepared_calls
         .iter()
         .enumerate()
-        .map(|(index, call)| FormulaWalkNode {
+        .map(|(index, call)| FormulaDrillNodeViewModel {
             node_id: format!("node:prepared:{index}"),
             label: call.function_name.clone(),
             developer_label: None,
@@ -596,6 +503,10 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
             argument_name: None,
             argument_role: None,
             error_message: None,
+            array_preview: call
+                .returned_value
+                .as_ref()
+                .and_then(calc_value_array_preview),
             value_preview: call
                 .returned_value
                 .as_ref()
@@ -607,12 +518,12 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                         call.arg_preparation_profile
                     ))
                 }),
-            state: FormulaWalkNodeState::Evaluated,
+            state: FormulaDrillNodeState::Evaluated,
             children: call
                 .prepared_arguments
                 .iter()
                 .enumerate()
-                .map(|(arg_ordinal, argument)| FormulaWalkNode {
+                .map(|(arg_ordinal, argument)| FormulaDrillNodeViewModel {
                     node_id: format!("node:prepared:{index}:arg:{arg_ordinal}"),
                     label: format!("arg[{}]", argument.ordinal),
                     developer_label: None,
@@ -624,6 +535,10 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                     argument_name: Some(format!("arg[{}]", argument.ordinal)),
                     argument_role: None,
                     error_message: None,
+                    array_preview: argument
+                        .resolved_value
+                        .as_ref()
+                        .and_then(calc_value_array_preview),
                     value_preview: argument
                         .resolved_value
                         .as_ref()
@@ -631,9 +546,9 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
                         .or_else(|| argument.reference_target.clone())
                         .or_else(|| Some(format!("eval={:?}", argument.evaluation_mode))),
                     state: if argument.reference_target.is_some() {
-                        FormulaWalkNodeState::Bound
+                        FormulaDrillNodeState::Bound
                     } else {
-                        FormulaWalkNodeState::Evaluated
+                        FormulaDrillNodeState::Evaluated
                     },
                     children: Vec::new(),
                 })
@@ -642,7 +557,7 @@ fn map_formula_walk(result: &RuntimeFormulaResult) -> Vec<FormulaWalkNode> {
         .collect()
 }
 
-fn map_formula_walk_from_trace(trace: &FormulaDrillTrace) -> Vec<FormulaWalkNode> {
+fn map_formula_walk_from_trace(trace: &FormulaDrillTrace) -> Vec<FormulaDrillNodeViewModel> {
     let root = trace
         .nodes
         .iter()
@@ -661,7 +576,7 @@ fn map_formula_walk_from_trace(trace: &FormulaDrillTrace) -> Vec<FormulaWalkNode
 fn map_formula_drill_trace_node(
     trace: &FormulaDrillTrace,
     node: &FormulaDrillTraceNode,
-) -> FormulaWalkNode {
+) -> FormulaDrillNodeViewModel {
     let children = node
         .child_node_ids
         .iter()
@@ -674,7 +589,7 @@ fn map_formula_drill_trace_node(
         .map(|child| map_formula_drill_trace_node(trace, child))
         .collect();
     let source_span = node.source_span;
-    FormulaWalkNode {
+    FormulaDrillNodeViewModel {
         node_id: node.node_id.0.clone(),
         label: node.label_user.clone(),
         developer_label: Some(node.label_developer.clone()),
@@ -695,6 +610,7 @@ fn map_formula_drill_trace_node(
                 .map(|code| format!("{code}: {}", error.message))
                 .unwrap_or_else(|| error.message.clone())
         }),
+        array_preview: drill_trace_node_array_preview(node),
         value_preview: node
             .value_preview
             .as_ref()
@@ -717,16 +633,16 @@ fn map_formula_drill_trace_node(
     }
 }
 
-fn map_drill_evaluation_state(state: FormulaDrillEvaluationState) -> FormulaWalkNodeState {
+fn map_drill_evaluation_state(state: FormulaDrillEvaluationState) -> FormulaDrillNodeState {
     match state {
-        FormulaDrillEvaluationState::Pending => FormulaWalkNodeState::Pending,
-        FormulaDrillEvaluationState::Bound => FormulaWalkNodeState::Bound,
-        FormulaDrillEvaluationState::Evaluated => FormulaWalkNodeState::Evaluated,
+        FormulaDrillEvaluationState::Pending => FormulaDrillNodeState::Pending,
+        FormulaDrillEvaluationState::Bound => FormulaDrillNodeState::Bound,
+        FormulaDrillEvaluationState::Evaluated => FormulaDrillNodeState::Evaluated,
         FormulaDrillEvaluationState::Skipped
         | FormulaDrillEvaluationState::ShortCircuited
-        | FormulaDrillEvaluationState::Omitted => FormulaWalkNodeState::Skipped,
-        FormulaDrillEvaluationState::Blocked => FormulaWalkNodeState::Blocked,
-        FormulaDrillEvaluationState::Error => FormulaWalkNodeState::Error,
+        | FormulaDrillEvaluationState::Omitted => FormulaDrillNodeState::Skipped,
+        FormulaDrillEvaluationState::Blocked => FormulaDrillNodeState::Blocked,
+        FormulaDrillEvaluationState::Error => FormulaDrillNodeState::Error,
     }
 }
 
@@ -756,13 +672,84 @@ fn format_drill_value_preview(
     text
 }
 
+fn drill_trace_node_array_preview(
+    node: &FormulaDrillTraceNode,
+) -> Option<FormulaDrillArrayPreview> {
+    node.returned_value
+        .as_ref()
+        .or(node.published_value.as_ref())
+        .or(node.value_after_coercion.as_ref())
+        .or(node.value_before_coercion.as_ref())
+        .and_then(calc_value_array_preview)
+        .or_else(|| {
+            node.value_preview
+                .as_ref()
+                .and_then(drill_value_preview_array_preview)
+        })
+}
+
+fn calc_value_array_preview(value: &CalcValue) -> Option<FormulaDrillArrayPreview> {
+    let CoreValue::Array(array) = value.core() else {
+        return None;
+    };
+    let shape = array.shape();
+    let max_rows = shape.rows.min(4);
+    let max_cols = shape.cols.min(6);
+    let rows = (0..max_rows)
+        .map(|row| {
+            array
+                .row_slice(row)
+                .unwrap_or(&[])
+                .iter()
+                .take(max_cols)
+                .map(format_array_cell_value)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    Some(FormulaDrillArrayPreview {
+        total_rows: shape.rows,
+        total_cols: shape.cols,
+        rows,
+        truncated: shape.rows > max_rows || shape.cols > max_cols,
+    })
+}
+
+fn drill_value_preview_array_preview(
+    preview: &oxfml_core::consumer::runtime::FormulaDrillValuePreview,
+) -> Option<FormulaDrillArrayPreview> {
+    let shape = preview.array_shape?;
+    let max_rows = shape.rows.min(4);
+    let max_cols = shape.cols.min(6);
+    let mut rows = Vec::with_capacity(max_rows);
+    let mut values = preview.preview.iter();
+    for _ in 0..max_rows {
+        let mut row = Vec::with_capacity(max_cols);
+        for _ in 0..max_cols {
+            match values.next() {
+                Some(value) => row.push(value.clone()),
+                None => break,
+            }
+        }
+        if row.is_empty() {
+            break;
+        }
+        rows.push(row);
+    }
+    Some(FormulaDrillArrayPreview {
+        total_rows: shape.rows,
+        total_cols: shape.cols,
+        rows,
+        truncated: preview.truncated || shape.rows > max_rows || shape.cols > max_cols,
+    })
+}
+
 fn fallback_formula_walk_node(
     node_id: &str,
     label: &str,
     value_preview: Option<String>,
-    state: FormulaWalkNodeState,
-) -> FormulaWalkNode {
-    FormulaWalkNode {
+    state: FormulaDrillNodeState,
+) -> FormulaDrillNodeViewModel {
+    FormulaDrillNodeViewModel {
         node_id: node_id.to_string(),
         label: label.to_string(),
         developer_label: None,
@@ -775,12 +762,13 @@ fn fallback_formula_walk_node(
         argument_role: None,
         error_message: None,
         value_preview,
+        array_preview: None,
         state,
         children: Vec::new(),
     }
 }
 
-fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresentation {
+fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaResultViewModel {
     let blocked_reason = blocked_reason_from_runtime(result);
     let array_preview = match result.published_worksheet_value.core() {
         CoreValue::Array(array) => {
@@ -853,8 +841,8 @@ fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresenta
     let number_format_hint = result
         .returned_value_surface
         .presentation_hint
-        .and_then(|hint| hint.number_format)
-        .map(map_number_format_hint);
+        .as_ref()
+        .and_then(|hint| hint.number_format);
 
     // Lift CF-applied colours from the publication surface. OxFml's
     // `evaluate_conditional_formatting_rule` already populates these
@@ -875,9 +863,9 @@ fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresenta
         .verification_publication_surface
         .array_cell_format
         .as_ref()
-        .map(map_array_cell_format_grid);
+        .cloned();
 
-    FormulaValuePresentation {
+    FormulaResultViewModel {
         evaluation_summary: evaluation_summary_from_value(&result.published_worksheet_value),
         effective_display_summary,
         array_preview,
@@ -903,75 +891,6 @@ fn map_value_presentation(result: &RuntimeFormulaResult) -> FormulaValuePresenta
             .returned_value_surface
             .exercised_capability_keys
             .clone(),
-    }
-}
-
-/// Mirror the upstream per-cell CF outcome grid into the host's
-/// adapter-level shape. Pure 1:1 mapping; the host carries its
-/// own copies of the cell-level structs so view-models and tests
-/// don't take a transitive dependency on `oxfml_core::publication`.
-fn map_array_cell_format_grid(
-    grid: &oxfml_core::publication::ArrayCellFormatGrid,
-) -> super::types::ArrayCellFormatGrid {
-    super::types::ArrayCellFormatGrid {
-        rows: grid
-            .rows
-            .iter()
-            .map(|row| row.iter().map(map_array_cell_format).collect())
-            .collect(),
-    }
-}
-
-fn map_array_cell_format(
-    cell: &oxfml_core::publication::ArrayCellFormat,
-) -> super::types::ArrayCellFormat {
-    super::types::ArrayCellFormat {
-        effective_display_text: cell.effective_display_text.clone(),
-        effective_font_color: cell.effective_font_color.clone(),
-        effective_fill_color: cell.effective_fill_color.clone(),
-        data_bar: cell.data_bar.as_ref().map(map_data_bar_fill),
-        icon: cell.icon.as_ref().map(map_cf_icon),
-    }
-}
-
-fn map_data_bar_fill(fill: &oxfml_core::publication::DataBarFill) -> super::types::DataBarFill {
-    super::types::DataBarFill {
-        fill_ratio: fill.fill_ratio,
-        bar_color: fill.bar_color.clone(),
-        direction: match fill.direction {
-            oxfml_core::publication::DataBarDirection::Left => super::types::DataBarDirection::Left,
-            oxfml_core::publication::DataBarDirection::Right => {
-                super::types::DataBarDirection::Right
-            }
-        },
-        show_bar_only: fill.show_bar_only,
-    }
-}
-
-fn map_cf_icon(icon: &oxfml_core::publication::CfIcon) -> super::types::CfIcon {
-    super::types::CfIcon {
-        set_kind: icon.set_kind.clone(),
-        icon_index: icon.icon_index,
-    }
-}
-
-/// Translate the upstream `oxfunc_core::value::NumberFormatHint`
-/// (re-exported from `oxfunc_value_types`) to the host's mirrored
-/// enum. Kept as a 1:1 mapping; if upstream grows a new variant the
-/// compiler flags this site.
-fn map_number_format_hint(
-    hint: oxfunc_core::value::NumberFormatHint,
-) -> super::types::NumberFormatHint {
-    use super::types::NumberFormatHint as Host;
-    use oxfunc_core::value::NumberFormatHint as Up;
-    match hint {
-        Up::General => Host::General,
-        Up::DateLike => Host::DateLike,
-        Up::Percentage => Host::Percentage,
-        Up::Currency => Host::Currency,
-        Up::Scientific => Host::Scientific,
-        Up::Fraction => Host::Fraction,
-        Up::Custom => Host::Custom,
     }
 }
 
@@ -1024,7 +943,7 @@ fn evaluation_summary_from_value(value: &CalcValue) -> String {
 /// of the formatting fields are populated (so we skip the publication-
 /// context lane and OxFml falls back to the default visible-value
 /// rendering).
-fn build_publication_context(
+pub(super) fn build_publication_context(
     formatting: &FormulaFormattingRequest,
 ) -> Option<VerificationPublicationContext> {
     let any = formatting
@@ -1175,7 +1094,7 @@ fn bridge_threshold_to_upstream(
 /// fallback path keeps the en-US case allocation-free; non-en-US
 /// locales build a fresh context each call (cheap — `FormatProfile`
 /// is `Copy`, the parser/formatter trait objects are `'static`).
-fn build_runtime_locale_context(
+pub(super) fn build_runtime_locale_context(
     language_tag: &str,
     date1904: bool,
 ) -> oxfunc_core::locale_format::LocaleFormatContext<'static> {
@@ -1192,7 +1111,9 @@ fn build_runtime_locale_context(
     oxfml_locale_context(format_profile(profile_id), date_system)
 }
 
-fn scenario_runtime_context(policy: ScenarioPolicyRequest) -> (f64, Box<dyn RandomProvider>) {
+pub(super) fn scenario_runtime_context(
+    policy: ScenarioPolicyRequest,
+) -> (f64, Box<dyn RandomProvider>) {
     match policy {
         ScenarioPolicyRequest::Deterministic => (
             46000.0,

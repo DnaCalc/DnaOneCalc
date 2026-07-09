@@ -1,6 +1,6 @@
 use dnaonecalc_host::adapters::oxfml::{
-    EditorAnalysisStage, FormulaEditRequest, FormulaEditResult, OxfmlEditorBridge,
-    OxfmlEditorBridgeError,
+    EditorAnalysisStage, FormulaEditRequest, FormulaEditResult, OxfmlHostSession,
+    OxfmlHostSessionError,
 };
 use dnaonecalc_host::app::intents::ApplyFormulaEditIntent;
 use dnaonecalc_host::domain::ids::FormulaSpaceId;
@@ -42,11 +42,11 @@ struct ExploreBridge {
     document: dnaonecalc_host::adapters::oxfml::EditorDocument,
 }
 
-impl OxfmlEditorBridge for ExploreBridge {
+impl OxfmlHostSession for ExploreBridge {
     fn apply_formula_edit(
         &self,
         request: FormulaEditRequest,
-    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+    ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
         assert_eq!(request.formula_stable_id, "formula-2");
         assert_eq!(request.entered_text, "123.4");
         assert_eq!(request.cursor_offset, 5);

@@ -52,14 +52,14 @@ identifiers.
 | `VerificationPublicationContext` | **Host-provided** comprehensive Excel-like format input to OxFml: `format_profile`, `number_format_code`, `style_id`, `style_hierarchy`, `font_color`, `fill_color`, `cf_rules` | `OxFml/.../publication/mod.rs:30` |
 | `VerificationPublicationSurface` | **OxFml-produced** authoritative formatted output; the canonical "what should be displayed and in what colors" | `OxFml/.../publication/mod.rs:65` |
 | `LocaleFormatContext` | Locale-and-date-system context (separate input to OxFml's publication call) carrying `FormatProfile` and `WorkbookDateSystem` | `OxFunc/oxfunc_core/src/locale_format.rs` |
-| `ExtendedValue` | Top envelope around an evaluation result | `OxFunc/oxfunc_value_types/src/lib.rs:541` |
-| `EvalValue` | The payload of `ExtendedValue::Core` | `OxFunc/oxfunc_value_types/src/lib.rs:461` |
-| `PresentationHint` | **Axis-narrow OxFunc hint** carried by `ValueWithPresentation`. *Not authoritative.* Used by OxFml as a **fallback** when the host context omits a `number_format_code`. | `OxFunc/oxfunc_value_types/src/lib.rs:505` |
+| `CalcValue` | Native OxFunc value carried through OneCalc without a local value mirror | `OxFunc/oxfunc_value_types/src/lib.rs` |
+| `CoreValue` | Core scalar / array / error payload inside `CalcValue` | `OxFunc/oxfunc_value_types/src/lib.rs` |
+| `PresentationHint` | **Axis-narrow OxFunc hint** carried through native `CalcValue` / returned-value surfaces. *Not authoritative.* Used by OxFml as a **fallback** when the host context omits a `number_format_code`. | `OxFunc/oxfunc_value_types/src/lib.rs` |
 | `NumberFormatHint` | The number-format axis of `PresentationHint` (`General/DateLike/Percentage/Currency/Scientific/Fraction/Custom`) | `OxFunc/oxfunc_value_types/src/lib.rs` |
 | `LocaleProfileId` | Locale identifier; today `EnUs` and `CurrentExcelHost` only | `OxFunc/oxfunc_core/src/locale_format.rs:6` |
 | `WorksheetErrorCode` | Excel error codes (`#DIV/0!`, `#NAME?`, …) | `OxFunc/oxfunc_value_types/src/lib.rs:15` |
 | `LiveDiagnostic` | Authoring-time diagnostic with severity + stage | `OxFml/.../consumer/editor/types.rs:50` |
-| `FormulaWalkNode` | Per-node parse/bind/eval projection (host-side mirror of `SemanticPlan` walk) | `adapters/oxfml/types.rs` |
+| `FormulaDrillNodeViewModel` | Per-node parse/bind/eval projection (host-side mirror of `SemanticPlan` walk) | `adapters/oxfml/types.rs` |
 | `FormulaEditReuseSummary` | Tells UI which subtrees were reused on the last edit | `OxFml/.../consumer/editor/types.rs:92` |
 | `VerificationCaseReport` | One case's full verdict envelope (value/display/replay) | `services/verification_bundle.rs:123` |
 | `OxReplayMismatchRecord` | Single mismatch between two replay scenarios | `services/verification_bundle.rs:101` |
@@ -86,8 +86,8 @@ flowchart TB
   intent["intent / EditorCommand"]
   reducer["reducer.rs"]
   state["RwSignal&lt;OneCalcHostState&gt;"]
-  adapter["OxfmlEditorBridge trait"]
-  live["LiveOxfmlBridge"]
+  adapter["OxfmlHostSession trait"]
+  live["NativeOxfmlHostSession"]
   oxfml["OxFml"]
   oxfunc["OxFunc"]
   oxreplay["OxReplay"]
@@ -138,7 +138,7 @@ flowchart TB
 ```mermaid
 flowchart TB
   subgraph oxfunc["OxFunc — function call"]
-    fnret["function returns ExtendedValue<br/>(maybe ValueWithPresentation { value, hint })"]
+    fnret["function returns CalcValue<br/>(maybe with native presentation hint)"]
     hint["PresentationHint<br/>(NumberFormatHint, axis-narrow)"]
     fnret -. carries .-> hint
   end
@@ -227,7 +227,7 @@ flowchart TB
 |---|---|---|
 | `VerificationPublicationContext` | Host-provided comprehensive format input (the controls write to this) | Result drill scenario-context section |
 | `VerificationPublicationSurface` | OxFml-produced authoritative result (everything the UI reads for display) | Result hero + result drill cascade + compare view |
-| `presentation_hint` (`PresentationHint`) | OxFunc's axis-narrow hint travelling with `ValueWithPresentation` | Result drill — separate "from OxFunc" sidecar |
+| `presentation_hint` (`PresentationHint`) | OxFunc's axis-narrow hint travelling with native `CalcValue` / returned-value surfaces | Result drill — separate "from OxFunc" sidecar |
 | `LocaleFormatContext` | Locale + date-system input (separate from publication context) | Result drill scenario-context locale + date-basis rows |
 | `base_effective_display_text` | Local intermediate (format applied, no CF). Not a named type. | Result drill cascade — single row labelled "format applied (pre-CF)" |
 | `effective_display_text` | Final post-CF display string | Result drill cascade — final row; result hero value; compare view display row |
@@ -284,8 +284,8 @@ mapped to the layer chain that produces it. The columns:
 | Mockup region | Component | View-model field | Service builder | State slice | Upstream type | Status |
 |---|---|---|---|---|---|---|
 | panel container | `formula_drill.rs` | local UI signal `data-expanded` | — | — | — | live |
-| walk-tree rows | `formula_drill.rs` | `walk_nodes: Vec<FormulaDrillNodeView>` | `formula_drill_view_model::build` | bridge `formula_walk: Vec<FormulaWalkNode>` | host `FormulaWalkNode` (mirrors OxFml `SemanticPlan` slice) | live |
-| state chip (`evaluated`/`bound`/`opaque`/`blocked`) | `formula_drill.rs` | `node.state: FormulaWalkNodeState` | preserved | bridge | host `FormulaWalkNodeState` | live |
+| walk-tree rows | `formula_drill.rs` | `walk_nodes: Vec<FormulaDrillNodeView>` | `formula_drill_view_model::build` | bridge `formula_walk: Vec<FormulaDrillNodeViewModel>` | host `FormulaDrillNodeViewModel` (mirrors OxFml `SemanticPlan` slice) | live |
+| state chip (`evaluated`/`bound`/`opaque`/`blocked`) | `formula_drill.rs` | `node.state: FormulaDrillNodeState` | preserved | bridge | host `FormulaDrillNodeState` | live |
 | `value_preview` right-aligned | `formula_drill.rs` | `node.value_preview: Option<String>` | preserved | bridge | bridge | live |
 | hover → editor span highlight | `formula_drill.rs` ⇄ `editor_hero.rs` | shared signal `hovered_node_span: Option<TextSpan>` | local | — | `OxFml` `TextSpan` (via node attribution) | needs node→span map; `seam:WALK-NODE-SPAN-ATTRIB` if not yet on node |
 | parse / bind / eval phase strip | `formula_drill.rs` | `parse_summary`, `bind_summary`, `eval_summary` | preserved | bridge | `OxFml` `ParseSummary`, `BindSummary`, `EvalSummary` | live |
@@ -296,8 +296,8 @@ mapped to the layer chain that produces it. The columns:
 | Mockup region | Component | View-model field | Service builder | State slice | Upstream type | Status |
 |---|---|---|---|---|---|---|
 | `result ▸` caption | `result_hero.rs` | static | — | — | — | live |
-| result-class pill (Number/Array/Error/…) | `result_hero.rs` | `result_class: ResultClass` enum | `result_view_model::classify` | bridge `value_presentation`, `ExtendedValue` discriminator | `OxFunc` `ExtendedValue`, `EvalValue` | live |
-| 72 pt result value | `result_hero.rs` | `result_render: ResultHeroRender` (per-variant) | `result_view_model::render` | bridge `value_presentation.evaluation_summary` + `effective_display_summary` | `OxFunc` `ExtendedValue` | live |
+| result-class pill (Number/Array/Error/…) | `result_hero.rs` | `result_class: ResultClass` enum | `result_view_model::classify` | native `CalcValue` discriminator | `OxFunc` `CalcValue`, `CoreValue` | live |
+| 72 pt result value | `result_hero.rs` | `result_render: ResultHeroRender` (per-variant) | `result_view_model::render` | native `CalcValue` plus OxFml publication surface | `OxFunc` `CalcValue` | live |
 | array preview grid | `result_hero.rs` | `array_preview: Option<FormulaArrayPreview>` | preserved | bridge `array_preview` | `OxFunc` `EvalArray` | live |
 | error glyph rendering | `result_hero.rs` | `error_render: Option<ErrorRender>` | new in result_view_model | bridge | `OxFunc` `WorksheetErrorCode`, `ErrorSurface` | live |
 | result-foot drill toggle | `result_hero.rs` | local UI signal | — | — | — | live |
@@ -316,8 +316,8 @@ mapped to the layer chain that produces it. The columns:
 
 | Mockup region | Component | View-model field | Service builder | State slice | Upstream type | Status |
 |---|---|---|---|---|---|---|
-| cascade row `source value` | `result_drill.rs` | `cascade.source_value: SourceValueRow` | `result_drill_view_model::build` | bridge `value_presentation` → `ExtendedValue::Core(EvalValue)` (or rich variant payload) | `OxFunc` `EvalValue` | live |
-| sidecar `from OxFunc` (small block) | `result_drill.rs` | `cascade.oxfunc_hint: Option<PresentationHintView>` | same | bridge `ExtendedValue::ValueWithPresentation.hint` (when function returned a hint) | `OxFunc` `PresentationHint` (`NumberFormatHint`, `CellStyleHint`) | live; **separated visually** from the host-context input — it's a hint, not a step |
+| cascade row `source value` | `result_drill.rs` | `cascade.source_value: SourceValueRow` | `result_drill_view_model::build` | native `CalcValue` / `CoreValue` payload | `OxFunc` `CalcValue` | live |
+| sidecar `from OxFunc` (small block) | `result_drill.rs` | `cascade.oxfunc_hint: Option<PresentationHintView>` | same | native presentation hint carried through `CalcValue` / returned-value surface | `OxFunc` `PresentationHint` (`NumberFormatHint`, `CellStyleHint`) | live; **separated visually** from the host-context input — it's a hint, not a step |
 | cascade row `host format inputs` (group) | `result_drill.rs` | `cascade.host_inputs: HostFormatInputsRow` | same | active `VerificationPublicationContext` (new state field) | `OxFml` `VerificationPublicationContext` | live |
 | → sub-row `number_format_code` | `result_drill.rs` | `cascade.host_inputs.number_format_code: Option<String>` (editable) | same | same | `OxFml::publication.number_format_code` | live (string); picker `seam:OXFUNC-FORMAT-CODE-PICKER` |
 | → sub-row `style_id` / `style_hierarchy` | `result_drill.rs` | `cascade.host_inputs.style_id`, `style_hierarchy` | same | same | `OxFml::publication.style_id`, `style_hierarchy` | live (read-only display today); editing `seam:ONECALC-STYLE-AUTHORING` |
@@ -349,7 +349,7 @@ mapped to the layer chain that produces it. The columns:
 
 | Mockup region | Component | View-model field | Service builder | State slice | Upstream type | Status |
 |---|---|---|---|---|---|---|
-| live-bridge dot | `status_foot.rs` | `bridge_health: BridgeHealth` | `home_shell_view_model::status_foot` | `OxfmlEditorBridgeError` last-call | bridge | live |
+| live-bridge dot | `status_foot.rs` | `bridge_health: BridgeHealth` | `home_shell_view_model::status_foot` | `OxfmlHostSessionError` last-call | bridge | live |
 | `green-tree key` | `status_foot.rs` | `green_tree_key: Option<String>` | preserved | bridge `editor_syntax_snapshot.green_tree_key` | `OxFml` `GreenTreeRoot.green_tree_key` | live |
 | scenario name | `status_foot.rs` | `scenario_label: String` | preserved | `formula_spaces[id].context.scenario_label` | — | live |
 | `saved 14:22` timestamp | `status_foot.rs` | `last_saved_at: Option<DateTime>` | scenario_service | new field on FormulaSpaceState | — | live; disk `seam:ONECALC-SCENARIO-PERSIST` |
@@ -466,7 +466,7 @@ pub struct FormulaDrillProps {
 pub struct FormulaDrillNodeView {
     pub node_id: String,
     pub label: String,                                // e.g. "FILTER(sales, region = \"EU\")"
-    pub state: FormulaWalkNodeState,                  // preserved enum
+    pub state: FormulaDrillNodeState,                  // preserved enum
     pub value_preview: Option<String>,
     pub depth: usize,
     pub children: Vec<FormulaDrillNodeView>,
@@ -484,12 +484,12 @@ pub enum NodeClickIntent {
 
 ```
 service: formula_drill_view_model::build(
-    formula_walk: &[FormulaWalkNode],
+    formula_walk: &[FormulaDrillNodeViewModel],
     source_text: &str,
 ) -> Vec<FormulaDrillNodeView>
 ```
 
-Recursively projects each `FormulaWalkNode` into a flat-or-nested view; the
+Recursively projects each `FormulaDrillNodeViewModel` into a flat-or-nested view; the
 `source_span` field is computed by calling `attribute_node_to_span(label,
 source_text)` (host-side string match for now;
 `seam:WALK-NODE-SPAN-ATTRIB` for engine-provided attribution).
@@ -533,7 +533,7 @@ pub struct ResultDrillProps {
 /// (2) per-CF evaluation → final `effective_*`. Last-wins compositing.
 pub struct ResultCascadeView {
     // -- inputs to the pipeline (read-only display of what the host sent) --
-    pub source_value: SourceValueRow,                 // EvalValue discriminator + repr
+    pub source_value: SourceValueRow,                 // CalcValue / CoreValue discriminator + repr
     pub host_inputs: HostFormatInputsRow,             // VerificationPublicationContext fields
     pub locale_inputs: LocaleInputsRow,               // LocaleFormatContext fields
 
@@ -638,7 +638,7 @@ OxFunc said about the function's preferred number format axis, separately
 from the editable code.
 
 **Bridge mirror responsibility.** The bridge today returns
-`FormulaValuePresentation { evaluation_summary, effective_display_summary,
+`FormulaResultViewModel { evaluation_summary, effective_display_summary,
 array_preview, blocked_reason }`. The cascade needs more — the **full
 `VerificationPublicationSurface`** so the UI can display per-CF-rule
 evaluation, base intermediate, and effective colors. New SEAM:
@@ -901,17 +901,17 @@ The single audit row per concept. Status legend: `live` = exists end-to-end,
 | reference cycling | host `RefCycleResult` (`ui/editor/reference_cycle.rs`) | — | live |
 | green-tree key | `EditorSyntaxSnapshot.green_tree_key` (bridge) | `OxFml` `GreenTreeRoot.green_tree_key` | live |
 | reuse summary | `FormulaEditReuseSummary` (bridge) | `OxFml` `FormulaEditReuseSummary` | live |
-| walk-tree node | `FormulaWalkNode` (host mirror in `adapters/oxfml/types.rs`) | upstream concept lives in `OxFml` `SemanticPlan`/`GreenTreeRoot`, not as a single "walk node" struct | live; **host-defined**; consider upstream `seam:OXFML-WALK-NODE` |
-| walk-node state | `FormulaWalkNodeState` (host mirror) | `OxFml` `ExecutionOutcomeKind` + bind/eval phase data | live; mapping rule lives in host |
+| walk-tree node | `FormulaDrillNodeViewModel` (host mirror in `adapters/oxfml/types.rs`) | upstream concept lives in `OxFml` `SemanticPlan`/`GreenTreeRoot`, not as a single "walk node" struct | live; **host-defined**; consider upstream `seam:OXFML-WALK-NODE` |
+| walk-node state | `FormulaDrillNodeState` (host mirror) | `OxFml` `ExecutionOutcomeKind` + bind/eval phase data | live; mapping rule lives in host |
 | node→span attribution | not on bridge today; host derives via string match | `OxFml` `TextSpan` for source mapping | `seam:WALK-NODE-SPAN-ATTRIB` |
 | parse summary | `ParseSummary { status, token_count }` (bridge) | derived from `OxFml` parse result | live |
 | bind summary | `BindSummary { variable_count, reference_count }` (bridge) | derived from `OxFml` bind result | live |
 | eval summary | `EvalSummary { step_count, duration_text }` (bridge) | derived from `OxFml` eval result | live |
 | provenance summary | `ProvenanceSummary` (bridge) | derived from `OxFml` profile snapshot | live |
-| value (Core) | `ExtendedValue::Core(EvalValue)` (bridge `value_presentation`) | `OxFunc` `ExtendedValue` (`oxfunc_value_types/src/lib.rs:541`) | live |
-| value (RichValue) | `ExtendedValue::RichValue(...)` | `OxFunc` `RichValue` | **routing partial**: `seam:ONECALC-EXTENDED-VALUE-ROUTING` |
-| value (presentation hint) | `ExtendedValue::ValueWithPresentation { value, hint }` | `OxFunc` `PresentationHint` + `NumberFormatHint` | live; **displayed in result-drill sidecar** (separate from cascade — it's a hint, not authoritative) |
-| value (error) | `ExtendedValue::ErrorWithMetadata { code, surface }` | `OxFunc` `WorksheetErrorCode` + `ErrorSurface` | live |
+| value (Core) | `CalcValue { core: CoreValue, ... }` | `OxFunc` `CalcValue` | live |
+| value (RichValue) | `CalcValue` rich payload | `OxFunc` `RichValue` | live through native value surface |
+| value (presentation hint) | native presentation hint on `CalcValue` / returned-value surface | `OxFunc` `PresentationHint` + `NumberFormatHint` | live; **displayed in result-drill sidecar** (separate from cascade — it's a hint, not authoritative) |
+| value (error) | `CalcValue::error(...)` | `OxFunc` `WorksheetErrorCode` | live |
 | array preview | `FormulaArrayPreview { label, rows, truncated }` (bridge) | `OxFunc` `EvalArray` | live |
 | **publication context (host input)** | new `ScenarioContextState` field set | `OxFml::publication::VerificationPublicationContext` (`mod.rs:30`) — *authoritative format input* | live (host writes); fed back into bridge call |
 | → `format_profile` | `scenario_context.format_profile: Option<String>` | `VerificationPublicationContext.format_profile` | live (string slot) |
@@ -957,7 +957,7 @@ is owned by the noted repo (`OxFml`/`OxFunc`/etc.) or by OneCalc itself.
 
 | SEAM id | Surface | Owner repo | What's needed |
 |---|---|---|---|
-| `SEAM-OXFML-PARTIAL-EVAL` | `F9` evaluate-selection; drill context-menu "Evaluate subtree with…" | `OxFml` | Subtree-eval bridge call accepting selection span and returning an `ExtendedValue` |
+| `SEAM-OXFML-PARTIAL-EVAL` | `F9` evaluate-selection; drill context-menu "Evaluate subtree with…" | `OxFml` | Subtree-eval host call accepting selection span and returning native `CalcValue` |
 | `SEAM-OXFUNC-LOCALE-EXPAND` ✅ LANDED 2026-05-06 | Locale dropdown beyond `EnUs` and `CurrentExcelHost` | `OxFunc` (W094) + `OxFml` (`oxfml_locale_context`) + host (`live_bridge::build_runtime_locale_context`) | OxFunc now ships 30 canonical `LocaleProfileId`s; OxFml exposes `oxfml_locale_context`; host plumbs `OneCalcHostState.ambient_app_context.language_tag` through every bridge round-trip. |
 | `SEAM-OXFUNC-FORMAT-CODE-PICKER` | Inline format-code editor with curated preset shortcuts (Currency-Euro, Date-ISO, Percentage-2, etc.) | OneCalc | Host-curated preset list mapping label → format code string. *Not* a typed family taxonomy — see [§7.3](#73-mismatches-mockup-vs-library-shape). |
 | `SEAM-BRIDGE-PUBLICATION-SURFACE` | Bridge mirror exposing the full `VerificationPublicationSurface` | OneCalc | Extend bridge `EditorDocument` (or add a sibling field) with `Option<VerificationPublicationSurface>`. Required so result drill cascade can show per-CF-rule `applies` + `effective_*`, base font/fill, and effective colors. |
@@ -1027,7 +1027,7 @@ a reconciliation decision before implementation lands.
 | **Scenario policy semantics** | `deterministic` / `live-recalc` radio | No upstream concept; **host-owned** per CHARTER §4 | Add `ScenarioPolicy` enum to OneCalc state. Wire to `EditorSettings.auto_proof_quiet_interval_ms` (live-recalc = short interval; deterministic = no auto-proof). |
 | **Compare verdict status semantics** | Three pills: `value match`, `display MISMATCH`, `replay equivalent` | Three `Option<bool>` on `VerificationCaseReport`: each can be `Some(true)`, `Some(false)`, `None` | Mockup verdict pills must support **three states**: match (sage), mismatch (terracotta), blocked (muted) when `None`. Already accommodated by `Verdict { Match, Mismatch, Blocked }` in §4.4. |
 | **`view_family` strings** | Mockup uses `effective-display`, `value`, `replay` | Library uses underscored values: `effective_display_text`, `worksheet_comparison_value`, `outcome_value`, `view_value`, `formatting_view`, `conditional_formatting_view`, `projection_coverage_gap`, `trace_event`, `counter_value`, plus legacy | Mockup `effective-display` → library `effective_display_text` (display category). UX label set is **derived** from `view_family` per the mapping table in [§4.4](#44-compare-view--compare_viewrs). |
-| **Walk-node source span** | Mockup hovers a walk row and editor highlights the corresponding text | Bridge `FormulaWalkNode` lacks a `source_span` field today | Add `source_span: Option<TextSpan>` to bridge `FormulaWalkNode` (host-defined; bridge-side patch trivial) **OR** implement reliable label→span attribution host-side. `SEAM-WALK-NODE-SPAN-ATTRIB`. |
+| **Walk-node source span** | Mockup hovers a walk row and editor highlights the corresponding text | Bridge `FormulaDrillNodeViewModel` lacks a `source_span` field today | Add `source_span: Option<TextSpan>` to bridge `FormulaDrillNodeViewModel` (host-defined; bridge-side patch trivial) **OR** implement reliable label→span attribution host-side. `SEAM-WALK-NODE-SPAN-ATTRIB`. |
 | **Live-bridge dot semantics** | Mockup status-foot shows green dot "live-bridge" | Multiple distinct states exist: `BridgeError`, `LiveBacked`/`LocalFallback`, auto-proof timing | Status-foot dot is **two-state**: green when `bridge.last_error.is_none() && truth_source == LiveBacked`; amber otherwise. Tooltip carries the precise reason (error message or `LocalFallback` cause). |
 
 ---
@@ -1042,7 +1042,7 @@ sequenceDiagram
     participant TA as <textarea><br/>(editor_hero.rs)
     participant CB as on_input_event<br/>callback
     participant LE as services/<br/>live_edit.rs
-    participant BR as OxfmlEditorBridge<br/>(LiveOxfmlBridge)
+    participant BR as OxfmlHostSession<br/>(NativeOxfmlHostSession)
     participant OX as OxFml + OxFunc
     participant ST as RwSignal<<br/>OneCalcHostState>
     participant VM as build_explore_<br/>view_model
@@ -1053,7 +1053,7 @@ sequenceDiagram
     CB->>LE: apply_live_editor_input(state, event)
     LE->>BR: apply_formula_edit(request)
     BR->>OX: parse + bind + eval
-    OX-->>BR: SemanticPlan + ExtendedValue
+    OX-->>BR: SemanticPlan + CalcValue
     BR-->>LE: FormulaEditResult { document }
     LE->>ST: state.formula_spaces[id] = derived state
     ST->>VM: state changed
@@ -1248,19 +1248,19 @@ Decisions that should be made before implementation kicks off.
   `language_tag` through `FormulaEditRequest` → `live_bridge::build_runtime_locale_context`.
   The picker in the formatting panel is functional today and the
   `SEAM-OXFUNC-LOCALE-EXPAND` shim has been retired.
-- **Walk-node span attribution.** Bridge today returns `FormulaWalkNode`
+- **Walk-node span attribution.** Bridge today returns `FormulaDrillNodeViewModel`
   without a `source_span`. Two options: (a) host-side label→span attribution
   (works for simple cases, brittle for nested same-name calls); (b) bridge
   patch to include `source_span: Option<TextSpan>` per node.
   **Recommendation:** (b), low-risk, single field add.
   `SEAM-WALK-NODE-SPAN-ATTRIB` becomes the change request.
 - **Bridge publication-surface mirror.** The bridge today returns a flat
-  `FormulaValuePresentation` with only `evaluation_summary` /
+  `FormulaResultViewModel` with only `evaluation_summary` /
   `effective_display_summary` strings. The result drill cascade needs the
   full `VerificationPublicationSurface` — per-rule `applies` and
   `effective_*`, base font/fill, etc. **Recommendation:** add
   `Option<VerificationPublicationSurface>` to the bridge `EditorDocument`
-  in WS-14, derived inside `LiveOxfmlBridge` from the same call that already
+  in WS-14, derived inside `NativeOxfmlHostSession` from the same call that already
   computes evaluation. Single field add; no upstream change.
   `SEAM-BRIDGE-PUBLICATION-SURFACE`.
 - **Pre-CF intermediate display.** OxFml today computes

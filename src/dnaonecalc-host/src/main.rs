@@ -8,11 +8,6 @@ use dnaonecalc_host::services::formula_drill_audit::{
 use dnaonecalc_host::services::programmatic_testing::{
     default_verification_config, load_verification_config_xml, ProgrammaticComparisonStatus,
 };
-use dnaonecalc_host::services::vba_udf_verification::{
-    default_vba_udf_evaluation_request, default_vba_udf_output_root,
-    default_vba_udf_verification_request, load_vba_udf_module_source, run_vba_udf_verification,
-    VbaUdfVerificationReport,
-};
 use dnaonecalc_host::services::verification_bundle::{
     default_output_root, load_verification_batch_request, run_verification_batch,
     single_case_request_with_config, single_xml_case_request_with_config, VerificationBundleReport,
@@ -24,8 +19,6 @@ fn main() -> ExitCode {
         Some("verify-formula") => run_verify_formula(args.collect()),
         Some("verify-xml-cell") => run_verify_xml_cell(args.collect()),
         Some("verify-batch") => run_verify_batch(args.collect()),
-        Some("eval-vba-udf") => run_eval_vba_udf(args.collect()),
-        Some("verify-vba-udf") => run_verify_vba_udf(args.collect()),
         Some("audit-formula-drill") => run_audit_formula_drill(args.collect()),
         Some("--help") | Some("-h") | Some("help") => {
             print_help();
@@ -39,159 +32,6 @@ fn main() -> ExitCode {
         None => {
             print_help();
             ExitCode::SUCCESS
-        }
-    }
-}
-
-fn run_verify_vba_udf(args: Vec<String>) -> ExitCode {
-    run_vba_udf_command(args, true)
-}
-
-fn run_eval_vba_udf(args: Vec<String>) -> ExitCode {
-    run_vba_udf_command(args, false)
-}
-
-fn run_vba_udf_command(args: Vec<String>, verification_defaults: bool) -> ExitCode {
-    let mut request = default_vba_udf_verification_request();
-    if !verification_defaults {
-        request = default_vba_udf_evaluation_request();
-    } else {
-        request.excel_oracle_ref = None;
-    }
-    let mut module_source_path = None;
-    let mut output_root = None;
-    let mut index = 0;
-    let command_name = if verification_defaults {
-        "verify-vba-udf"
-    } else {
-        "eval-vba-udf"
-    };
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--case-id" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.case_id = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --case-id");
-                    return ExitCode::from(2);
-                }
-            }
-            "--formula" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.formula = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --formula");
-                    return ExitCode::from(2);
-                }
-            }
-            "--vba-module-source" => {
-                if let Some(value) = args.get(index + 1) {
-                    module_source_path = Some(PathBuf::from(value));
-                    request.project_ref = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --vba-module-source");
-                    return ExitCode::from(2);
-                }
-            }
-            "--vba-project" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.vba_project_path = Some(value.clone());
-                    request.project_ref = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --vba-project");
-                    return ExitCode::from(2);
-                }
-            }
-            "--project-name" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.project_name = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --project-name");
-                    return ExitCode::from(2);
-                }
-            }
-            "--module-name" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.module_name = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --module-name");
-                    return ExitCode::from(2);
-                }
-            }
-            "--excel-oracle-ref" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.excel_oracle_ref = Some(value.clone());
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --excel-oracle-ref");
-                    return ExitCode::from(2);
-                }
-            }
-            "--no-excel-oracle" => {
-                request.excel_oracle_ref = None;
-                index += 1;
-            }
-            "--application-version" => {
-                if let Some(value) = args.get(index + 1) {
-                    request.application_version = value.clone();
-                    index += 2;
-                } else {
-                    eprintln!("{command_name} requires a value after --application-version");
-                    return ExitCode::from(2);
-                }
-            }
-            "--output-root" => {
-                output_root = args.get(index + 1).map(PathBuf::from);
-                index += 2;
-            }
-            other => {
-                eprintln!("unexpected {command_name} argument: {other}");
-                print_help();
-                return ExitCode::from(2);
-            }
-        }
-    }
-
-    if let Some(path) = module_source_path {
-        match load_vba_udf_module_source(&path) {
-            Ok(source) => request.module_source = source,
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::from(4);
-            }
-        }
-    }
-
-    let output_root = match output_root {
-        Some(path) => path,
-        None => match default_vba_udf_output_root() {
-            Ok(path) => path,
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::from(4);
-            }
-        },
-    };
-
-    match run_vba_udf_verification(&request, &output_root) {
-        Ok(report) => {
-            print_vba_udf_report(&report);
-            if report.comparison_status == ProgrammaticComparisonStatus::Matched {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            }
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(4)
         }
     }
 }
@@ -528,22 +368,6 @@ fn print_report(report: &VerificationBundleReport) {
     }
 }
 
-fn print_vba_udf_report(report: &VbaUdfVerificationReport) {
-    println!("vba udf evaluation: {}", report.output_root);
-    println!(
-        "- {} | {:?} | formula={} | oracle_status={} | value_match={:?} | oracle={:?}",
-        report.case_id,
-        report.comparison_status,
-        report.formula,
-        report.oracle_status,
-        report.value_match,
-        report.excel_oracle_ref
-    );
-    println!("  invocation: {}", report.invocation_record_path);
-    println!("  capability: {}", report.capability_snapshot_path);
-    println!("  blocked matrix: {}", report.blocked_matrix_path);
-}
-
 fn exit_code_for_report(report: &VerificationBundleReport) -> ExitCode {
     if report
         .case_reports
@@ -564,8 +388,6 @@ fn print_help() {
           verify-formula --case-id <id> --formula <text> [--config-xml <path>] [--output-root <path>]\n\
           verify-xml-cell --case-id <id> --workbook-xml <path> --locator <Sheet!Cell> [--config-xml <path>] [--output-root <path>]\n\
           verify-batch --input <json-path> [--output-root <path>]\n\
-          eval-vba-udf [--case-id <id>] [--formula <text>] [--vba-module-source <path>|--vba-project <path>] [--application-version <version>] [--output-root <path>]\n\
-          verify-vba-udf [--case-id <id>] [--formula <text>] [--vba-module-source <path>|--vba-project <path>] [--excel-oracle-ref <path>] [--application-version <version>] [--output-root <path>]\n\
           audit-formula-drill [--formula <text>]... [--format markdown|json]\n\
          \n\
          Verification config XML shape:\n\

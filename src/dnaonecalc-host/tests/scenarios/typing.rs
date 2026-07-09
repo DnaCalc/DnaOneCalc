@@ -2,14 +2,14 @@
 //! WS-14 home shell.
 //!
 //! Each test dispatches `apply_live_editor_input` against a real
-//! `LiveOxfmlBridge` (or a `FakeBridge` where the live bridge can't yet
+//! `NativeOxfmlHostSession` (or a `FakeBridge` where the live bridge can't yet
 //! return the richer document a scenario needs), then projects the host
 //! state through `build_home_shell_view_model` and asserts on the
 //! `ResultView` that the home shell renders.
 
 use dnaonecalc_host::adapters::oxfml::{
-    EditorDocument, FormulaEditRequest, FormulaEditResult, LiveOxfmlBridge, OxfmlEditorBridge,
-    OxfmlEditorBridgeError,
+    EditorDocument, FormulaEditRequest, FormulaEditResult, NativeOxfmlHostSession,
+    OxfmlHostSession, OxfmlHostSessionError,
 };
 use dnaonecalc_host::app::case_lifecycle::new_formula_space;
 use dnaonecalc_host::services::home_shell_view_model::{
@@ -29,14 +29,14 @@ fn fresh_state_with_active_space() -> OneCalcHostState {
 }
 
 /// Build the real live OxFml editor bridge used by the running app.
-fn scenario_bridge() -> LiveOxfmlBridge {
-    LiveOxfmlBridge::default()
+fn scenario_bridge() -> NativeOxfmlHostSession {
+    NativeOxfmlHostSession::default()
 }
 
 /// Dispatch a user-level "type the whole string" input event through the
 /// real reducer + the provided bridge. Matches how the editor surface
 /// forwards a textarea input change.
-fn type_formula(bridge: &dyn OxfmlEditorBridge, state: &mut OneCalcHostState, text: &str) {
+fn type_formula(bridge: &dyn OxfmlHostSession, state: &mut OneCalcHostState, text: &str) {
     let caret_offset = text.chars().count();
     apply_live_editor_input(
         bridge,
@@ -59,7 +59,7 @@ fn home_view(state: &OneCalcHostState) -> HomeShellViewModel {
 #[test]
 fn typing_a_sum_formula_shows_the_numeric_result() {
     // S2 / S3: type `=SUM(1,2,3)` and see `6` in the home-shell result.
-    // Drives the full OxFml + OxFunc runtime through `LiveOxfmlBridge` so
+    // Drives the full OxFml + OxFunc runtime through `NativeOxfmlHostSession` so
     // the assertion is on a real evaluation, not a fallback hand-eval.
     let mut state = fresh_state_with_active_space();
     let bridge = scenario_bridge();
@@ -140,11 +140,11 @@ struct DiagnosticFakeBridge {
     document: EditorDocument,
 }
 
-impl OxfmlEditorBridge for DiagnosticFakeBridge {
+impl OxfmlHostSession for DiagnosticFakeBridge {
     fn apply_formula_edit(
         &self,
         _request: FormulaEditRequest,
-    ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+    ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
         Ok(FormulaEditResult {
             document: self.document.clone(),
         })

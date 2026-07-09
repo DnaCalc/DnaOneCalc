@@ -11,6 +11,6 @@ use super::common::seam_pending;
 fn inspect_walk_nodes_carry_stable_green_tree_node_id() {
     seam_pending(
         "SEAM-OXFML-GREEN-TREE-NODE-ID",
-        "InspectFormulaWalkNodeView must carry a stable green_tree_node_id",
+        "InspectFormulaDrillNodeViewModelView must carry a stable green_tree_node_id",
     );
 }

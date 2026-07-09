@@ -1,12 +1,12 @@
 //! S-CMP-* — completion popup lifecycle scenarios.
 //!
 //! Each scenario walks a user action through `apply_live_editor_input`
-//! against a real `LiveOxfmlBridge`, then asserts on the lib-side
+//! against a real `NativeOxfmlHostSession`, then asserts on the lib-side
 //! popup state machine in `services::completion_popup`. No browser
 //! involvement; the corresponding DOM contracts live in
 //! `tests/browser/completion.rs` (added in bead dno-xcq.24+).
 
-use dnaonecalc_host::adapters::oxfml::{LiveOxfmlBridge, OxfmlEditorBridge};
+use dnaonecalc_host::adapters::oxfml::{NativeOxfmlHostSession, OxfmlHostSession};
 use dnaonecalc_host::app::case_lifecycle::new_formula_space;
 use dnaonecalc_host::app::reducer::{
     accept_selected_completion_on_active_formula_space,
@@ -24,11 +24,11 @@ fn fresh_state_with_active_space() -> OneCalcHostState {
     state
 }
 
-fn scenario_bridge() -> LiveOxfmlBridge {
-    LiveOxfmlBridge::default()
+fn scenario_bridge() -> NativeOxfmlHostSession {
+    NativeOxfmlHostSession::default()
 }
 
-fn type_formula(bridge: &dyn OxfmlEditorBridge, state: &mut OneCalcHostState, text: &str) {
+fn type_formula(bridge: &dyn OxfmlHostSession, state: &mut OneCalcHostState, text: &str) {
     let caret = text.chars().count();
     apply_live_editor_input(
         bridge,

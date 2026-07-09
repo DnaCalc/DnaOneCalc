@@ -256,8 +256,9 @@ impl VbaModuleSourceLoadRequest {
     }
 }
 
-/// Load a selected `.bas` file: compile the VBA source through OxVba,
-/// extract admitted UDFs, and record the association as Loaded (or Failed).
+/// Record a selected `.bas` file while OxVba hosting is deferred for the
+/// native OxFml/OxFunc resync. Formal OxVba loading will return through the
+/// current OxVba APIs in a later integration.
 pub fn load_vba_module_source_for_host_context(
     state: &mut OneCalcHostState,
     request: VbaModuleSourceLoadRequest,
@@ -1309,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn vba_host_browser_module_source_loads_admitted_udfs() {
+    fn vba_host_browser_module_source_records_deferred_integration() {
         let mut state = OneCalcHostState::default();
 
         let runtime = load_vba_module_source_for_host_context(
@@ -1323,14 +1324,9 @@ mod tests {
                 )
                 .to_string(),
             ),
-        )
-        .expect("browser .bas source should load into a VBA runtime");
+        );
 
-        assert_eq!(runtime.registrations().len(), 1);
-        assert!(runtime.registrations()[0]
-            .formula_name
-            .eq_ignore_ascii_case("AddThem"));
-
+        assert!(runtime.is_none());
         let association = state
             .vba_host_context
             .associations
@@ -1338,16 +1334,20 @@ mod tests {
             .expect("association should be recorded");
         assert_eq!(association.display_name, "SimpleVba.bas");
         assert_eq!(association.source_ref, "browser-file:SimpleVba.bas");
-        assert_eq!(
-            association.load_status,
-            VbaHostAssociationLoadStatus::Loaded
-        );
-        assert_eq!(association.admitted_udf_count, 1);
-        assert!(association.admitted_udfs[0].eq_ignore_ascii_case("AddThem"));
+        match &association.load_status {
+            VbaHostAssociationLoadStatus::Failed(reason) => {
+                assert!(reason.contains("OxVba integration is deferred"));
+            }
+            other => panic!("expected deferred OxVba failure, got {other:?}"),
+        }
+        assert_eq!(association.admitted_udf_count, 0);
+        assert_eq!(association.rejected_candidate_count, 0);
+        assert!(association.admitted_udfs.is_empty());
+        assert!(association.rejected_candidates.is_empty());
     }
 
     #[test]
-    fn vba_host_native_module_source_records_real_path() {
+    fn vba_host_native_module_source_records_real_path_and_deferred_integration() {
         let mut state = OneCalcHostState::default();
 
         let runtime = load_vba_module_source_for_host_context(
@@ -1363,10 +1363,9 @@ mod tests {
                 .to_string(),
                 Vec::new(),
             ),
-        )
-        .expect("native .bas source should load into a VBA runtime");
+        );
 
-        assert_eq!(runtime.registrations().len(), 1);
+        assert!(runtime.is_none());
         let association = state
             .vba_host_context
             .associations
@@ -1374,11 +1373,14 @@ mod tests {
             .expect("association should be recorded");
         assert_eq!(association.display_name, "SimpleVba.bas");
         assert_eq!(association.source_ref, "C:\\Temp\\SimpleVba.bas");
-        assert_eq!(
-            association.load_status,
-            VbaHostAssociationLoadStatus::Loaded
-        );
-        assert_eq!(association.admitted_udf_count, 1);
+        match &association.load_status {
+            VbaHostAssociationLoadStatus::Failed(reason) => {
+                assert!(reason.contains("OxVba integration is deferred"));
+            }
+            other => panic!("expected deferred OxVba failure, got {other:?}"),
+        }
+        assert_eq!(association.admitted_udf_count, 0);
+        assert_eq!(association.rejected_candidate_count, 0);
     }
 
     #[test]
@@ -1914,6 +1916,7 @@ mod tests {
                 insert_text: "SUM(".to_string(),
                 replacement_span: Some(FormulaTextSpan { start: 1, len: 2 }),
                 documentation_ref: None,
+                profile_payload: None,
                 requires_revalidation: true,
             }],
             formula_walk: vec![],

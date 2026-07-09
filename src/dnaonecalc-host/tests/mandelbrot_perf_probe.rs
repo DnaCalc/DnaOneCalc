@@ -1,5 +1,5 @@
 //! Probe: time the Mandelbrot LET / REDUCE / HSTACK formula end-to-end
-//! through `LiveOxfmlBridge` to see where the seconds go. Not a CI
+//! through `NativeOxfmlHostSession` to see where the seconds go. Not a CI
 //! test — gated behind `--ignored` so a normal `cargo test` doesn't
 //! pay the multi-second cost. Run with:
 //!
@@ -8,7 +8,7 @@
 //!   -- --ignored --nocapture
 //! ```
 
-use dnaonecalc_host::adapters::oxfml::{LiveOxfmlBridge, OxfmlEditorBridge};
+use dnaonecalc_host::adapters::oxfml::{NativeOxfmlHostSession, OxfmlHostSession};
 use dnaonecalc_host::app::case_lifecycle::new_formula_space;
 use dnaonecalc_host::services::live_edit::apply_live_editor_input;
 use dnaonecalc_host::state::OneCalcHostState;
@@ -20,7 +20,7 @@ fn fresh_state() -> OneCalcHostState {
     state
 }
 
-fn type_formula(bridge: &dyn OxfmlEditorBridge, state: &mut OneCalcHostState, text: &str) {
+fn type_formula(bridge: &dyn OxfmlHostSession, state: &mut OneCalcHostState, text: &str) {
     let caret = text.chars().count();
     apply_live_editor_input(
         bridge,
@@ -78,7 +78,7 @@ const MANDEL: &str = r#"=LET(
 #[test]
 #[ignore = "performance probe — multi-second; run with --ignored"]
 fn time_mandelbrot_full_size() {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let mut state = fresh_state();
     let start = std::time::Instant::now();
     type_formula(&bridge, &mut state, MANDEL);
@@ -90,7 +90,7 @@ fn time_mandelbrot_full_size() {
 #[ignore = "performance probe — measures shrink dimensions"]
 fn time_mandelbrot_shrunk() {
     // Same shape, smaller dims — show how cost scales.
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     for (rows, cols, max_iter) in [
         (5usize, 5, 5),
         (10, 10, 10),

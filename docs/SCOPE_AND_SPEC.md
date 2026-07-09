@@ -154,6 +154,11 @@ Current concrete read from the refreshed OxCalc seam docs:
 2. that packet is still seam-reference material only and must not be mistaken for a frozen production host API,
 3. `DNA OneCalc` should use this packet family to understand what the live seam currently needs, then narrow and productize that shape explicitly in its own host profiles rather than pretending the wider packet does not exist.
 
+Current DnaOneCalc implementation rule:
+1. the ordinary native host path calls OxFml consumer editor/runtime APIs directly and carries native OxFunc `CalcValue` / presentation types,
+2. the default host context supplies locale, clock, random, publication, and bounded formal-input facts only,
+3. it does not install an OxCalc dependency, a `ReferenceBindProfile`, or a `ReferenceSystemProvider`.
+
 The authoritative OxCalc seam-reference slice is enumerated in Section `19.6`.
 
 ### 4.2 OxFml Formula-Editing Language-Service Reference Rule
@@ -185,7 +190,7 @@ Current read of the OxFml floor:
 5. deterministic local test evidence already exists in OxFml for that floor.
 
 Current residuals that matter to `DNA OneCalc`:
-1. no OxFunc-backed help or signature payload retrieval is frozen yet,
+1. OxFunc runtime-registry help and signature metadata is now the canonical downstream source, with placeholder signatures treated as absent rather than host-authored truth,
 2. no shared host or OxCalc immutable formula-edit packet is frozen yet,
 3. no shared host-facing packet for validated intelligent-completion results is frozen yet,
 4. editor packet evidence is still local deterministic evidence rather than replay-appliance projection,
@@ -212,7 +217,7 @@ Working rule:
 
 Current read of the OxFunc floor:
 1. OxFunc now has a consolidated downstream metadata/help contract and a separate surface-admission and labeling policy,
-2. the current help or signature floor is still metadata-backed rather than prose-rich,
+2. the current help or signature floor is runtime-registry-backed and may still be prose-sparse,
 3. structured help prose, argument names or descriptions, and formatted signature strings remain upstream work items,
 4. several seam-heavy rows now sit in `W051` for promotion or seam-freeze reasons rather than because they lack a real OxFunc kernel.
 
@@ -1221,7 +1226,7 @@ Working rules:
 3. function-help content should come from OxFunc through OxFml packetization rather than duplicated host prose,
 4. intelligent completion remains host-owned and non-canonical until it re-enters OxFml through the normal validation path,
 5. integration-ready editor packet surfaces should be consumed from the OxFml floor exactly where OxFml now marks them integration-ready,
-6. help and signature payloads should be treated as metadata-backed and nullable until OxFunc publishes structured help fields rather than being filled in with host-invented prose.
+6. help and signature payloads should be treated as OxFunc runtime-registry-backed and nullable; placeholder signatures such as `FUNC(...)` must not be filled in with host-invented prose.
 
 Host-local editor state is still allowed, but only for presentation and interaction concerns such as:
 1. cursor and selection state,
@@ -1691,8 +1696,11 @@ Important current limitation:
 3. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host supplies explicit cross-platform replacements.
 
 ### 12.0.1 OxVba Direct Runtime Hosting Floor
-The first OxVba integration lane is direct runtime hosting, not XLL packaging and
-not COM Automation Add-In compatibility.
+The first future OxVba integration lane is direct runtime hosting, not XLL
+packaging and not COM Automation Add-In compatibility. As of the native
+OxFml/OxFunc resync, the previous stale OxVba crate path is intentionally
+removed from DnaOneCalc; WS-15 must reintroduce this lane against current OxVba
+APIs.
 
 The first DnaOneCalc host module should:
 1. associate one or more OxVba projects with a workspace or formula space,
@@ -2039,7 +2047,7 @@ This section records the current upstream document set that `DNA OneCalc` should
 9. `..\\..\\OxFunc\docs\worksets\W051_IN_SCOPE_CURRENT_VERSION_NOT_COMPLETE_SURFACE.md` - canonical in-scope-but-not-complete exclusion list for the present product claim.
 10. `..\\..\\OxFunc\docs\function-lane\EXCEL_FUNCTION_DEFINITION_PRELIM_SPEC.md` - current function-profile schema and semantic-definition baseline.
 11. `..\\..\\OxFunc\docs\function-lane\EXCEL_FUNCTION_DEFINITION_PRELIM_CONFORMANCE.csv` - machine-readable function-definition and evidence registry.
-12. `..\\..\\OxFunc\docs\function-lane\VALUE_UNIVERSE_PRELIM_SPEC.md` - `EvalValue`, `ExtendedValue`, and `CallArgValue` boundary semantics.
+12. `..\\..\\OxFunc\docs\function-lane\VALUE_UNIVERSE_PRELIM_SPEC.md` - historical value-universe reference; current OneCalc code consumes native OxFunc `CalcValue` / `CoreValue` surfaces.
 13. `..\\..\\OxFunc\docs\function-lane\FUNCTION_ADAPTER_LAYERING_PRELIM_SPEC.md` - preparation/coercion/kernel split for function dispatch.
 14. `..\\..\\OxFunc\docs\function-lane\FORMALIZATION_STRATEGY_EXECUTABLE_SEMANTIC_MODEL.md` - formalization and `function-phase-complete` interpretation.
 15. `..\\..\\OxFunc\docs\function-lane\FUNCTION_CATALOG_CURRENT_BASELINE_LOCAL.csv` - broad local catalog baseline, to be read only with the deferred/not-complete overlays above.

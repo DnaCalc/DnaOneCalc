@@ -229,7 +229,7 @@ impl Default for WorkspaceShellState {
 }
 
 // `Eq` cannot be derived: the upstream `CalcValue` carried inside
-// `FormulaValuePresentation.published_value` contains `f64` (not `Eq`).
+// `FormulaResultViewModel.published_value` contains `f64` (not `Eq`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FormulaSpaceCollectionState {
     pub spaces: BTreeMap<FormulaSpaceId, FormulaSpaceState>,

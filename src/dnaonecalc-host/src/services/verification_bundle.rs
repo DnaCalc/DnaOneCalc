@@ -21,7 +21,7 @@ use crate::services::spreadsheet_xml::{
 };
 
 use crate::adapters::oxfml::{
-    EditorAnalysisStage, FormulaEditRequest, LiveOxfmlBridge, OxfmlEditorBridge,
+    EditorAnalysisStage, FormulaEditRequest, NativeOxfmlHostSession, OxfmlHostSession,
 };
 use oxfml_core::consumer::replay::{ReplayProjectionRequest, ReplayProjectionService};
 use oxfml_core::consumer::runtime::{RuntimeEnvironment, RuntimeFormulaRequest};
@@ -1624,7 +1624,7 @@ fn run_oxfml_case(
     spreadsheet_xml_extraction: Option<&SpreadsheetXmlCellExtraction>,
     effective_excel_render_context: Option<&EffectiveExcelRenderContext>,
 ) -> Result<OxfmlCaseArtifacts, String> {
-    let bridge = LiveOxfmlBridge::default();
+    let bridge = NativeOxfmlHostSession::default();
     let formula_edit_result = bridge
         .apply_formula_edit(FormulaEditRequest {
             formula_stable_id: case.case_id.clone(),

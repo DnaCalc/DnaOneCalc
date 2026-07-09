@@ -11,7 +11,5 @@ pub mod programmatic_testing;
 pub mod retained_artifacts;
 pub mod spreadsheet_xml;
 pub mod vba_host;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod vba_udf_verification;
 pub mod verification_bundle;
 pub mod wall_clock;

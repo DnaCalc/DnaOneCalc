@@ -162,7 +162,7 @@ pub fn dispatch_input(textarea: &web_sys::HtmlTextAreaElement, value: &str) {
 /// `max_ticks` microtasks have elapsed. Returns the matched text on
 /// success (trimmed), or the last seen text on timeout. The 30-tick
 /// default is enough for one bridge round-trip in headless Edge with a
-/// live `LiveOxfmlBridge`.
+/// live `NativeOxfmlHostSession`.
 pub async fn wait_for_text(shell: &MountedShell, selector: &str, expected: &str) -> Option<String> {
     for _ in 0..30 {
         next_microtask().await;

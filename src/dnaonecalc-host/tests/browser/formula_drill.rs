@@ -20,7 +20,7 @@
 //! * long value previews are truncated with the full text in
 //!   `title`.
 //!
-//! All driven through the real `LiveOxfmlBridge` against a
+//! All driven through the real `NativeOxfmlHostSession` against a
 //! freshly mounted home shell.
 
 #![cfg(target_arch = "wasm32")]

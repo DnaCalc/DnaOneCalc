@@ -15,7 +15,7 @@
 //! * the line carries data-active-parameter so the corpus can read
 //!   the active-parameter index without DOM-dependent CSS scraping.
 //!
-//! All driven through the real `LiveOxfmlBridge` against a freshly
+//! All driven through the real `NativeOxfmlHostSession` against a freshly
 //! mounted home shell.
 
 #![cfg(target_arch = "wasm32")]

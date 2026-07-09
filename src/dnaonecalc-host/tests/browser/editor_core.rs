@@ -2,7 +2,7 @@
 //!
 //! These tests are the gate before any caret-positioning surface
 //! (completion popup, signature help line, hover tooltip) lands. Each
-//! invariant runs through the real `LiveOxfmlBridge` mounted into a
+//! invariant runs through the real `NativeOxfmlHostSession` mounted into a
 //! detached DOM root, and asserts on user-visible DOM contracts:
 //!
 //!   - the textarea is reachable and configured

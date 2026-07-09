@@ -4,8 +4,8 @@ use crate::adapters::oxfml::{
     FormulaFormattingCfDataBarDirection, FormulaFormattingCfDataBarRuleOptions,
     FormulaFormattingCfIconSetRuleOptions, FormulaFormattingCfRank,
     FormulaFormattingCfRankRuleOptions, FormulaFormattingCfRule, FormulaFormattingCfThreshold,
-    FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlEditorBridge,
-    OxfmlEditorBridgeError, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
+    FormulaFormattingCfTypedRule, FormulaFormattingRequest, OxfmlHostSession,
+    OxfmlHostSessionError, RecalcModeRequest, ScenarioPolicyRequest, TraceModeRequest,
 };
 use crate::app::intents::ApplyFormulaEditIntent;
 use crate::app::reducer::{
@@ -24,7 +24,7 @@ pub enum LiveEditError {
     NoActiveFormulaSpace,
     UnknownFormulaSpace(FormulaSpaceId),
     Session(EditorSessionError),
-    Bridge(OxfmlEditorBridgeError),
+    Bridge(OxfmlHostSessionError),
 }
 
 /// Threshold above which the host flips into auto-debounced
@@ -64,7 +64,7 @@ pub struct LiveEditOutcome {
 }
 
 pub fn apply_live_editor_input(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
     input_event: EditorInputEvent,
 ) -> Result<LiveEditOutcome, LiveEditError> {
@@ -138,7 +138,7 @@ pub fn reset_auto_debounce_observation(
 /// `pending_runtime_recalc` flag is now cleared), `Ok(false)`
 /// when there is nothing to flush, `Err` on bridge failure.
 pub fn flush_pending_runtime_recalc(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
 ) -> Result<bool, LiveEditError> {
     let Some(formula_space_id) = active_formula_space_id(state) else {
@@ -169,7 +169,7 @@ pub fn flush_pending_runtime_recalc(
 }
 
 pub fn apply_live_editor_command(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
     command: EditorCommand,
 ) -> Result<LiveEditOutcome, LiveEditError> {
@@ -228,7 +228,7 @@ pub fn apply_live_editor_command(
 /// was no active formula space (treated as a benign no-op by the
 /// renderer), and `Err` only when the bridge itself failed.
 pub fn refresh_active_formula_space(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
 ) -> Result<bool, LiveEditError> {
     let Some(formula_space_id) = active_formula_space_id(state) else {
@@ -243,7 +243,7 @@ pub fn refresh_active_formula_space(
 /// `Ok(true)` when the bridge ran, `Ok(false)` for no active space,
 /// `Err` only on bridge failure.
 pub fn force_runtime_recalc_on_active_formula_space(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
 ) -> Result<bool, LiveEditError> {
     let Some(formula_space_id) = active_formula_space_id(state) else {
@@ -271,7 +271,7 @@ fn active_formula_space_id(state: &OneCalcHostState) -> Option<FormulaSpaceId> {
 }
 
 fn refresh_active_formula_space_from_bridge(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
     formula_space_id: &FormulaSpaceId,
     skip_runtime_evaluation: bool,
@@ -290,7 +290,7 @@ fn refresh_active_formula_space_from_bridge(
 /// per-formula recalc mode — used by F9 / Calculate to bypass
 /// `ManualRecalc` for one round-trip.
 fn refresh_active_formula_space_from_bridge_with_overrides(
-    bridge: &dyn OxfmlEditorBridge,
+    bridge: &dyn OxfmlHostSession,
     state: &mut OneCalcHostState,
     formula_space_id: &FormulaSpaceId,
     skip_runtime_evaluation: bool,
@@ -718,11 +718,11 @@ mod tests {
         document: crate::adapters::oxfml::EditorDocument,
     }
 
-    impl OxfmlEditorBridge for FakeBridge {
+    impl OxfmlHostSession for FakeBridge {
         fn apply_formula_edit(
             &self,
             request: FormulaEditRequest,
-        ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+        ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
             assert_eq!(
                 request.analysis_stage,
                 EditorAnalysisStage::FullSemanticPlan
@@ -835,11 +835,11 @@ mod tests {
         use crate::ui::editor::state::{CompletionAggressiveness, EditorSettingUpdate};
 
         struct PanicBridge;
-        impl OxfmlEditorBridge for PanicBridge {
+        impl OxfmlHostSession for PanicBridge {
             fn apply_formula_edit(
                 &self,
                 _request: FormulaEditRequest,
-            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+            ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
                 panic!("bridge refresh should be skipped for this command");
             }
         }
@@ -932,11 +932,11 @@ mod tests {
         struct SkipObservingBridge {
             document: crate::adapters::oxfml::EditorDocument,
         }
-        impl OxfmlEditorBridge for SkipObservingBridge {
+        impl OxfmlHostSession for SkipObservingBridge {
             fn apply_formula_edit(
                 &self,
                 request: FormulaEditRequest,
-            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+            ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
                 assert!(
                     request.skip_runtime_evaluation,
                     "auto-debounce should skip runtime when last pass was slow",
@@ -1025,11 +1025,11 @@ mod tests {
             .insert(FormulaSpaceState::new(formula_space_id.clone(), "=1"));
 
         struct PanicBridge;
-        impl OxfmlEditorBridge for PanicBridge {
+        impl OxfmlHostSession for PanicBridge {
             fn apply_formula_edit(
                 &self,
                 _request: FormulaEditRequest,
-            ) -> Result<FormulaEditResult, OxfmlEditorBridgeError> {
+            ) -> Result<FormulaEditResult, OxfmlHostSessionError> {
                 panic!("flush should be a no-op when no recalc is pending");
             }
         }

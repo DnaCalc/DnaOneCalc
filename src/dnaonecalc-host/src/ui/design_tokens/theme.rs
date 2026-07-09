@@ -4413,6 +4413,55 @@ pub const ONECALC_THEME_CSS: &str = r#"
   text-align: right;
 }
 
+.onecalc-home-shell__formula-drill-array {
+  grid-column: 1 / -1;
+  margin: 4px 0 6px 18px;
+  padding: 4px 6px;
+  border: 1px solid var(--oc-color-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--oc-color-surface) 92%, var(--oc-color-accent-soft));
+}
+
+.onecalc-home-shell__formula-drill-array-summary {
+  cursor: pointer;
+  color: var(--oc-color-muted);
+  font-family: var(--oc-font-mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.onecalc-home-shell__formula-drill-array-hidden {
+  margin-left: 8px;
+  color: var(--oc-color-subtle);
+}
+
+.onecalc-home-shell__formula-drill-array-grid {
+  display: grid;
+  gap: 0;
+  margin-top: 5px;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-top: 1px solid var(--oc-color-border);
+  border-left: 1px solid var(--oc-color-border);
+}
+
+.onecalc-home-shell__formula-drill-array-cell {
+  min-width: 2.75rem;
+  min-height: 1.45rem;
+  padding: 3px 7px;
+  border-right: 1px solid var(--oc-color-border);
+  border-bottom: 1px solid var(--oc-color-border);
+  background: var(--oc-color-surface);
+  color: var(--oc-color-ink);
+  font-family: var(--oc-font-mono);
+  font-size: 0.74rem;
+  line-height: 1.25;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .onecalc-home-shell__formula-drill-phase-strip {
   display: flex;
   flex-wrap: wrap;
@@ -5194,6 +5243,11 @@ pub const ONECALC_THEME_CSS: &str = r#"
 }
 
 .onecalc-array-browser__cell {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 1.6rem;
+  line-height: 1.25;
   padding: 4px 8px;
   /* Excel-style grid: each cell paints its bottom + right edge.
      The container's outer border supplies the very top + left
@@ -5352,7 +5406,6 @@ pub const ONECALC_THEME_CSS: &str = r#"
    style; this rule only sets up positioning + value layout. */
 .onecalc-array-browser__cell--cf {
   position: relative;
-  display: flex;
   align-items: center;
   gap: 4px;
 }

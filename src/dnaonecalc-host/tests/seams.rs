@@ -42,6 +42,8 @@ mod green_tree_node;
 mod host_bindings;
 #[path = "seams/locale_expand.rs"]
 mod locale_expand;
+#[path = "seams/native_oxfml_host.rs"]
+mod native_oxfml_host;
 #[path = "seams/parity_matrix.rs"]
 mod parity_matrix;
 #[path = "seams/persistence.rs"]
