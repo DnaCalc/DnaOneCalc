@@ -1016,10 +1016,14 @@ Current upstream reference slice for this plane:
 ## 9. UI, Runtime, And Platform Model
 ### 9.1 Runtime Shape
 The intended runtime split is:
-1. shared `Leptos` UI and state model,
-2. Tauri desktop shell for Windows and Linux,
-3. browser/WASM host over the same shared application core,
-4. optional non-UI harness later if justified.
+1. a Leptos-free `dnaonecalc-host-core` owning native OxFml/OxFunc state,
+2. the canonical serde-only DNA Calc Skin IR as the UX and transport contract,
+3. shared formula projection and Leptos formula-surface crates consumed by both
+   OneCalc and TreeCalc,
+4. thin browser/WASM, Tauri desktop, and native CLI shells over the same host
+   core,
+5. in-process and serialized session adapters using the same snapshot, intent,
+   and typed-receipt envelopes.
 
 Important rule:
 1. Tauri is not the web host,
@@ -1028,9 +1032,9 @@ Important rule:
 ### 9.1.1 Platform Honesty Matrix
 | Host | Shared UI Core | Live Excel Compare | Native Extensions | OxVba-sensitive Host Work |
 |---|---|---|---|---|
-| Windows desktop | `Leptos` + Tauri | Yes, Windows-only through `OxXlPlay` | Yes | Later, Windows-first |
-| Linux desktop | `Leptos` + Tauri | No live Excel | Yes | Only if explicitly supported later |
-| Browser/WASM | `Leptos` web host | No | No native add-ins | No |
+| Windows desktop | `Leptos` + Tauri | Yes, Windows-only through `OxXlPlay` | Future native adapter | Future native OxVba adapter |
+| Native Unix | `Leptos` + Tauri or headless | No live Excel | Only when explicitly implemented | Only under an admitted OxVba profile |
+| Browser/WASM | `Leptos` web host | No | No COM, DLL, XLL, or RTD COM | Future OxVba sandbox profile only |
 
 ### 9.1.2 Internal Application Strata
 The first engineering realization should keep these internal strata explicit:
@@ -1040,18 +1044,22 @@ The first engineering realization should keep these internal strata explicit:
 2. `Workbench app core`
    responsibilities:
    scenario lifecycle, command routing, mode switching, artifact creation, and orchestration of editor, execution, replay, comparison, and handoff flows.
-3. `Formula execution facade`
+3. `Formula host core`
    responsibilities:
-   adapt OneCalc host packets to OxFml and OxFunc runtime surfaces, execute runs, and normalize returned value surfaces.
+   own native OxFml/OxFunc editor and runtime environments, execute runs, and
+   project native result surfaces into shared Skin IR without copied semantic
+   value or parse/bind/eval models.
 4. `Replay and comparison facade`
    responsibilities:
    validate replay artifacts, invoke replay, diff, explain, distill where available, and merge OxXlPlay evidence into comparison workflows.
 5. `Persistence facade`
    responsibilities:
    map `Document` and related artifacts to the declared persistence format, perform round-trip loading and saving, and preserve artifact identity.
-6. `Extension facade`
+6. `Extension host attachment`
    responsibilities:
-   manage native extension discovery, enablement, ABI validation, and registered-external provider bridging.
+   consume the shared extension-host-core provider, capability, invalidation,
+   and ticking contracts; platform-native OxVba/XLL/RTD adapters remain separate
+   crates and are not part of the current tranche.
 7. `Evidence store`
    responsibilities:
    retain local artifacts, indexes, attachments, and derived views that should survive process restarts.
@@ -1153,16 +1161,16 @@ Windows desktop mandatory additions:
 1. live `OxXlPlay` compare workflow for the first comparison envelope,
 2. provenance/reliability labeling for live Excel observations,
 3. version-to-version scenario replay/compare,
-4. native add-in loading for the admitted Excel-C-API subset,
-5. `.xll` lifecycle and registration path,
-6. RTD lifecycle for the admitted in-process COM server subset.
+4. honest native-extension capability reporting,
+5. Tauri native-command placement that can host later OxVba/XLL/RTD adapters
+   without routing native libraries through browser WASM.
 
-Linux desktop mandatory additions:
+Native Unix mandatory additions:
 1. no claim of live Excel comparison,
 2. retained Windows-captured observation consumption works,
-3. `.so` native add-in loading for the admitted ABI subset,
-4. version-to-version replay/compare works,
-5. the declared Linux RTD path either works for the admitted design or is explicitly outside the current host claim.
+3. version-to-version replay/compare works,
+4. no XLL, COM, or RTD compatibility claim unless a concrete adapter is later
+   admitted and tested.
 
 Browser/WASM mandatory additions:
 1. no claim of native add-ins,
@@ -1637,46 +1645,51 @@ Hard rule:
 3. capsule transport must remain folder-based and inspectable rather than opaque.
 
 ## 12. Extension And Add-In Model
-The desktop extension path should be defined as a portable C ABI contract.
+Extension hosting is a shared DNA Calc host concern, not a OneCalc-local ABI.
+The host-neutral provider, capability, registration, invalidation, and ticking
+contracts belong in `dnacalc-extension-host-core`; OneCalc and TreeCalc consume
+that crate and attach platform-specific adapters.
 
 Delivery-order rule:
 1. this lane remains in scope,
 2. but it follows explorer stabilization, X-Ray stabilization, and the first replay or observation proving work,
 3. because its desired operation is clearer than the replay lane even though its technical implementation complexity is high.
 
-The admitted subset should be defined against the public Excel SDK reference corpus already curated in Foundation `reference/`, so that OneCalc implements a precise public-source subset rather than a loosely Excel-like add-in story.
-
-That means:
-1. the portability claim is about the extension ABI,
-2. not about literally reusing Windows `.xll` binaries on Linux.
+Future Windows adapters must define their admitted subset against the public
+Excel SDK and COM reference corpus already curated in Foundation `reference/`.
+The shared core remains adapter-neutral and makes no binary-portability claim.
 
 Platform model:
-1. Windows desktop uses native `.xll` packaging,
-2. Linux desktop uses native `.so` packaging over the same declared extension ABI,
-3. hosted web and browser/WASM begin without native add-in support.
+1. Windows desktop and headless hosts are the future native placement for OxVba,
+   `.xll`, COM RTD, and other DLL-backed adapters,
+2. browser/WASM never loads COM servers, DLLs, or XLLs,
+3. hosted web may use a separately authenticated native companion over the
+   shared session protocol,
+4. Native Unix declares only capabilities that have a real adapter and makes no
+   implied Excel COM/XLL compatibility claim.
 
-This keeps the extension lane honest while preserving the portability goal.
-
-The extension surface should be split explicitly into:
-1. `DNA OneCalc` native-extension ABI v0,
-2. `DNA OneCalc` RTD host/runtime path,
-3. `DNA OneCalc` OxVba direct runtime hosting,
-4. later `OxVba` add-in or toolchain integration as design input and co-development pressure.
+The extension surface is split explicitly into:
+1. shared `dnacalc-extension-host-core`,
+2. future `dnacalc-extension-oxvba`,
+3. future Windows-only `dnacalc-extension-xll-windows`,
+4. future Windows-only `dnacalc-extension-rtd-com-windows`.
 
 `OxVba` role:
 1. OxVba is currently best treated as an embedded host runtime and later add-in toolchain, not as an already-shipped add-in producer,
 2. `.basproj` already defines `HostModule`, `Library`, `Addin`, and related output kinds in a normative-draft project model,
 3. current host-export discovery, host UDF catalog shape, and embedded-host execution are the real current floor,
-4. DnaOneCalc may now pursue direct OxVba runtime hosting separately from XLL/add-in packaging,
+4. DnaOneCalc will pursue direct OxVba runtime hosting separately from XLL/add-in packaging after the shared extension design is accepted,
 5. XLL generation is still a separate packaging/toolchain lane,
-6. Linux shared-library support should therefore be pursued first through the OneCalc portable native-extension ABI, not by pretending the OxVba add-in toolchain is already portable and complete.
+6. no cross-platform native-library packaging promise is made by the shared
+   host core.
 
 Platform honesty table:
-1. Windows desktop supports the admitted `.xll` packaging over the frozen ABI subset,
-2. Linux desktop supports the same admitted ABI through `.so` packaging,
-3. browser/WASM should begin with no native extension loading claim at all,
-4. `OxVba` direct runtime hosting is a desktop host capability whose first admitted root object is DnaOneCalc `Application.Version`,
-5. `OxVba`-driven add-in generation remains a separate upstream pressure lane until the upstream toolchain is executable and documented as such.
+1. no current host claims production XLL loading or COM RTD integration,
+2. browser/WASM has no native extension-loading claim,
+3. OxVba integration must start from current OxVba APIs and an explicit runtime
+   profile rather than the removed stale crate surface,
+4. XLL and RTD COM implementation begins only after the shared design proposal
+   and invalidation contract are accepted.
 
 Current upstream reference slice for the extension lane:
 1. `..\\..\\OxFml\docs\spec\formula-language\OXFML_REGISTERED_EXTERNAL_PROVIDER_AND_CALL_REGISTER_ID_BOUNDARY.md`,
@@ -1743,33 +1756,16 @@ Current seam caveat:
 Detailed local requirements for this lane live in
 `docs/worksets/WS-15_vba_integration.md`.
 
-### 12.1 First ABI Contract Shape
-The first OneCalc native-extension ABI should minimally define:
-1. extension identity and version query,
-2. function catalog export,
-3. function invocation entry point,
-4. registration and unregister lifecycle,
-5. capability flags,
-6. error or provider-outcome transport,
-7. shutdown hook,
-8. the admitted Excel-style entry points and host-call subset.
+### 12.1 Shared Extension Contract Shape
+The shared core minimally defines runtime profiles, capability snapshots,
+provider/catalog lifecycle, native OxFml/OxFunc function registration and
+invocation, typed diagnostics, teardown, and host invalidation events for
+function-catalog changes, volatile ticks, and RTD topic updates. It does not
+define a speculative portable XLL ABI or platform FFI surface.
 
-The ABI should be portable at the C boundary and then adapted separately into:
-1. Windows `.xll` or related packaging,
-2. Linux `.so` packaging,
-3. any later OxVba-produced add-in packaging.
-
-The admitted subset is:
-1. Excel-SDK-defined lifecycle entry points such as `xlAutoOpen` and `xlAutoClose`,
-2. `Excel12(...)` host calls for the admitted subset,
-3. `XLOPER12` support only,
-4. no legacy `XLOPER`,
-5. `xlfRegister` Form 1,
-6. `xlfEvaluate`,
-7. `xlUDF`,
-8. `xlfRtd`,
-9. the admitted worksheet-call data types needed for those surfaces,
-10. volatility and related registration flags where declared.
+Windows XLL and RTD COM details belong to dedicated adapter proposals and later
+adapter crates. Any unavoidable unsafe code is isolated there behind audited
+safe interfaces; the shared core and OneCalc host core remain safe Rust.
 
 ### 12.2 Extension Runtime Load Model
 The first engineering load model should separate:
@@ -1801,9 +1797,10 @@ That distinction must remain visible in:
 Current host rule:
 1. host-loaded add-in registration is in scope,
 2. worksheet `REGISTER.ID` / `CALL` semantics are not part of the current product scope merely because add-ins are supported,
-3. Windows should support the admitted RTD lifecycle for in-process COM servers,
-4. Linux should provide a minimal COM-like activation registry and host contract for the admitted RTD server/interface subset,
-5. browser/WASM hosts do not support native add-ins.
+3. Windows RTD COM support is a future native adapter over the shared topic and
+   invalidation contract,
+4. no Linux COM-like RTD compatibility is claimed in the current architecture,
+5. browser/WASM hosts do not support native add-ins or RTD COM.
 
 ## 13. Derived Repo Responsibilities
 This note is the engineering source from which the `DnaOneCalc` repo should derive its local docs, workset register, and bead graph.
@@ -1897,14 +1894,17 @@ This section summarizes the current honest floor that `DNA OneCalc` should desig
 8. the app-facing replay operation model across `OxReplay`, `OxFml`, `OxFunc`, and host-owned retained actions remains a high-risk proving ground rather than a settled infrastructure layer.
 
 ### 14.4 Extension And VBA Floor
-1. the portable native-extension ABI remains an admitted current scope item for `DNA OneCalc`, but it is not the first stabilization target for the next iteration,
+1. the shared extension-host-core contract remains an admitted current scope
+   item, but platform adapters are not part of the current tranche,
 2. this lane is lower risk from a product-definition standpoint because the desired operation is comparatively clear, but it remains high technical complexity and likely upstream seam pressure,
-3. Windows `.xll` packaging and Linux `.so` packaging should preserve the same admitted ABI and behavior,
-4. the admitted surface freezes `XLOPER12` only and the `Excel12(...)` host-call subset needed for `xlfRegister` Form 1, `xlfEvaluate`, `xlUDF`, and `xlfRtd`,
-5. `DNA OneCalc` supports host-loaded function registration and RTD under that admitted subset, without thereby admitting worksheet `REGISTER.ID` / `CALL` semantics,
+3. Windows XLL and RTD COM support belong to dedicated future native adapters,
+4. exact Excel C API and COM subsets are decided in those adapter proposals,
+5. `DNA OneCalc` will support host-loaded function registration and RTD through
+   shared provider and invalidation contracts without thereby admitting worksheet
+   `REGISTER.ID` / `CALL` semantics,
 6. OxVba's real current floor includes embedded host runtime execution with host-provided root objects, host UDF catalog shape, and partial direct-host invocation, so `DNA OneCalc` should treat OxVba direct hosting as an executable integration lane while still treating the add-in toolchain as co-development pressure rather than as shipped packaging,
 7. Windows COM and Office-style root-object hosting remain Windows-only assumptions unless the host explicitly supplies cross-platform replacements,
-8. the Linux RTD activation model remains an admitted design task inside the current scope rather than a reason to weaken the frozen ABI direction.
+8. no Linux COM-like RTD activation model is claimed by the current architecture.
 
 ## 15. Start-Now Judgment
 `DnaOneCalc` should be started now.

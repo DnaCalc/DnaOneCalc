@@ -280,11 +280,12 @@ It does mean:
    workspace management, capability center UX, scenario library and promotion, host
    acceptance matrix and regression evidence, corpus hardening and release evidence
 
-### WS-12 Extension ABI, RTD, XLL Packaging, And Later OxVba Pressure
+### WS-12 Shared Extension Host Core And Adapter Readiness
 1. purpose:
-   land RTD and add-in work as follow-on worksets after the explorer, X-Ray, and
-   replay floors are stable; this lane is lower product-definition risk but high
-   technical complexity and likely upstream seam pressure.
+   establish and consume the shared DNA Calc provider, capability, registration,
+   invalidation, ticking, and teardown contracts after the explorer, X-Ray, and
+   replay floors are stable; prepare OxVba, Windows XLL, and Windows RTD COM
+   adapters without implementing those adapters in this workset.
 2. depends_on:
    `WS-08`, `WS-11`
 3. parent_spec_sections:
@@ -292,14 +293,15 @@ It does mean:
 4. upstream_dependencies:
    `OxFml`, `OxFunc`, `OxReplay`, later `OxVba`
 5. closure_condition:
-   declared desktop hosts can load and execute the admitted extension subset
-   honestly, RTD support exists only within the admitted platform and semantic gate,
-   XLL and `.so` packaging preserve the same declared ABI behavior, and unsupported
-   hosts or lanes are visibly blocked rather than implied.
+   DnaOneCalc consumes `dnacalc-extension-host-core`, local speculative extension
+   contracts are removed, runtime capabilities and invalidation/ticking behavior
+   are explicit and tested, and implementation-ready adapter proposals exist for
+   current OxVba, Windows XLL, and Windows RTD COM without claiming those adapters
+   are already implemented.
 6. initial_epic_lanes:
-   ABI subset register and safety model, provider loading and RTD lifecycle, XLL and
-   `.so` packaging, platform honesty and later-OxVba pressure, extension conformance
-   and test harness
+   shared-core handoff and adoption, provider/catalog lifecycle, host invalidation
+   and ticking, capability-state and diagnostics, OxVba/XLL/RTD adapter proposals,
+   removal of OneCalc-local speculative ABI and deferred VBA structures
 
 ### WS-13 DNA OneCalc UX Revamp Across Editor, Case Management, Host Config, And Value / Parity Surfaces
 1. purpose:
@@ -359,3 +361,27 @@ It does mean:
    policy, typed UDF invocation and value conversion, OxFml registered-external
    registration bridge, OxXlPlay/OxReplay Excel-oracle harness, capability/
    evidence/diagnostics integration, upstream pressure handoffs
+
+### WS-16 Shared Host Architecture And Runtime Profiles
+1. purpose:
+   align DnaOneCalc with the shared DNA Calc host architecture while preserving
+   its direct OxFml/OxFunc and null-reference boundary: consume the canonical
+   Skin IR and shared formula UX, separate the platform-neutral host core from
+   Leptos/Tauri/CLI shells, adopt shared runtime profiles and session envelopes,
+   and prepare shared extension-host attachment without adding OxCalc or OxDoc.
+2. depends_on:
+   `WS-04`, `WS-12`, `WS-13`, and DnaTreeCalc `W011` shared-crate delivery
+3. parent_spec_sections:
+   `4`, `5`, `8`, `9`, `11`, `12`, `14`, `16`
+4. upstream_dependencies:
+   `OxFml`, `OxFunc`, and the DnaTreeCalc-owned `dnacalc-*` shared crates
+5. closure_condition:
+   OneCalc has a Leptos-free host core, shared formula projection and rendering,
+   browser/Tauri/CLI adapters over one Skin IR session contract, honest runtime
+   capability profiles, working save/open/recent flows, and an attachment point
+   for the shared extension core; dependency guards continue to exclude
+   `oxcalc*`, `oxdoc*`, and `oxvba*` in this tranche.
+6. initial_epic_lanes:
+   TreeCalc shared-foundation handoff, canonical Skin IR adoption, shared formula
+   UX consumption, host-core and shell split, runtime-profile/session alignment,
+   persistence intent completion, shared extension-core adoption readiness
