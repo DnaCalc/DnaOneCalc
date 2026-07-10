@@ -38,6 +38,31 @@ pub use workspace_storage::{
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalWorkspacePersistence;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_workspace_to_path(
+    state: &crate::state::OneCalcHostState,
+    path: &str,
+) -> Result<(), String> {
+    let path = std::path::Path::new(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let json = serialize_workspace(state).map_err(|error| error.to_string())?;
+    std::fs::write(path, json).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_workspace_from_path(
+    state: &mut crate::state::OneCalcHostState,
+    path: &str,
+) -> Result<(), String> {
+    let json = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let workspace = deserialize_workspace(&json).map_err(|error| error.to_string())?;
+    workspace
+        .apply_to_state(state)
+        .map_err(|error| error.to_string())
+}
+
 impl dnaonecalc_core::StatePersistence<crate::state::OneCalcHostState>
     for LocalWorkspacePersistence
 {

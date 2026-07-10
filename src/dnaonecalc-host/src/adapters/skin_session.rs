@@ -7,6 +7,7 @@ impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
             .skin_snapshot
     }
 
+    #[allow(unreachable_code, unused_variables)]
     fn dispatch(
         &mut self,
         intent: dnacalc_skin_ir::SkinIntent,
@@ -28,13 +29,75 @@ impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
                     return dnaonecalc_core::DispatchOutcome::Applied;
                 }
                 dnacalc_skin_ir::SkinShellIntent::SaveAs { suggested_path } => {
+                    #[cfg(target_arch = "wasm32")]
+                    return dnaonecalc_core::DispatchOutcome::Rejected(
+                        dnacalc_skin_ir::SkinIntentDiagnostic {
+                            code: "browser_file_picker_required".into(),
+                            message:
+                                "browser SaveAs requires the asynchronous file-download adapter"
+                                    .into(),
+                            recoverable: true,
+                        },
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let Some(path) = suggested_path.as_deref() else {
+                            return dnaonecalc_core::DispatchOutcome::Rejected(
+                                dnacalc_skin_ir::SkinIntentDiagnostic {
+                                    code: "save_as_path_required".into(),
+                                    message: "native SaveAs requires a path".into(),
+                                    recoverable: true,
+                                },
+                            );
+                        };
+                        if let Err(message) = crate::persistence::save_workspace_to_path(self, path)
+                        {
+                            return dnaonecalc_core::DispatchOutcome::Rejected(
+                                dnacalc_skin_ir::SkinIntentDiagnostic {
+                                    code: "save_as_failed".into(),
+                                    message,
+                                    recoverable: true,
+                                },
+                            );
+                        }
+                    }
                     self.workspace_shell.current_workspace_path = suggested_path.clone();
-                    crate::persistence::save_workspace_to_local_storage(self);
                     self.workspace_shell.pending_persistence_intent = None;
                     return dnaonecalc_core::DispatchOutcome::Applied;
                 }
                 dnacalc_skin_ir::SkinShellIntent::Open { requested_path } => {
-                    crate::persistence::hydrate_state_from_local_storage(self);
+                    #[cfg(target_arch = "wasm32")]
+                    return dnaonecalc_core::DispatchOutcome::Rejected(
+                        dnacalc_skin_ir::SkinIntentDiagnostic {
+                            code: "browser_file_picker_required".into(),
+                            message: "browser Open requires the asynchronous file-input adapter"
+                                .into(),
+                            recoverable: true,
+                        },
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let Some(path) = requested_path.as_deref() else {
+                            return dnaonecalc_core::DispatchOutcome::Rejected(
+                                dnacalc_skin_ir::SkinIntentDiagnostic {
+                                    code: "open_path_required".into(),
+                                    message: "native Open requires a path".into(),
+                                    recoverable: true,
+                                },
+                            );
+                        };
+                        if let Err(message) =
+                            crate::persistence::open_workspace_from_path(self, path)
+                        {
+                            return dnaonecalc_core::DispatchOutcome::Rejected(
+                                dnacalc_skin_ir::SkinIntentDiagnostic {
+                                    code: "open_failed".into(),
+                                    message,
+                                    recoverable: true,
+                                },
+                            );
+                        }
+                    }
                     self.workspace_shell.current_workspace_path = requested_path.clone();
                     self.workspace_shell.pending_persistence_intent = None;
                     return dnaonecalc_core::DispatchOutcome::Applied;
@@ -89,5 +152,50 @@ mod tests {
             }
             _ => panic!("expected OneFormula snapshot"),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_save_as_and_open_use_the_requested_path() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/ws16/native-path-workspace.json");
+        let path_text = path.to_string_lossy().to_string();
+        let mut save = dnaonecalc_core::OneCalcSession::new(
+            crate::app::preview_state::preview_minimal_host_state(),
+        );
+        let receipt = save.handle(dnacalc_skin_ir::SkinIntentEnvelope::new(
+            "save-as",
+            None,
+            dnacalc_skin_ir::SkinIntent::Shell(dnacalc_skin_ir::SkinShellIntent::SaveAs {
+                suggested_path: Some(path_text.clone()),
+            }),
+        ));
+        assert!(matches!(
+            receipt,
+            dnacalc_skin_ir::SkinIntentReceipt::Applied { .. }
+        ));
+        assert!(path.exists());
+
+        let mut open = dnaonecalc_core::OneCalcSession::new(
+            crate::app::preview_state::preview_minimal_host_state(),
+        );
+        let receipt = open.handle(dnacalc_skin_ir::SkinIntentEnvelope::new(
+            "open",
+            None,
+            dnacalc_skin_ir::SkinIntent::Shell(dnacalc_skin_ir::SkinShellIntent::Open {
+                requested_path: Some(path_text.clone()),
+            }),
+        ));
+        assert!(matches!(
+            receipt,
+            dnacalc_skin_ir::SkinIntentReceipt::Applied { .. }
+        ));
+        assert_eq!(
+            open.host()
+                .workspace_shell
+                .current_workspace_path
+                .as_deref(),
+            Some(path_text.as_str())
+        );
     }
 }

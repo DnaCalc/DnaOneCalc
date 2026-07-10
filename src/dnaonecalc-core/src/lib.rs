@@ -111,6 +111,10 @@ impl<H: OneCalcSessionHost> OneCalcSession<H> {
         self.host.snapshot()
     }
 
+    pub fn host(&self) -> &H {
+        &self.host
+    }
+
     pub fn handle(&mut self, envelope: SkinIntentEnvelope) -> SkinIntentReceipt {
         if let Err(error) = envelope.validate() {
             return SkinIntentReceipt::Rejected {
