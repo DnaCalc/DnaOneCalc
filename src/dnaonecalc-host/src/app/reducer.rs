@@ -40,6 +40,178 @@ pub fn apply_editor_input_to_active_formula_space(
     true
 }
 
+pub fn apply_skin_intent_to_host_state(
+    state: &mut OneCalcHostState,
+    intent: dnacalc_skin_ir::SkinIntent,
+) -> bool {
+    match intent {
+        dnacalc_skin_ir::SkinIntent::OneFormula(intent) => {
+            apply_one_formula_skin_intent(state, intent)
+        }
+        dnacalc_skin_ir::SkinIntent::Shell(intent) => apply_shell_skin_intent(state, intent),
+        dnacalc_skin_ir::SkinIntent::TreeWorkspace(_) => false,
+    }
+}
+
+fn apply_shell_skin_intent(
+    state: &mut OneCalcHostState,
+    intent: dnacalc_skin_ir::SkinShellIntent,
+) -> bool {
+    match intent {
+        dnacalc_skin_ir::SkinShellIntent::OpenCommandPalette => {
+            if state.global_ui_chrome.command_palette_open {
+                return false;
+            }
+            state.global_ui_chrome.command_palette_open = true;
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::CloseCommandPalette => {
+            if !state.global_ui_chrome.command_palette_open {
+                return false;
+            }
+            state.global_ui_chrome.command_palette_open = false;
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::SetActiveDocument { document_id } => {
+            let formula_space_id = crate::domain::ids::FormulaSpaceId::new(document_id);
+            if state.workspace_shell.active_formula_space_id.as_ref() == Some(&formula_space_id) {
+                return false;
+            }
+            if !state.formula_spaces.spaces.contains_key(&formula_space_id) {
+                return false;
+            }
+            state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+            state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id);
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::Save
+        | dnacalc_skin_ir::SkinShellIntent::SaveAs { .. }
+        | dnacalc_skin_ir::SkinShellIntent::Open { .. }
+        | dnacalc_skin_ir::SkinShellIntent::OpenRecent { .. } => false,
+    }
+}
+
+fn apply_one_formula_skin_intent(
+    state: &mut OneCalcHostState,
+    intent: dnacalc_skin_ir::OneFormulaIntent,
+) -> bool {
+    match intent {
+        dnacalc_skin_ir::OneFormulaIntent::EditText {
+            formula_space_id,
+            text,
+            caret_offset,
+        } => {
+            let formula_space_id = crate::domain::ids::FormulaSpaceId::new(formula_space_id);
+            let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) else {
+                return false;
+            };
+            let caret_offset = caret_offset.min(text.len());
+            let next_editor_state =
+                EditorSurfaceState::for_text_with_selection(&text, caret_offset, caret_offset);
+            apply_local_editor_text_change(formula_space, text, next_editor_state);
+            true
+        }
+        dnacalc_skin_ir::OneFormulaIntent::SetSelection {
+            formula_space_id,
+            anchor,
+            focus,
+        } => {
+            let formula_space_id = crate::domain::ids::FormulaSpaceId::new(formula_space_id);
+            let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) else {
+                return false;
+            };
+            let len = formula_space.raw_entered_cell_text.len();
+            let next_editor_state = EditorSurfaceState::for_text_with_selection(
+                &formula_space.raw_entered_cell_text,
+                anchor.min(len),
+                focus.min(len),
+            );
+            if formula_space.editor_surface_state == next_editor_state {
+                return false;
+            }
+            formula_space.editor_surface_state = next_editor_state;
+            true
+        }
+        dnacalc_skin_ir::OneFormulaIntent::ApplyCompletion {
+            formula_space_id,
+            proposal_id,
+        } => with_active_formula_space(state, formula_space_id, |state| {
+            accept_completion_by_proposal_id_on_active_formula_space(state, &proposal_id).is_some()
+        }),
+        dnacalc_skin_ir::OneFormulaIntent::SetNumberFormat {
+            formula_space_id,
+            number_format_code,
+        } => with_active_formula_space(state, formula_space_id, |state| {
+            set_active_number_format_code(state, number_format_code.unwrap_or_default())
+        }),
+        dnacalc_skin_ir::OneFormulaIntent::SetScenarioPolicy {
+            formula_space_id,
+            policy,
+        } => with_active_formula_space(state, formula_space_id, |state| {
+            set_active_scenario_policy(state, skin_scenario_policy_to_host(policy))
+        }),
+        dnacalc_skin_ir::OneFormulaIntent::ToggleFormulaDrill { formula_space_id } => {
+            with_active_formula_space(state, formula_space_id, |state| {
+                let before = active_formula_space_mut(state)
+                    .map(|formula_space| formula_space.formula_drill_open)
+                    .unwrap_or(false);
+                let after = toggle_formula_drill_on_active_formula_space(state);
+                before != after
+            })
+        }
+        dnacalc_skin_ir::OneFormulaIntent::Recalculate { formula_space_id } => {
+            let formula_space_id = crate::domain::ids::FormulaSpaceId::new(formula_space_id);
+            let Some(formula_space) = state.formula_spaces.get_mut(&formula_space_id) else {
+                return false;
+            };
+            formula_space.editor_document = None;
+            formula_space.latest_evaluation_summary = None;
+            formula_space.effective_display_summary = None;
+            true
+        }
+        dnacalc_skin_ir::OneFormulaIntent::RequestResultArrayWindow { .. }
+        | dnacalc_skin_ir::OneFormulaIntent::RequestDrillArrayWindow { .. } => false,
+    }
+}
+
+fn with_active_formula_space(
+    state: &mut OneCalcHostState,
+    formula_space_id: String,
+    f: impl FnOnce(&mut OneCalcHostState) -> bool,
+) -> bool {
+    let formula_space_id = crate::domain::ids::FormulaSpaceId::new(formula_space_id);
+    if !state.formula_spaces.spaces.contains_key(&formula_space_id) {
+        return false;
+    }
+    let previous_workspace_active = state.workspace_shell.active_formula_space_id.clone();
+    let previous_selected = state
+        .active_formula_space_view
+        .selected_formula_space_id
+        .clone();
+    state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+    state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id);
+    let changed = f(state);
+    state.workspace_shell.active_formula_space_id = previous_workspace_active;
+    state.active_formula_space_view.selected_formula_space_id = previous_selected;
+    changed
+}
+
+fn skin_scenario_policy_to_host(
+    policy: dnacalc_skin_ir::ScenarioPolicyProjection,
+) -> crate::persistence::ScenarioPolicy {
+    match policy {
+        dnacalc_skin_ir::ScenarioPolicyProjection::Deterministic => {
+            crate::persistence::ScenarioPolicy::Deterministic
+        }
+        dnacalc_skin_ir::ScenarioPolicyProjection::LiveRecalc => {
+            crate::persistence::ScenarioPolicy::LiveRecalc
+        }
+        dnacalc_skin_ir::ScenarioPolicyProjection::ManualRecalc => {
+            crate::persistence::ScenarioPolicy::ManualRecalc
+        }
+    }
+}
+
 pub fn apply_editor_command_to_active_formula_space(
     state: &mut OneCalcHostState,
     command: EditorCommand,
@@ -2347,5 +2519,122 @@ mod tests {
                 .unwrap()
                 .formula_drill_open
         );
+    }
+
+    #[test]
+    fn skin_one_formula_edit_intent_updates_target_formula_space() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state.formula_spaces.insert(FormulaSpaceState::new(
+            formula_space_id.clone(),
+            "=SUM(1,2)",
+        ));
+
+        let changed = apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::OneFormula(dnacalc_skin_ir::OneFormulaIntent::EditText {
+                formula_space_id: formula_space_id.as_str().to_string(),
+                text: "=SUM(1,2,3)".to_string(),
+                caret_offset: 11,
+            }),
+        );
+
+        assert!(changed);
+        let formula_space = state.formula_spaces.get(&formula_space_id).unwrap();
+        assert_eq!(formula_space.raw_entered_cell_text, "=SUM(1,2,3)");
+        assert_eq!(formula_space.editor_surface_state.caret.offset, 11);
+    }
+
+    #[test]
+    fn skin_one_formula_format_and_policy_intents_update_existing_state() {
+        let formula_space_id = FormulaSpaceId::new("space-1");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(formula_space_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(formula_space_id.clone(), "=NOW()"));
+
+        assert!(apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::OneFormula(
+                dnacalc_skin_ir::OneFormulaIntent::SetNumberFormat {
+                    formula_space_id: formula_space_id.as_str().to_string(),
+                    number_format_code: Some("yyyy-mm-dd".to_string()),
+                },
+            ),
+        ));
+        assert!(apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::OneFormula(
+                dnacalc_skin_ir::OneFormulaIntent::SetScenarioPolicy {
+                    formula_space_id: formula_space_id.as_str().to_string(),
+                    policy: dnacalc_skin_ir::ScenarioPolicyProjection::Deterministic,
+                },
+            ),
+        ));
+
+        let formula_space = state.formula_spaces.get(&formula_space_id).unwrap();
+        assert_eq!(formula_space.formatting.number_format_code, "yyyy-mm-dd");
+        assert_eq!(
+            formula_space.formatting.scenario_policy,
+            crate::persistence::ScenarioPolicy::Deterministic
+        );
+    }
+
+    #[test]
+    fn skin_one_formula_toggle_drill_intent_uses_target_formula_space() {
+        let first_id = FormulaSpaceId::new("space-1");
+        let second_id = FormulaSpaceId::new("space-2");
+        let mut state = OneCalcHostState::default();
+        state.workspace_shell.active_formula_space_id = Some(first_id.clone());
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(first_id.clone(), "=1"));
+        state
+            .formula_spaces
+            .insert(FormulaSpaceState::new(second_id.clone(), "=2"));
+
+        assert!(apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::OneFormula(
+                dnacalc_skin_ir::OneFormulaIntent::ToggleFormulaDrill {
+                    formula_space_id: second_id.as_str().to_string(),
+                },
+            ),
+        ));
+
+        assert!(
+            !state
+                .formula_spaces
+                .get(&first_id)
+                .unwrap()
+                .formula_drill_open
+        );
+        assert!(
+            state
+                .formula_spaces
+                .get(&second_id)
+                .unwrap()
+                .formula_drill_open
+        );
+        assert_eq!(
+            state.workspace_shell.active_formula_space_id.as_ref(),
+            Some(&first_id)
+        );
+    }
+
+    #[test]
+    fn tree_workspace_skin_intent_is_no_op_in_onecalc_host() {
+        let mut state = OneCalcHostState::default();
+
+        let changed = apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::TreeWorkspace(
+                dnacalc_skin_ir::WorkspaceIntent::SelectNode(None),
+            ),
+        );
+
+        assert!(!changed);
     }
 }

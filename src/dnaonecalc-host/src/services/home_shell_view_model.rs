@@ -42,6 +42,10 @@ use crate::ui::editor::state::{EditorEntryMode, EditorSurfaceState};
 // payload) and `f64` does not implement `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HomeShellViewModel {
+    /// Canonical shared DNA Calc skin IR snapshot for the active formula
+    /// surface. The legacy fields below remain while the renderer is migrated,
+    /// but this snapshot is the long-term UX contract shared with TreeCalc.
+    pub skin_snapshot: dnacalc_skin_ir::SkinSnapshot,
     pub raw_entered_cell_text: String,
     pub editor_surface_state: EditorSurfaceState,
     /// Pill rendered above the editor textarea (Formula / Value / Text /
@@ -1416,7 +1420,24 @@ fn project_formula_space(
     let command_palette = project_command_palette(state);
     let manage_formulas = project_manage_formulas(state);
     let vba_host_context = project_vba_host_context(state);
+    let status = project_status_view(formula_space);
+    let skin_snapshot = project_skin_snapshot(
+        formula_space,
+        state,
+        &entry_mode_pill,
+        &syntax_runs,
+        &diagnostic_squiggles,
+        &editor_metrics,
+        completion_popup.as_ref(),
+        signature_help.as_ref(),
+        function_help_card.as_ref(),
+        &result_view,
+        &formatting_controls,
+        &formula_drill,
+        &status,
+    );
     HomeShellViewModel {
+        skin_snapshot,
         raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
         editor_surface_state: formula_space.editor_surface_state.clone(),
         entry_mode_pill,
@@ -1432,7 +1453,7 @@ fn project_formula_space(
         formula_drill,
         view_mode,
         result_view,
-        status: project_status_view(formula_space),
+        status,
         scenario_breadcrumb,
         formula_tab_strip,
         command_palette,
@@ -3051,6 +3072,666 @@ fn project_status_view(formula_space: &FormulaSpaceState) -> StatusView {
     }
 }
 
+fn project_skin_snapshot(
+    formula_space: &FormulaSpaceState,
+    state: &OneCalcHostState,
+    entry_mode_pill: &EntryModePill,
+    syntax_runs: &[SyntaxRun],
+    diagnostic_squiggles: &[DiagnosticSquiggle],
+    editor_metrics: &EditorMetricsChip,
+    completion_popup: Option<&CompletionPopupView>,
+    signature_help: Option<&SignatureHelpView>,
+    function_help_card: Option<&FunctionHelpCardView>,
+    result_view: &ResultView,
+    formatting_controls: &FormattingControlsView,
+    formula_drill: &FormulaDrillView,
+    status: &StatusView,
+) -> dnacalc_skin_ir::SkinSnapshot {
+    let formula_space_id = formula_space.formula_space_id.as_str().to_string();
+    let formula_stable_id = formula_space
+        .editor_document
+        .as_ref()
+        .map(|document| document.editor_syntax_snapshot.formula_stable_id.clone())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| formula_space_id.clone());
+    let display_name = status.scenario_label.clone();
+    let formula = dnacalc_skin_ir::OneFormulaProjection {
+        formula_space_id: formula_space_id.clone(),
+        formula_stable_id,
+        display_name: display_name.clone(),
+        raw_entered_cell_text: formula_space.raw_entered_cell_text.clone(),
+        entry_mode: project_skin_entry_mode(*entry_mode_pill),
+        editor: dnacalc_skin_ir::FormulaEditorSurface {
+            source_text: formula_space.raw_entered_cell_text.clone(),
+            caret_offset: formula_space.editor_surface_state.caret.offset,
+            selection_anchor: formula_space.editor_surface_state.selection.anchor,
+            selection_focus: formula_space.editor_surface_state.selection.focus,
+            syntax_runs: syntax_runs.iter().map(project_skin_syntax_run).collect(),
+            diagnostics: diagnostic_squiggles
+                .iter()
+                .map(project_skin_diagnostic_from_squiggle)
+                .collect(),
+            metrics: dnacalc_skin_ir::EditorMetricsProjection {
+                token_count: editor_metrics.token_count,
+                function_count: editor_metrics.function_count,
+                diagnostic_count: editor_metrics.diagnostic_count,
+                first_diagnostic_message: editor_metrics.first_diagnostic_message.clone(),
+            },
+            document_is_fresh: editor_document_is_fresh(formula_space),
+        },
+        assist: dnacalc_skin_ir::FormulaAssistSurface {
+            completion: completion_popup.map(project_skin_completion),
+            signature_help: signature_help.map(project_skin_signature_help),
+            function_help: function_help_card.map(project_skin_function_help),
+        },
+        result: project_skin_result_surface(formula_space, result_view),
+        comparison: dnacalc_skin_ir::ComparisonSurface::default(),
+        formatting: project_skin_formatting_surface(formatting_controls),
+        drill: project_skin_drill_surface(formula_drill),
+        status: project_skin_status_surface(status),
+    };
+
+    dnacalc_skin_ir::SkinSnapshot::one_formula(
+        dnacalc_skin_ir::SkinShellProjection {
+            host_kind: dnacalc_skin_ir::HostKindProjection::OneCalc,
+            title: display_name,
+            active_document_id: Some(formula_space_id),
+            status_text: Some(
+                match status.bridge_health {
+                    BridgeHealth::Live => "live",
+                    BridgeHealth::Stale => "stale",
+                }
+                .to_string(),
+            ),
+            command_palette_open: state.global_ui_chrome.command_palette_open,
+            persistence: dnacalc_skin_ir::PersistenceProjection {
+                can_save: true,
+                can_open: true,
+                dirty: matches!(
+                    formula_space.live_state(),
+                    crate::ui::editor::state::EditorLiveState::EditingLive
+                        | crate::ui::editor::state::EditorLiveState::ProofedScratch
+                ),
+                current_path: None,
+                recent_documents: state
+                    .workspace_shell
+                    .recent_formula_space_order
+                    .iter()
+                    .map(|id| dnacalc_skin_ir::RecentDocumentProjection {
+                        document_id: id.as_str().to_string(),
+                        display_name: id.as_str().to_string(),
+                        path: None,
+                        last_opened_unix_ms: None,
+                        available: state.formula_spaces.spaces.contains_key(id),
+                    })
+                    .collect(),
+            },
+        },
+        dnacalc_skin_ir::HostCapabilityProjection::onecalc_null_references(
+            if cfg!(target_arch = "wasm32") {
+                dnacalc_skin_ir::RuntimeProfileProjection::BrowserWasm
+            } else if cfg!(target_os = "windows") {
+                dnacalc_skin_ir::RuntimeProfileProjection::WindowsDesktop
+            } else {
+                dnacalc_skin_ir::RuntimeProfileProjection::NativeUnix
+            },
+            dnacalc_skin_ir::ExtensionPlacementProjection::Unavailable,
+        ),
+        formula,
+    )
+}
+
+fn editor_document_is_fresh(formula_space: &FormulaSpaceState) -> bool {
+    formula_space
+        .editor_document
+        .as_ref()
+        .is_some_and(|document| document.source_text == formula_space.raw_entered_cell_text)
+}
+
+fn project_skin_entry_mode(mode: EntryModePill) -> dnacalc_skin_ir::FormulaEntryModeProjection {
+    match mode {
+        EntryModePill::Formula => dnacalc_skin_ir::FormulaEntryModeProjection::Formula,
+        EntryModePill::Value => dnacalc_skin_ir::FormulaEntryModeProjection::Value,
+        EntryModePill::Text => dnacalc_skin_ir::FormulaEntryModeProjection::Text,
+        EntryModePill::Empty => dnacalc_skin_ir::FormulaEntryModeProjection::Empty,
+    }
+}
+
+fn project_skin_syntax_run(run: &SyntaxRun) -> dnacalc_skin_ir::SyntaxRunProjection {
+    dnacalc_skin_ir::SyntaxRunProjection {
+        text: run.text.clone(),
+        span_start: run.span_start,
+        span_len: run.span_len,
+        role: match run.role {
+            SyntaxTokenRole::Operator => dnacalc_skin_ir::SyntaxTokenRoleProjection::Operator,
+            SyntaxTokenRole::Function => dnacalc_skin_ir::SyntaxTokenRoleProjection::Function,
+            SyntaxTokenRole::Number => dnacalc_skin_ir::SyntaxTokenRoleProjection::Number,
+            SyntaxTokenRole::Delimiter => dnacalc_skin_ir::SyntaxTokenRoleProjection::Delimiter,
+            SyntaxTokenRole::Identifier => dnacalc_skin_ir::SyntaxTokenRoleProjection::Identifier,
+            SyntaxTokenRole::Text => dnacalc_skin_ir::SyntaxTokenRoleProjection::Text,
+            SyntaxTokenRole::Trivia => dnacalc_skin_ir::SyntaxTokenRoleProjection::Trivia,
+        },
+    }
+}
+
+fn project_skin_diagnostic_from_squiggle(
+    diagnostic: &DiagnosticSquiggle,
+) -> dnacalc_skin_ir::FormulaDiagnosticProjection {
+    dnacalc_skin_ir::FormulaDiagnosticProjection {
+        diagnostic_id: diagnostic.diagnostic_id.clone(),
+        severity: project_skin_severity(diagnostic.severity),
+        stage: project_skin_stage(diagnostic.stage),
+        code: diagnostic.code.clone(),
+        worksheet_error_class: diagnostic.worksheet_error_class.clone(),
+        message: diagnostic.message.clone(),
+        span_start: diagnostic.span_start,
+        span_len: diagnostic.span_len,
+    }
+}
+
+fn project_skin_diagnostic_from_drill(
+    diagnostic: &FormulaDrillDiagnosticRow,
+) -> dnacalc_skin_ir::FormulaDiagnosticProjection {
+    dnacalc_skin_ir::FormulaDiagnosticProjection {
+        diagnostic_id: diagnostic.diagnostic_id.clone(),
+        severity: project_skin_severity(diagnostic.severity),
+        stage: project_skin_stage(diagnostic.stage),
+        code: diagnostic.code.clone(),
+        worksheet_error_class: None,
+        message: diagnostic.message.clone(),
+        span_start: diagnostic.span_start,
+        span_len: diagnostic.span_len,
+    }
+}
+
+fn project_skin_severity(
+    severity: SquiggleSeverity,
+) -> dnacalc_skin_ir::DiagnosticSeverityProjection {
+    match severity {
+        SquiggleSeverity::Error => dnacalc_skin_ir::DiagnosticSeverityProjection::Error,
+        SquiggleSeverity::Warning => dnacalc_skin_ir::DiagnosticSeverityProjection::Warning,
+        SquiggleSeverity::Info => dnacalc_skin_ir::DiagnosticSeverityProjection::Info,
+    }
+}
+
+fn project_skin_stage(stage: DiagnosticStage) -> dnacalc_skin_ir::DiagnosticStageProjection {
+    match stage {
+        DiagnosticStage::Syntax => dnacalc_skin_ir::DiagnosticStageProjection::Syntax,
+        DiagnosticStage::Bind => dnacalc_skin_ir::DiagnosticStageProjection::Bind,
+        DiagnosticStage::SemanticPlan => dnacalc_skin_ir::DiagnosticStageProjection::SemanticPlan,
+    }
+}
+
+fn project_skin_completion(view: &CompletionPopupView) -> dnacalc_skin_ir::CompletionSurface {
+    dnacalc_skin_ir::CompletionSurface {
+        anchor_left_px: view.anchor_left_px,
+        anchor_top_px: view.anchor_top_px,
+        line_height_px: view.line_height_px,
+        selected_index: view.selected_index,
+        items: view
+            .items
+            .iter()
+            .map(|item| dnacalc_skin_ir::CompletionItemProjection {
+                proposal_id: item.proposal_id.clone(),
+                display_text: item.display_text.clone(),
+                kind: project_skin_completion_kind(item.kind_label),
+                documentation_ref: item.documentation_ref.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn project_skin_completion_kind(label: &str) -> dnacalc_skin_ir::CompletionKindProjection {
+    match label {
+        "Function" => dnacalc_skin_ir::CompletionKindProjection::Function,
+        "Defined name" => dnacalc_skin_ir::CompletionKindProjection::DefinedName,
+        "Table" => dnacalc_skin_ir::CompletionKindProjection::TableName,
+        "Column" => dnacalc_skin_ir::CompletionKindProjection::TableColumn,
+        "Selector" => dnacalc_skin_ir::CompletionKindProjection::StructuredSelector,
+        "Reference" => dnacalc_skin_ir::CompletionKindProjection::ProfileReference,
+        _ => dnacalc_skin_ir::CompletionKindProjection::SyntaxAssist,
+    }
+}
+
+fn project_skin_signature_help(view: &SignatureHelpView) -> dnacalc_skin_ir::SignatureHelpSurface {
+    dnacalc_skin_ir::SignatureHelpSurface {
+        callee_text: view.callee_text.clone(),
+        anchor_left_px: view.anchor_left_px,
+        anchor_top_px: view.anchor_top_px,
+        line_height_px: view.line_height_px,
+        parameters: view
+            .parameters
+            .iter()
+            .map(
+                |parameter| dnacalc_skin_ir::SignatureHelpParameterProjection {
+                    name: parameter.name.clone(),
+                    is_active: parameter.is_active,
+                },
+            )
+            .collect(),
+        active_parameter: view.active_parameter,
+    }
+}
+
+fn project_skin_function_help(view: &FunctionHelpCardView) -> dnacalc_skin_ir::FunctionHelpSurface {
+    dnacalc_skin_ir::FunctionHelpSurface {
+        lookup_key: view.lookup_key.clone(),
+        display_name: view.display_name.clone(),
+        signature: view.signature.clone(),
+        short_description: view.short_description.clone(),
+        availability_summary: view.availability_summary.clone(),
+        deferred_or_profile_limited: view.deferred_or_profile_limited,
+    }
+}
+
+fn project_skin_result_surface(
+    formula_space: &FormulaSpaceState,
+    view: &ResultView,
+) -> dnacalc_skin_ir::FormulaResultSurface {
+    match view {
+        ResultView::Empty => dnacalc_skin_ir::FormulaResultSurface::Empty,
+        ResultView::Pending => dnacalc_skin_ir::FormulaResultSurface::Pending,
+        ResultView::Error { code, surface_repr } => dnacalc_skin_ir::FormulaResultSurface::Error {
+            code: code.clone(),
+            surface_repr: surface_repr.clone(),
+        },
+        ResultView::Display {
+            text,
+            kind,
+            applied_font_color,
+            applied_fill_color,
+        } => dnacalc_skin_ir::FormulaResultSurface::Display {
+            text: text.clone(),
+            value: bridge_published_value(formula_space)
+                .map(|value| project_skin_calc_value(value, text.clone()))
+                .unwrap_or_else(|| project_skin_display_value(*kind, text.clone())),
+            applied_font_color: applied_font_color.clone(),
+            applied_fill_color: applied_fill_color.clone(),
+        },
+        ResultView::Array {
+            total_rows,
+            total_cols,
+            label,
+            cells,
+            cell_format,
+            truncated,
+        } => dnacalc_skin_ir::FormulaResultSurface::Array {
+            total_rows: *total_rows,
+            total_cols: *total_cols,
+            label: label.clone(),
+            window: project_skin_array_window(
+                *total_rows,
+                *total_cols,
+                cells,
+                cell_format.as_ref(),
+            ),
+            truncated: *truncated,
+        },
+    }
+}
+
+fn project_skin_display_value(
+    kind: ResultKind,
+    display_text: String,
+) -> dnacalc_skin_ir::CalcValueProjection {
+    let core = match kind {
+        ResultKind::Number => dnacalc_skin_ir::CoreValueProjection::Number {
+            raw: display_text.clone(),
+        },
+        ResultKind::Text => dnacalc_skin_ir::CoreValueProjection::Text {
+            text: display_text.clone(),
+        },
+        ResultKind::Logical => dnacalc_skin_ir::CoreValueProjection::Logical {
+            value: display_text.eq_ignore_ascii_case("true"),
+        },
+        ResultKind::RichValue => dnacalc_skin_ir::CoreValueProjection::RichValue {
+            summary: display_text.clone(),
+        },
+        ResultKind::Other => dnacalc_skin_ir::CoreValueProjection::Other {
+            summary: display_text.clone(),
+        },
+    };
+    dnacalc_skin_ir::CalcValueProjection {
+        core,
+        display_text,
+        presentation_hint: None,
+        rich_value_kind: None,
+        callable: false,
+    }
+}
+
+fn project_skin_calc_value(
+    value: &CalcValue,
+    display_text: String,
+) -> dnacalc_skin_ir::CalcValueProjection {
+    let mut projected = dnacalc_formula_ux_core::project_calc_value(value);
+    // Effective display is host policy (number format and conditional-format
+    // context); the typed value/presentation projection remains shared.
+    projected.display_text = display_text;
+    projected
+}
+
+fn project_skin_array_window(
+    total_rows: usize,
+    total_cols: usize,
+    cells: &[Vec<String>],
+    cell_format: Option<&Vec<Vec<ArrayCellFormatView>>>,
+) -> dnacalc_skin_ir::ArrayWindowProjection {
+    dnacalc_skin_ir::ArrayWindowProjection {
+        total_rows,
+        total_cols,
+        row_offset: 0,
+        col_offset: 0,
+        cells: cells
+            .iter()
+            .enumerate()
+            .map(|(row_index, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(
+                        |(col_index, display_text)| dnacalc_skin_ir::ArrayWindowCellProjection {
+                            display_text: display_text.clone(),
+                            value: Some(dnacalc_skin_ir::CalcValueProjection {
+                                core: dnacalc_skin_ir::CoreValueProjection::Text {
+                                    text: display_text.clone(),
+                                },
+                                display_text: display_text.clone(),
+                                presentation_hint: None,
+                                rich_value_kind: None,
+                                callable: false,
+                            }),
+                            format: cell_format
+                                .and_then(|grid| grid.get(row_index))
+                                .and_then(|row| row.get(col_index))
+                                .map(project_skin_array_cell_format),
+                        },
+                    )
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+fn project_skin_array_cell_format(
+    format: &ArrayCellFormatView,
+) -> dnacalc_skin_ir::ArrayCellFormatProjection {
+    dnacalc_skin_ir::ArrayCellFormatProjection {
+        effective_font_color: format.effective_font_color.clone(),
+        effective_fill_color: format.effective_fill_color.clone(),
+        data_bar: format
+            .data_bar
+            .as_ref()
+            .map(|bar| dnacalc_skin_ir::DataBarFillProjection {
+                fill_ratio: bar.fill_ratio,
+                bar_color: bar.bar_color.clone(),
+                direction: match bar.direction {
+                    DataBarDirectionView::Left => dnacalc_skin_ir::DataBarDirectionProjection::Left,
+                    DataBarDirectionView::Right => {
+                        dnacalc_skin_ir::DataBarDirectionProjection::Right
+                    }
+                },
+                show_bar_only: bar.show_bar_only,
+            }),
+        icon: format
+            .icon
+            .as_ref()
+            .map(|icon| dnacalc_skin_ir::CfIconProjection {
+                set_kind: icon.set_kind.clone(),
+                icon_index: icon.icon_index,
+            }),
+    }
+}
+
+fn project_skin_formatting_surface(
+    view: &FormattingControlsView,
+) -> dnacalc_skin_ir::FormattingSurface {
+    dnacalc_skin_ir::FormattingSurface {
+        number_format_code: non_empty_string(view.number_format_code.clone()),
+        font_color: non_empty_string(view.font_color.clone()),
+        fill_color: non_empty_string(view.fill_color.clone()),
+        date1904: view.date1904,
+        locale_language_tag: view.locale_language_tag.clone(),
+        scenario_policy: match view.scenario_policy {
+            ScenarioPolicyView::Deterministic => {
+                dnacalc_skin_ir::ScenarioPolicyProjection::Deterministic
+            }
+            ScenarioPolicyView::LiveRecalc => dnacalc_skin_ir::ScenarioPolicyProjection::LiveRecalc,
+            ScenarioPolicyView::ManualRecalc => {
+                dnacalc_skin_ir::ScenarioPolicyProjection::ManualRecalc
+            }
+        },
+        conditional_formatting_rules: view
+            .conditional_formatting_rules
+            .iter()
+            .map(project_skin_cf_rule)
+            .collect(),
+    }
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
+fn project_skin_cf_rule(
+    rule: &ConditionalFormattingRuleView,
+) -> dnacalc_skin_ir::ConditionalFormattingRuleProjection {
+    dnacalc_skin_ir::ConditionalFormattingRuleProjection {
+        operator: rule.operator.clone(),
+        thresholds: rule
+            .thresholds
+            .iter()
+            .cloned()
+            .map(dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Text)
+            .collect(),
+        font_color: rule.font_color.clone(),
+        fill_color: rule.fill_color.clone(),
+        typed_rule: rule
+            .typed_rule
+            .as_ref()
+            .and_then(project_skin_cf_typed_rule),
+    }
+}
+
+fn project_skin_cf_typed_rule(
+    rule: &crate::state::FormulaConditionalFormattingTypedRule,
+) -> Option<dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection> {
+    if let Some(options) = &rule.color_scale {
+        return Some(
+            dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection::ColorScale(
+                dnacalc_skin_ir::ColorScaleRuleProjection {
+                    stops: options
+                        .stops
+                        .iter()
+                        .map(|stop| dnacalc_skin_ir::ColorScaleStopProjection {
+                            position: project_skin_cf_threshold(&stop.position),
+                            color: stop.color.clone(),
+                        })
+                        .collect(),
+                },
+            ),
+        );
+    }
+    if let Some(options) = &rule.data_bar {
+        return Some(
+            dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection::DataBar(
+                dnacalc_skin_ir::DataBarRuleProjection {
+                    minimum: options.minimum.as_ref().map(project_skin_cf_threshold),
+                    maximum: options.maximum.as_ref().map(project_skin_cf_threshold),
+                    bar_color: options.bar_color.clone(),
+                    direction: options.direction.map(|direction| match direction {
+                        crate::state::FormulaDataBarDirection::Left => {
+                            dnacalc_skin_ir::DataBarDirectionProjection::Left
+                        }
+                        crate::state::FormulaDataBarDirection::Right => {
+                            dnacalc_skin_ir::DataBarDirectionProjection::Right
+                        }
+                    }),
+                    show_bar_only: options.show_bar_only,
+                },
+            ),
+        );
+    }
+    if let Some(options) = &rule.icon_set {
+        return Some(
+            dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection::IconSet(
+                dnacalc_skin_ir::IconSetRuleProjection {
+                    set_kind: options.set_kind.clone(),
+                    thresholds: options
+                        .thresholds
+                        .iter()
+                        .map(project_skin_cf_threshold)
+                        .collect(),
+                },
+            ),
+        );
+    }
+    if let Some(options) = &rule.rank {
+        return Some(
+            dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection::Rank(match options.rank {
+                crate::state::FormulaConditionalFormattingRank::Count(count) => {
+                    dnacalc_skin_ir::RankRuleProjection::Count(count)
+                }
+                crate::state::FormulaConditionalFormattingRank::Percent(percent) => {
+                    dnacalc_skin_ir::RankRuleProjection::Percent(percent)
+                }
+            }),
+        );
+    }
+    rule.average.as_ref().map(|options| {
+        dnacalc_skin_ir::ConditionalFormattingTypedRuleProjection::Average(
+            dnacalc_skin_ir::AverageRuleProjection {
+                include_equal: options.include_equal,
+                stddev_multiplier: options.stddev_multiplier,
+            },
+        )
+    })
+}
+
+fn project_skin_cf_threshold(
+    threshold: &crate::state::FormulaConditionalFormattingThreshold,
+) -> dnacalc_skin_ir::ConditionalFormattingThresholdProjection {
+    match threshold {
+        crate::state::FormulaConditionalFormattingThreshold::Min => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Min
+        }
+        crate::state::FormulaConditionalFormattingThreshold::Mid => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Mid
+        }
+        crate::state::FormulaConditionalFormattingThreshold::Max => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Max
+        }
+        crate::state::FormulaConditionalFormattingThreshold::Percent(value) => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Percent(*value)
+        }
+        crate::state::FormulaConditionalFormattingThreshold::Percentile(value) => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Percentile(*value)
+        }
+        crate::state::FormulaConditionalFormattingThreshold::Number(value) => {
+            dnacalc_skin_ir::ConditionalFormattingThresholdProjection::Number(*value)
+        }
+    }
+}
+
+fn project_skin_drill_surface(view: &FormulaDrillView) -> dnacalc_skin_ir::FormulaDrillSurface {
+    dnacalc_skin_ir::FormulaDrillSurface {
+        expanded: view.expanded,
+        tree: view.tree.iter().map(project_skin_drill_node).collect(),
+        diagnostics: view
+            .diagnostics
+            .iter()
+            .map(project_skin_diagnostic_from_drill)
+            .collect(),
+        phase_summaries: view
+            .phase_summaries
+            .iter()
+            .map(|phase| dnacalc_skin_ir::FormulaDrillPhaseProjection {
+                label: phase.label.to_string(),
+                detail: phase.detail.clone(),
+                state: match phase.state {
+                    FormulaDrillPhaseState::Ok => {
+                        dnacalc_skin_ir::FormulaDrillPhaseStateProjection::Ok
+                    }
+                    FormulaDrillPhaseState::Pending => {
+                        dnacalc_skin_ir::FormulaDrillPhaseStateProjection::Pending
+                    }
+                    FormulaDrillPhaseState::Blocked => {
+                        dnacalc_skin_ir::FormulaDrillPhaseStateProjection::Blocked
+                    }
+                },
+            })
+            .collect(),
+        document_is_fresh: view.document_is_fresh,
+    }
+}
+
+fn project_skin_drill_node(node: &FormulaDrillNode) -> dnacalc_skin_ir::FormulaDrillNodeProjection {
+    dnacalc_skin_ir::FormulaDrillNodeProjection {
+        node_id: node.node_id.clone(),
+        label: node.label.clone(),
+        developer_label: node.developer_label.clone(),
+        expression_text: node.expression_text.clone(),
+        kind: node.kind.clone(),
+        source_span_start: node.source_span_start,
+        source_span_len: node.source_span_len,
+        branch_disposition: node.branch_disposition.clone(),
+        argument_name: node.argument_name.clone(),
+        argument_role: node.argument_role.clone(),
+        error_message: node.error_message.clone(),
+        value_preview: node.value_preview.clone(),
+        array_preview: node.array_preview.as_ref().map(|preview| {
+            dnacalc_skin_ir::ArrayPreviewProjection {
+                row_offset: 0,
+                col_offset: 0,
+                total_rows: preview.total_rows,
+                total_cols: preview.total_cols,
+                rows: preview.rows.clone(),
+                truncated: preview.truncated,
+            }
+        }),
+        state: match node.state {
+            crate::adapters::oxfml::FormulaDrillNodeState::Pending => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Pending
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Evaluated => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Evaluated
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Bound => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Bound
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Skipped => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Skipped
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Opaque => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Opaque
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Blocked => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Blocked
+            }
+            crate::adapters::oxfml::FormulaDrillNodeState::Error => {
+                dnacalc_skin_ir::FormulaDrillNodeStateProjection::Error
+            }
+        },
+        children: node.children.iter().map(project_skin_drill_node).collect(),
+    }
+}
+
+fn project_skin_status_surface(status: &StatusView) -> dnacalc_skin_ir::FormulaStatusSurface {
+    dnacalc_skin_ir::FormulaStatusSurface {
+        bridge_health: match status.bridge_health {
+            BridgeHealth::Live => dnacalc_skin_ir::BridgeHealthProjection::Live,
+            BridgeHealth::Stale => dnacalc_skin_ir::BridgeHealthProjection::Stale,
+        },
+        truth_source: status.truth_source.label().to_string(),
+        green_tree_key: status.green_tree_key.clone(),
+        scenario_label: status.scenario_label.clone(),
+        load_diagnostics: status
+            .load_diagnostics
+            .iter()
+            .map(|diagnostic| format!("{diagnostic:?}"))
+            .collect(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -3208,6 +3889,48 @@ mod tests {
     }
 
     #[test]
+    fn happy_sum_projects_to_shared_one_formula_skin_snapshot() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,2)");
+        let mut document = sample_editor_document("=SUM(1,2)");
+        attach_number_value_presentation(&mut document, 3.0, "3");
+        formula_space.editor_document = Some(document);
+        formula_space.effective_display_summary = Some("3".to_string());
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+
+        assert_eq!(
+            vm.skin_snapshot.host_capabilities.references,
+            dnacalc_skin_ir::ReferenceCapabilityProjection::Absent
+        );
+        match &vm.skin_snapshot.document {
+            dnacalc_skin_ir::SkinDocumentProjection::OneFormula(formula) => {
+                assert_eq!(formula.raw_entered_cell_text, "=SUM(1,2)");
+                assert_eq!(
+                    formula.entry_mode,
+                    dnacalc_skin_ir::FormulaEntryModeProjection::Formula
+                );
+                match &formula.result {
+                    dnacalc_skin_ir::FormulaResultSurface::Display { text, value, .. } => {
+                        assert_eq!(text, "3");
+                        assert!(matches!(
+                            value.core,
+                            dnacalc_skin_ir::CoreValueProjection::Number { .. }
+                        ));
+                    }
+                    other => panic!("expected shared display result, got {other:?}"),
+                }
+            }
+            other => panic!("expected OneFormula snapshot, got {other:?}"),
+        }
+
+        let json = serde_json::to_string(&vm.skin_snapshot).expect("serialize skin snapshot");
+        let restored: dnacalc_skin_ir::SkinSnapshot =
+            serde_json::from_str(&json).expect("deserialize skin snapshot");
+        assert_eq!(restored, vm.skin_snapshot);
+    }
+
+    #[test]
     fn diagnostic_in_editor_document_projects_to_result_view_error() {
         let mut formula_space =
             FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SUM(1,)");
@@ -3302,6 +4025,42 @@ mod tests {
                 assert!(cell_format.is_none(), "no CF rules → no per-cell carrier");
             }
             other => panic!("expected Array(2 × 3), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_preview_projects_to_shared_skin_array_window() {
+        let mut formula_space =
+            FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SEQUENCE(2,3)");
+        formula_space.editor_document = Some(array_editor_document("=SEQUENCE(2,3)"));
+        formula_space.array_preview = Some(FormulaArrayPreviewState {
+            label: "Array[2 × 3]".to_string(),
+            rows: vec![
+                vec!["1".to_string(), "2".to_string(), "3".to_string()],
+                vec!["4".to_string(), "5".to_string(), "6".to_string()],
+            ],
+            truncated: false,
+        });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+
+        match &vm.skin_snapshot.document {
+            dnacalc_skin_ir::SkinDocumentProjection::OneFormula(formula) => match &formula.result {
+                dnacalc_skin_ir::FormulaResultSurface::Array {
+                    total_rows,
+                    total_cols,
+                    window,
+                    truncated,
+                    ..
+                } => {
+                    assert_eq!((*total_rows, *total_cols), (2, 3));
+                    assert_eq!((window.total_rows, window.total_cols), (2, 3));
+                    assert_eq!(window.cells[0][0].display_text, "1");
+                    assert!(!truncated);
+                }
+                other => panic!("expected shared array result, got {other:?}"),
+            },
+            other => panic!("expected OneFormula snapshot, got {other:?}"),
         }
     }
 
@@ -3759,6 +4518,38 @@ mod tests {
         assert_eq!(popup.line_height_px, 22);
         assert_eq!(popup.items.len(), 2);
         assert_eq!(popup.selected_index, 1);
+    }
+
+    #[test]
+    fn completion_popup_projects_to_shared_formula_assist_surface() {
+        let mut formula_space = FormulaSpaceState::new(FormulaSpaceId::new("untitled-1"), "=SU");
+        formula_space.completion_popup = open_popup_state();
+        formula_space.editor_box_metrics =
+            Some(crate::ui::editor::geometry::TextareaMeasurementMetrics {
+                char_width_px: 9,
+                line_height_px: 22,
+                scroll_top_px: 0,
+                scroll_left_px: 0,
+            });
+        let state = host_state_with(formula_space);
+        let vm = build_home_shell_view_model(&state).expect("active formula space");
+
+        match &vm.skin_snapshot.document {
+            dnacalc_skin_ir::SkinDocumentProjection::OneFormula(formula) => {
+                let completion = formula
+                    .assist
+                    .completion
+                    .as_ref()
+                    .expect("shared completion surface");
+                assert_eq!(completion.selected_index, 1);
+                assert_eq!(completion.items[0].display_text, "SUM");
+                assert_eq!(
+                    completion.items[0].kind,
+                    dnacalc_skin_ir::CompletionKindProjection::Function
+                );
+            }
+            other => panic!("expected OneFormula snapshot, got {other:?}"),
+        }
     }
 
     #[test]

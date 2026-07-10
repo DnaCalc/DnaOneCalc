@@ -517,6 +517,34 @@ pub fn HomeShell(
             .map(|vm| vm.view_mode)
             .unwrap_or(ViewMode::User)
     };
+    let skin_schema = move || {
+        view_model
+            .get()
+            .map(|vm| vm.skin_snapshot.schema_id)
+            .unwrap_or_else(|| "dnacalc.skin_ir.none".to_string())
+    };
+    let skin_document_kind = move || {
+        view_model
+            .get()
+            .map(|vm| match vm.skin_snapshot.document {
+                dnacalc_skin_ir::SkinDocumentProjection::OneFormula(_) => "one_formula",
+                dnacalc_skin_ir::SkinDocumentProjection::TreeWorkspace(_) => "tree_workspace",
+            })
+            .unwrap_or("none")
+    };
+    let skin_reference_capability = move || {
+        view_model
+            .get()
+            .map(|vm| match vm.skin_snapshot.host_capabilities.references {
+                dnacalc_skin_ir::ReferenceCapabilityProjection::Absent => "absent",
+                dnacalc_skin_ir::ReferenceCapabilityProjection::TreeWorkspace => "tree_workspace",
+                dnacalc_skin_ir::ReferenceCapabilityProjection::ExternalProvider => {
+                    "external_provider"
+                }
+                dnacalc_skin_ir::ReferenceCapabilityProjection::Unsupported => "unsupported",
+            })
+            .unwrap_or("none")
+    };
 
     // Trigger row callback shared between the editor-foot toggle
     // and the keyboard chord — both routes through the same
@@ -1240,6 +1268,9 @@ pub fn HomeShell(
         <div
             class="onecalc-home-shell"
             data-view-mode=move || view_mode().slug()
+            data-skin-schema=skin_schema
+            data-skin-document-kind=skin_document_kind
+            data-skin-reference-capability=skin_reference_capability
             on:keydown=move |ev: WebKeyboardEvent| {
                 if ev.key() == "Escape"
                     && state.with_untracked(|s| s.global_ui_chrome.scenario_breadcrumb_open)

@@ -992,6 +992,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dnacalc-formula-ux-core"
+version = "0.1.0"
+dependencies = [
+ "dnacalc-skin-ir",
+ "oxfml_core",
+ "oxfunc_core",
+]
+
+[[package]]
+name = "dnacalc-skin-ir"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dnaonecalc-desktop"
 version = "0.1.0"
 dependencies = [
@@ -1007,6 +1025,8 @@ dependencies = [
 name = "dnaonecalc-host"
 version = "0.1.0"
 dependencies = [
+ "dnacalc-formula-ux-core",
+ "dnacalc-skin-ir",
  "js-sys",
  "leptos",
  "oxfml_core",
