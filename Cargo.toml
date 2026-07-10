@@ -1,4 +1,3 @@
 [workspace]
-members = ["src/dnaonecalc-host", "src/dnaonecalc-desktop"]
+members = ["src/dnaonecalc-core", "src/dnaonecalc-host", "src/dnaonecalc-desktop"]
 resolver = "2"
-

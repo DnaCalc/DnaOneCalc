@@ -20,6 +20,7 @@ oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core" }
 dnacalc-skin-ir = { path = "../../../DnaTreeCalc/src/dnacalc-skin-ir" }
 dnacalc-formula-ux-core = { path = "../../../DnaTreeCalc/src/dnacalc-formula-ux-core" }
 dnacalc-extension-host-core = { path = "../../../DnaTreeCalc/src/dnacalc-extension-host-core" }
+dnaonecalc-core = { path = "../dnaonecalc-core" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 leptos = { version = "0.8.17", default-features = false, features = ["ssr"] }
