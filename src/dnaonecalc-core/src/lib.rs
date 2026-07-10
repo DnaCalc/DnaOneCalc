@@ -7,16 +7,24 @@ pub use dnacalc_skin_ir::{
 
 pub trait OneCalcSessionHost {
     fn snapshot(&self) -> SkinSnapshot;
-    fn dispatch(&mut self, intent: SkinIntent) -> bool;
+    fn dispatch(&mut self, intent: SkinIntent) -> DispatchOutcome;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    Applied,
+    NoChange,
+    Rejected(SkinIntentDiagnostic),
 }
 
 pub struct OneCalcSession<H> {
     host: H,
+    revision: u64,
 }
 
 impl<H: OneCalcSessionHost> OneCalcSession<H> {
     pub fn new(host: H) -> Self {
-        Self { host }
+        Self { host, revision: 0 }
     }
 
     pub fn snapshot(&self) -> SkinSnapshot {
@@ -35,20 +43,26 @@ impl<H: OneCalcSessionHost> OneCalcSession<H> {
             };
         }
         let intent_id = envelope.intent_id;
-        if self.host.dispatch(envelope.intent) {
-            SkinIntentReceipt::Applied {
-                intent_id,
-                snapshot_revision: 0,
+        match self.host.dispatch(envelope.intent) {
+            DispatchOutcome::Applied => {
+                self.revision = self.revision.saturating_add(1);
+                SkinIntentReceipt::Applied {
+                    intent_id,
+                    snapshot_revision: self.revision,
+                }
             }
-        } else {
-            SkinIntentReceipt::Rejected {
+            DispatchOutcome::NoChange => SkinIntentReceipt::Rejected {
                 intent_id,
                 diagnostic: SkinIntentDiagnostic {
                     code: "no_change".into(),
                     message: "intent produced no state change".into(),
                     recoverable: true,
                 },
-            }
+            },
+            DispatchOutcome::Rejected(diagnostic) => SkinIntentReceipt::Rejected {
+                intent_id,
+                diagnostic,
+            },
         }
     }
 

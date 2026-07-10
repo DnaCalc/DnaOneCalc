@@ -7,8 +7,24 @@ impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
             .skin_snapshot
     }
 
-    fn dispatch(&mut self, intent: dnacalc_skin_ir::SkinIntent) -> bool {
-        crate::app::reducer::apply_skin_intent_to_host_state(self, intent)
+    fn dispatch(
+        &mut self,
+        intent: dnacalc_skin_ir::SkinIntent,
+    ) -> dnaonecalc_core::DispatchOutcome {
+        if matches!(intent, dnacalc_skin_ir::SkinIntent::TreeWorkspace(_)) {
+            return dnaonecalc_core::DispatchOutcome::Rejected(
+                dnacalc_skin_ir::SkinIntentDiagnostic {
+                    code: "tree_workspace_unsupported".into(),
+                    message: "OneCalc has no tree workspace surface".into(),
+                    recoverable: false,
+                },
+            );
+        }
+        if crate::app::reducer::apply_skin_intent_to_host_state(self, intent) {
+            dnaonecalc_core::DispatchOutcome::Applied
+        } else {
+            dnaonecalc_core::DispatchOutcome::NoChange
+        }
     }
 }
 
@@ -40,8 +56,16 @@ mod tests {
             serde_json::from_str(&receipt_json).unwrap();
         assert!(matches!(
             receipt,
-            dnacalc_skin_ir::SkinIntentReceipt::Applied { .. }
+            dnacalc_skin_ir::SkinIntentReceipt::Applied {
+                snapshot_revision: 1,
+                ..
+            }
         ));
-        assert_eq!(session.snapshot().document, session.snapshot().document);
+        match session.snapshot().document {
+            dnacalc_skin_ir::SkinDocumentProjection::OneFormula(formula) => {
+                assert_eq!(formula.raw_entered_cell_text, "=SUM(1,2,3)")
+            }
+            _ => panic!("expected OneFormula snapshot"),
+        }
     }
 }
