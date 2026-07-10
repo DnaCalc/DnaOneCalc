@@ -158,3 +158,21 @@ DnaOneCalc will then commit its Skin IR adoption, remove local semantic
 projections, split its host core, adopt the shared extension core, and delete
 the deferred pseudo-OxVba structures. Do not close this handoff until the
 shared commits and their acceptance commands are recorded.
+
+## Downstream Validation Before Handoff Landing
+
+Using the current uncommitted TreeCalc Skin IR files, the pending OneCalc
+consumer changes pass:
+
+1. `cargo check -p dnaonecalc-host`,
+2. `cargo test -p dnaonecalc-host --lib` (`417` passed),
+3. `cargo test -p dnaonecalc-host --test scenarios` (`19` passed),
+4. `cargo check -p dnaonecalc-host --target wasm32-unknown-unknown`,
+5. package-name dependency guard: `dnacalc-skin-ir`, `oxfml_core`, and
+   `oxfunc_core` present; `oxcalc*`, `oxdoc*`, `oxvba*`, `dnatreecalc-*`, and
+   `dnacalc-host-core` absent.
+
+These results prove the current API shape is consumable, but they do not make
+the OneCalc change commit-safe: a clean checkout of the recorded TreeCalc
+baseline does not contain the untracked shared protocol modules. OneCalc bead
+`dno-yjk.14` therefore remains blocked by cross-repo gate `dno-uh9y.5`.
