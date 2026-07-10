@@ -21,6 +21,60 @@ impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
                 },
             );
         }
+        if let dnacalc_skin_ir::SkinIntent::OneFormula(formula_intent) = &intent {
+            let formula_space_id = match formula_intent {
+                dnacalc_skin_ir::OneFormulaIntent::EditText {
+                    formula_space_id, ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::SetSelection {
+                    formula_space_id, ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::ApplyCompletion {
+                    formula_space_id, ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::SetNumberFormat {
+                    formula_space_id, ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::SetScenarioPolicy {
+                    formula_space_id, ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::ToggleFormulaDrill { formula_space_id }
+                | dnacalc_skin_ir::OneFormulaIntent::Recalculate { formula_space_id }
+                | dnacalc_skin_ir::OneFormulaIntent::RequestResultArrayWindow {
+                    formula_space_id,
+                    ..
+                }
+                | dnacalc_skin_ir::OneFormulaIntent::RequestDrillArrayWindow {
+                    formula_space_id,
+                    ..
+                } => formula_space_id,
+            };
+            let id = crate::domain::ids::FormulaSpaceId::new(formula_space_id.clone());
+            if !self.formula_spaces.spaces.contains_key(&id) {
+                return dnaonecalc_core::DispatchOutcome::Rejected(
+                    dnacalc_skin_ir::SkinIntentDiagnostic {
+                        code: "unknown_formula_space".into(),
+                        message: format!("unknown formula space `{formula_space_id}`"),
+                        recoverable: true,
+                    },
+                );
+            }
+            if matches!(
+                formula_intent,
+                dnacalc_skin_ir::OneFormulaIntent::RequestResultArrayWindow { .. }
+                    | dnacalc_skin_ir::OneFormulaIntent::RequestDrillArrayWindow { .. }
+            ) {
+                return dnaonecalc_core::DispatchOutcome::Rejected(
+                    dnacalc_skin_ir::SkinIntentDiagnostic {
+                        code: "array_window_adapter_unavailable".into(),
+                        message:
+                            "bounded array-window transport is not attached in this host adapter"
+                                .into(),
+                        recoverable: true,
+                    },
+                );
+            }
+        }
         if let dnacalc_skin_ir::SkinIntent::Shell(shell) = &intent {
             match shell {
                 dnacalc_skin_ir::SkinShellIntent::Save => {
@@ -197,5 +251,70 @@ mod tests {
                 .as_deref(),
             Some(path_text.as_str())
         );
+    }
+
+    #[test]
+    fn all_six_profiles_execute_the_same_serialized_session_contract() {
+        let targets = [
+            dnaonecalc_core::RuntimeTarget::BrowserWasm,
+            dnaonecalc_core::RuntimeTarget::HostedWeb,
+            dnaonecalc_core::RuntimeTarget::WindowsDesktop,
+            dnaonecalc_core::RuntimeTarget::WindowsHeadless,
+            dnaonecalc_core::RuntimeTarget::NativeUnix,
+            dnaonecalc_core::RuntimeTarget::NullTest,
+        ];
+        for target in targets {
+            let state = crate::app::preview_state::preview_minimal_host_state();
+            let id = state
+                .workspace_shell
+                .active_formula_space_id
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .to_string();
+            let mut session = dnaonecalc_core::ProfiledSession::new(target, state);
+            let json = serde_json::to_string(&dnacalc_skin_ir::SkinIntentEnvelope::new(
+                format!("edit-{target:?}"),
+                None,
+                dnacalc_skin_ir::SkinIntent::OneFormula(
+                    dnacalc_skin_ir::OneFormulaIntent::EditText {
+                        formula_space_id: id,
+                        text: "=SUM(4,5)".into(),
+                        caret_offset: 9,
+                    },
+                ),
+            ))
+            .unwrap();
+            let receipt: dnacalc_skin_ir::SkinIntentReceipt =
+                serde_json::from_str(&session.handle_json(&json).unwrap()).unwrap();
+            assert!(matches!(
+                receipt,
+                dnacalc_skin_ir::SkinIntentReceipt::Applied {
+                    snapshot_revision: 1,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn invalid_formula_id_is_a_typed_rejection() {
+        let state = crate::app::preview_state::preview_minimal_host_state();
+        let mut session = dnaonecalc_core::OneCalcSession::new(state);
+        let receipt = session.handle(dnacalc_skin_ir::SkinIntentEnvelope::new(
+            "bad-id",
+            None,
+            dnacalc_skin_ir::SkinIntent::OneFormula(
+                dnacalc_skin_ir::OneFormulaIntent::Recalculate {
+                    formula_space_id: "missing".into(),
+                },
+            ),
+        ));
+        match receipt {
+            dnacalc_skin_ir::SkinIntentReceipt::Rejected { diagnostic, .. } => {
+                assert_eq!(diagnostic.code, "unknown_formula_space")
+            }
+            _ => panic!("expected typed rejection"),
+        }
     }
 }

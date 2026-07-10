@@ -102,6 +102,28 @@ pub struct OneCalcSession<H> {
     revision: u64,
 }
 
+pub struct ProfiledSession<H> {
+    pub target: RuntimeTarget,
+    session: OneCalcSession<H>,
+}
+
+impl<H: OneCalcSessionHost> ProfiledSession<H> {
+    pub fn new(target: RuntimeTarget, host: H) -> Self {
+        Self {
+            target,
+            session: OneCalcSession::new(host),
+        }
+    }
+
+    pub fn handle_json(&mut self, json: &str) -> Result<String, serde_json::Error> {
+        self.session.handle_json(json)
+    }
+
+    pub fn snapshot(&self) -> SkinSnapshot {
+        self.session.snapshot()
+    }
+}
+
 impl<H: OneCalcSessionHost> OneCalcSession<H> {
     pub fn new(host: H) -> Self {
         Self { host, revision: 0 }
