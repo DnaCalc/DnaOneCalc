@@ -84,10 +84,24 @@ fn apply_shell_skin_intent(
             state.active_formula_space_view.selected_formula_space_id = Some(formula_space_id);
             true
         }
-        dnacalc_skin_ir::SkinShellIntent::Save
-        | dnacalc_skin_ir::SkinShellIntent::SaveAs { .. }
-        | dnacalc_skin_ir::SkinShellIntent::Open { .. }
-        | dnacalc_skin_ir::SkinShellIntent::OpenRecent { .. } => false,
+        dnacalc_skin_ir::SkinShellIntent::Save => {
+            state.workspace_shell.pending_persistence_intent =
+                Some(crate::state::WorkspacePersistenceIntent::Save);
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::SaveAs { suggested_path } => {
+            state.workspace_shell.pending_persistence_intent =
+                Some(crate::state::WorkspacePersistenceIntent::SaveAs { suggested_path });
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::Open { requested_path } => {
+            state.workspace_shell.pending_persistence_intent =
+                Some(crate::state::WorkspacePersistenceIntent::Open { requested_path });
+            true
+        }
+        dnacalc_skin_ir::SkinShellIntent::OpenRecent { document_id } => {
+            crate::app::case_lifecycle::reopen_formula_space(state, &document_id)
+        }
     }
 }
 
@@ -2636,5 +2650,46 @@ mod tests {
         );
 
         assert!(!changed);
+    }
+
+    #[test]
+    fn skin_persistence_intents_route_to_host_adapter_state() {
+        let mut state = OneCalcHostState::default();
+        assert!(apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::Shell(dnacalc_skin_ir::SkinShellIntent::SaveAs {
+                suggested_path: Some("case.dnaone".into()),
+            }),
+        ));
+        assert_eq!(
+            state.workspace_shell.pending_persistence_intent,
+            Some(crate::state::WorkspacePersistenceIntent::SaveAs {
+                suggested_path: Some("case.dnaone".into())
+            })
+        );
+    }
+
+    #[test]
+    fn skin_open_recent_reopens_the_real_closed_formula() {
+        let mut state = OneCalcHostState::default();
+        let id = FormulaSpaceId::new("recent-1");
+        state
+            .workspace_shell
+            .recent_formula_space_order
+            .push(id.clone());
+        state.workspace_shell.recent_formula_spaces.insert(
+            id.clone(),
+            crate::state::ClosedFormulaSpaceRecord {
+                formula_space: FormulaSpaceState::new(id.clone(), "=SUM(1,2)"),
+                last_active_mode: crate::state::AppMode::Explore,
+            },
+        );
+        assert!(apply_skin_intent_to_host_state(
+            &mut state,
+            dnacalc_skin_ir::SkinIntent::Shell(dnacalc_skin_ir::SkinShellIntent::OpenRecent {
+                document_id: id.as_str().into(),
+            }),
+        ));
+        assert!(state.formula_spaces.spaces.contains_key(&id));
     }
 }

@@ -14,5 +14,6 @@ pub use types::{
     ModeAvailabilityFact, OneCalcHostState, OpenFormulaSpaceRecord, OxFuncMetadataSnapshot,
     ProjectionTruthSource, RetainedArtifactOpenState, RetainedArtifactRecord,
     VbaHostAssociationLoadStatus, VbaHostAssociationSourceKind, VbaHostAssociationState,
-    VbaHostContextState, ViewMode, WorkspaceNavigationSelection, WorkspaceShellState,
+    VbaHostContextState, ViewMode, WorkspaceNavigationSelection, WorkspacePersistenceIntent,
+    WorkspaceShellState,
 };

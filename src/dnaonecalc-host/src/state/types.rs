@@ -187,6 +187,8 @@ impl ViewMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceShellState {
+    pub current_workspace_path: Option<String>,
+    pub pending_persistence_intent: Option<WorkspacePersistenceIntent>,
     pub active_formula_space_id: Option<FormulaSpaceId>,
     pub open_formula_space_order: Vec<FormulaSpaceId>,
     pub pinned_formula_space_ids: BTreeSet<FormulaSpaceId>,
@@ -209,6 +211,8 @@ pub struct WorkspaceShellState {
 impl Default for WorkspaceShellState {
     fn default() -> Self {
         Self {
+            current_workspace_path: None,
+            pending_persistence_intent: None,
             active_formula_space_id: None,
             open_formula_space_order: Vec::new(),
             pinned_formula_space_ids: BTreeSet::new(),
@@ -220,6 +224,13 @@ impl Default for WorkspaceShellState {
             pending_rename_text: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspacePersistenceIntent {
+    Save,
+    SaveAs { suggested_path: Option<String> },
+    Open { requested_path: Option<String> },
 }
 
 // `Eq` cannot be derived: the upstream `CalcValue` carried inside

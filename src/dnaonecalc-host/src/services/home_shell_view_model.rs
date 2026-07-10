@@ -3152,17 +3152,24 @@ fn project_skin_snapshot(
                     crate::ui::editor::state::EditorLiveState::EditingLive
                         | crate::ui::editor::state::EditorLiveState::ProofedScratch
                 ),
-                current_path: None,
+                current_path: state.workspace_shell.current_workspace_path.clone(),
                 recent_documents: state
                     .workspace_shell
                     .recent_formula_space_order
                     .iter()
-                    .map(|id| dnacalc_skin_ir::RecentDocumentProjection {
+                    .filter_map(|id| {
+                        state
+                            .workspace_shell
+                            .recent_formula_spaces
+                            .get(id)
+                            .map(|record| (id, record))
+                    })
+                    .map(|(id, record)| dnacalc_skin_ir::RecentDocumentProjection {
                         document_id: id.as_str().to_string(),
-                        display_name: id.as_str().to_string(),
+                        display_name: record.formula_space.context.scenario_label.clone(),
                         path: None,
                         last_opened_unix_ms: None,
-                        available: state.formula_spaces.spaces.contains_key(id),
+                        available: true,
                     })
                     .collect(),
             },
