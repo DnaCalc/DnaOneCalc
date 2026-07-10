@@ -17,6 +17,7 @@ use crate::ui::editor::state::{EditorLiveState, EditorSettings, EditorSurfaceSta
 
 #[derive(Debug, Clone)]
 pub struct OneCalcHostState {
+    pub runtime_profile_override: Option<dnacalc_skin_ir::RuntimeProfileProjection>,
     pub workspace_shell: WorkspaceShellState,
     pub formula_spaces: FormulaSpaceCollectionState,
     pub active_formula_space_view: ActiveFormulaSpaceViewState,
@@ -46,6 +47,7 @@ pub struct OneCalcHostState {
 impl Default for OneCalcHostState {
     fn default() -> Self {
         Self {
+            runtime_profile_override: None,
             workspace_shell: WorkspaceShellState::default(),
             formula_spaces: FormulaSpaceCollectionState::default(),
             active_formula_space_view: ActiveFormulaSpaceViewState::default(),

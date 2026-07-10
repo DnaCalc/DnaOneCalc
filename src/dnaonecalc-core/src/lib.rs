@@ -10,6 +10,7 @@ pub use dnacalc_skin_ir::{
 pub trait OneCalcSessionHost {
     fn snapshot(&self) -> SkinSnapshot;
     fn dispatch(&mut self, intent: SkinIntent) -> DispatchOutcome;
+    fn set_runtime_profile(&mut self, _profile: RuntimeProfileProjection) {}
 }
 
 /// Platform-neutral owner of the live OneCalc state.
@@ -108,7 +109,8 @@ pub struct ProfiledSession<H> {
 }
 
 impl<H: OneCalcSessionHost> ProfiledSession<H> {
-    pub fn new(target: RuntimeTarget, host: H) -> Self {
+    pub fn new(target: RuntimeTarget, mut host: H) -> Self {
+        host.set_runtime_profile(target.profile());
         Self {
             target,
             session: OneCalcSession::new(host),

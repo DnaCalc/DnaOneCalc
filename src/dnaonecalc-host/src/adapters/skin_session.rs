@@ -1,6 +1,9 @@
 //! Adapter from native OneCalc state to the Leptos-free shared session core.
 
 impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
+    fn set_runtime_profile(&mut self, profile: dnacalc_skin_ir::RuntimeProfileProjection) {
+        self.runtime_profile_override = Some(profile);
+    }
     fn snapshot(&self) -> dnacalc_skin_ir::SkinSnapshot {
         crate::services::home_shell_view_model::build_home_shell_view_model(self)
             .expect("OneCalc session requires an active formula space")
@@ -294,6 +297,10 @@ mod tests {
                     ..
                 }
             ));
+            assert_eq!(
+                session.snapshot().host_capabilities.runtime_profile,
+                target.profile()
+            );
         }
     }
 

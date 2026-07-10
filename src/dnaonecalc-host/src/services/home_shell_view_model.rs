@@ -3175,13 +3175,15 @@ fn project_skin_snapshot(
             },
         },
         dnacalc_skin_ir::HostCapabilityProjection::onecalc_null_references(
-            if cfg!(target_arch = "wasm32") {
-                dnacalc_skin_ir::RuntimeProfileProjection::BrowserWasm
-            } else if cfg!(target_os = "windows") {
-                dnacalc_skin_ir::RuntimeProfileProjection::WindowsDesktop
-            } else {
-                dnacalc_skin_ir::RuntimeProfileProjection::NativeUnix
-            },
+            state.runtime_profile_override.unwrap_or_else(|| {
+                if cfg!(target_arch = "wasm32") {
+                    dnacalc_skin_ir::RuntimeProfileProjection::BrowserWasm
+                } else if cfg!(target_os = "windows") {
+                    dnacalc_skin_ir::RuntimeProfileProjection::WindowsDesktop
+                } else {
+                    dnacalc_skin_ir::RuntimeProfileProjection::NativeUnix
+                }
+            }),
             dnacalc_skin_ir::ExtensionPlacementProjection::Unavailable,
         ),
         formula,
