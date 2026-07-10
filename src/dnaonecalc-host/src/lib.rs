@@ -1,6 +1,6 @@
 #![recursion_limit = "512"]
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "shell-ui"))]
 use wasm_bindgen::prelude::*;
 
 pub mod adapters;
@@ -14,7 +14,7 @@ pub mod state;
 pub mod test_support;
 pub mod ui;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "shell-ui"))]
 #[wasm_bindgen]
 pub fn mount_onecalc_preview(element_id: &str) -> Result<(), JsValue> {
     use leptos::mount::mount_to;
