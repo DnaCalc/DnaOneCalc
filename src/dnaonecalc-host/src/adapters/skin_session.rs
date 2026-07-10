@@ -20,6 +20,28 @@ impl dnaonecalc_core::OneCalcSessionHost for crate::state::OneCalcHostState {
                 },
             );
         }
+        if let dnacalc_skin_ir::SkinIntent::Shell(shell) = &intent {
+            match shell {
+                dnacalc_skin_ir::SkinShellIntent::Save => {
+                    crate::persistence::save_workspace_to_local_storage(self);
+                    self.workspace_shell.pending_persistence_intent = None;
+                    return dnaonecalc_core::DispatchOutcome::Applied;
+                }
+                dnacalc_skin_ir::SkinShellIntent::SaveAs { suggested_path } => {
+                    self.workspace_shell.current_workspace_path = suggested_path.clone();
+                    crate::persistence::save_workspace_to_local_storage(self);
+                    self.workspace_shell.pending_persistence_intent = None;
+                    return dnaonecalc_core::DispatchOutcome::Applied;
+                }
+                dnacalc_skin_ir::SkinShellIntent::Open { requested_path } => {
+                    crate::persistence::hydrate_state_from_local_storage(self);
+                    self.workspace_shell.current_workspace_path = requested_path.clone();
+                    self.workspace_shell.pending_persistence_intent = None;
+                    return dnaonecalc_core::DispatchOutcome::Applied;
+                }
+                _ => {}
+            }
+        }
         if crate::app::reducer::apply_skin_intent_to_host_state(self, intent) {
             dnaonecalc_core::DispatchOutcome::Applied
         } else {
