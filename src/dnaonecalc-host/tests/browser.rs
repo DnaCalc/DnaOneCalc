@@ -16,6 +16,9 @@ mod scaffold;
 #[path = "browser/editor_core.rs"]
 mod editor_core;
 
+#[path = "browser/shared_formula_surface.rs"]
+mod shared_formula_surface;
+
 #[path = "browser/caret_geometry.rs"]
 mod caret_geometry;
 

@@ -59,7 +59,8 @@ use crate::ui::editor::commands::{classify_dom_input, EditorInputEvent, EditorIn
 use crate::ui::editor::geometry::caret_box_for_offset;
 use crate::ui::editor::render_projection::{SyntaxRun, SyntaxTokenRole};
 
-type HostStateSignal = RwSignal<OneCalcHostState, LocalStorage>;
+type HostCore = dnaonecalc_core::OneCalcCore<OneCalcHostState>;
+type HostStateSignal = RwSignal<HostCore, LocalStorage>;
 
 #[component]
 pub fn HomeShell(
@@ -73,10 +74,10 @@ pub fn HomeShell(
     // targets this is a no-op (the SSR build doesn't have
     // localStorage); the same call site keeps both branches
     // visually identical.
-    let mut initial_state = initial_state;
-    crate::persistence::hydrate_state_from_local_storage(&mut initial_state);
+    let mut initial_core = HostCore::new(initial_state);
+    initial_core.hydrate_with(&mut crate::persistence::LocalWorkspacePersistence);
 
-    let state: HostStateSignal = RwSignal::new_local(initial_state);
+    let state: HostStateSignal = RwSignal::new_local(initial_core);
 
     // Auto-save the workspace envelope to localStorage on every
     // state change. The serialise + write path is cheap (<1 ms for
@@ -86,11 +87,13 @@ pub fn HomeShell(
     // site data) log to console without taking the rest of the app
     // down.
     Effect::new(move |_| {
-        state.with(crate::persistence::save_workspace_to_local_storage);
+        state.with(|core| {
+            core.persist_with(&mut crate::persistence::LocalWorkspacePersistence);
+        });
     });
 
     // Reactive view-model: rebuilds whenever the state signal changes.
-    let view_model = Memo::new(move |_| state.with(build_home_shell_view_model));
+    let view_model = Memo::new(move |_| state.with(|core| build_home_shell_view_model(core)));
 
     // NodeRef on the editor textarea so we can imperatively sync
     // `value` + `selectionStart/End` from host state after each

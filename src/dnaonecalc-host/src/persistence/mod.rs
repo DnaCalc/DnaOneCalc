@@ -33,6 +33,23 @@ pub use workspace_storage::{
     serialize_workspace, WorkspaceJson, WorkspaceLoadError, WORKSPACE_STORAGE_KEY,
 };
 
+/// Platform adapter for the core-owned workspace lifecycle. The wire format
+/// remains host-specific; the Leptos shell does not own hydration or saving.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LocalWorkspacePersistence;
+
+impl dnaonecalc_core::StatePersistence<crate::state::OneCalcHostState>
+    for LocalWorkspacePersistence
+{
+    fn hydrate(&mut self, state: &mut crate::state::OneCalcHostState) {
+        hydrate_state_from_local_storage(state);
+    }
+
+    fn persist(&mut self, state: &crate::state::OneCalcHostState) {
+        save_workspace_to_local_storage(state);
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub use browser_file_io::{
     open_xml_via_file_input, save_xml_via_download, suggested_filename_stem, OpenedFormulaFile,

@@ -19,6 +19,7 @@ oxfml_core = { path = "../../../OxFml/crates/oxfml_core" }
 oxfunc_core = { path = "../../../OxFunc/crates/oxfunc_core" }
 dnacalc-skin-ir = { path = "../../../DnaTreeCalc/src/dnacalc-skin-ir" }
 dnacalc-formula-ux-core = { path = "../../../DnaTreeCalc/src/dnacalc-formula-ux-core" }
+dnacalc-formula-skin-leptos = { path = "../../../DnaTreeCalc/src/dnacalc-formula-skin-leptos" }
 dnacalc-extension-host-core = { path = "../../../DnaTreeCalc/src/dnacalc-extension-host-core" }
 dnaonecalc-core = { path = "../dnaonecalc-core" }
 
