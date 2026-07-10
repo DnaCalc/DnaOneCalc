@@ -2,7 +2,7 @@
 
 # DnaTreeCalc Handoff: Shared DNA Calc Host Foundations
 
-Status: Open
+Status: Landed and accepted by DnaOneCalc
 
 Target: `DnaTreeCalc`
 
@@ -176,3 +176,40 @@ These results prove the current API shape is consumable, but they do not make
 the OneCalc change commit-safe: a clean checkout of the recorded TreeCalc
 baseline does not contain the untracked shared protocol modules. OneCalc bead
 `dno-yjk.14` therefore remains blocked by cross-repo gate `dno-uh9y.5`.
+
+## Landed DnaTreeCalc Foundation
+
+The DnaTreeCalc-scoped implementation landed on `main` as the following focused
+commit sequence:
+
+1. `df8c267` — move filesystem skin state into the shared host core,
+2. `45fad393` — land the canonical shared Skin IR protocol,
+3. `256bdc9` — project native formula UX into Skin IR,
+4. `d60b984` — carry drill array-window offsets,
+5. `c6ee55a` — ship the shared Leptos formula surface,
+6. `ecd460b` — align host and worker session protocol,
+7. `1a9e2eb` — prove native host placement with Tauri 2,
+8. `c2ad049` — land the shared extension-host core,
+9. `9bb4e65` — specify native extension adapter boundaries.
+
+The public consumer surface is now:
+
+1. `dnacalc-skin-ir`: `SkinSnapshot`, `SkinDocumentProjection`, `SkinIntent`,
+   `SkinIntentEnvelope`, `SkinIntentReceipt`, `SkinShellProjection`,
+   `PersistenceProjection`, `HostCapabilityProjection`, runtime profiles, formula
+   editor/assist/result/formatting/drill projections, and bounded array windows.
+2. `dnacalc-formula-ux-core`: `project_editor`, `project_completion`,
+   `project_signature`, `project_signature_with_help`, `project_function_help`,
+   `project_runtime_result`, `project_calc_value`, `project_comparison`,
+   `project_formatting`, `project_drill`, and `project_array_window`.
+3. `dnacalc-formula-skin-leptos`: `FormulaSurface`, `result_expand_intent`, and
+   `drill_expand_intent` over Skin IR only.
+4. `dnacalc-extension-host-core`: `RuntimeProfile`, `ExtensionCapabilities`,
+   `ExtensionCatalog`, provider registration and teardown, native `CalcValue`
+   invocation, `HostInvalidationEvent`, invalidation sinks, deterministic ticking,
+   and `RtdTopicState`.
+
+DnaOneCalc acceptance consumes these crates directly from the clean TreeCalc
+`9bb4e65` tree. The OneCalc validation record is maintained in the accepting bead
+and downstream adoption commits; no DnaTreeCalc working-tree mutation is performed
+from this repository.
