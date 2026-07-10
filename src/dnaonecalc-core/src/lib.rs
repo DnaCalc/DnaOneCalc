@@ -68,3 +68,60 @@ pub const fn runtime_profile() -> RuntimeProfileProjection {
         RuntimeProfileProjection::NativeUnix
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeTarget {
+    BrowserWasm,
+    HostedWeb,
+    WindowsDesktop,
+    WindowsHeadless,
+    NativeUnix,
+    NullTest,
+}
+
+impl RuntimeTarget {
+    #[must_use]
+    pub const fn profile(self) -> RuntimeProfileProjection {
+        match self {
+            Self::BrowserWasm => RuntimeProfileProjection::BrowserWasm,
+            Self::HostedWeb => RuntimeProfileProjection::HostedWeb,
+            Self::WindowsDesktop => RuntimeProfileProjection::WindowsDesktop,
+            Self::WindowsHeadless => RuntimeProfileProjection::WindowsHeadless,
+            Self::NativeUnix => RuntimeProfileProjection::NativeUnix,
+            Self::NullTest => RuntimeProfileProjection::NullTest,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_shared_runtime_profile_has_a_onecalc_target() {
+        assert_eq!(
+            RuntimeTarget::BrowserWasm.profile(),
+            RuntimeProfileProjection::BrowserWasm
+        );
+        assert_eq!(
+            RuntimeTarget::HostedWeb.profile(),
+            RuntimeProfileProjection::HostedWeb
+        );
+        assert_eq!(
+            RuntimeTarget::WindowsDesktop.profile(),
+            RuntimeProfileProjection::WindowsDesktop
+        );
+        assert_eq!(
+            RuntimeTarget::WindowsHeadless.profile(),
+            RuntimeProfileProjection::WindowsHeadless
+        );
+        assert_eq!(
+            RuntimeTarget::NativeUnix.profile(),
+            RuntimeProfileProjection::NativeUnix
+        );
+        assert_eq!(
+            RuntimeTarget::NullTest.profile(),
+            RuntimeProfileProjection::NullTest
+        );
+    }
+}
