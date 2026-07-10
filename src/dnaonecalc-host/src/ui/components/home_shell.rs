@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use dnacalc_formula_skin_leptos::FormulaSurface;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
@@ -548,6 +549,19 @@ pub fn HomeShell(
             })
             .unwrap_or("none")
     };
+    let shared_formula_projection = move || {
+        view_model
+            .get()
+            .and_then(|vm| match vm.skin_snapshot.document {
+                dnacalc_skin_ir::SkinDocumentProjection::OneFormula(projection) => Some(projection),
+                dnacalc_skin_ir::SkinDocumentProjection::TreeWorkspace(_) => None,
+            })
+    };
+    let on_shared_formula_intent = Callback::new(move |intent| {
+        state.update(|state| {
+            let _ = crate::app::reducer::apply_skin_intent_to_host_state(state, intent);
+        });
+    });
 
     // Trigger row callback shared between the editor-foot toggle
     // and the keyboard chord — both routes through the same
@@ -1375,6 +1389,19 @@ pub fn HomeShell(
                 on_commit_rename,
                 on_cancel_rename,
             )}
+
+            <section
+                class="onecalc-home-shell__shared-formula-surface"
+                aria-label="shared formula surface"
+                data-skin-driven="true"
+            >
+                {move || shared_formula_projection().map(|projection| view! {
+                    <FormulaSurface
+                        projection=projection
+                        on_intent=on_shared_formula_intent
+                    />
+                })}
+            </section>
 
             <main class="onecalc-home-shell__body">
                 <Show
