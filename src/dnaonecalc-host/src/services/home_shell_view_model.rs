@@ -3145,8 +3145,8 @@ fn project_skin_snapshot(
             ),
             command_palette_open: state.global_ui_chrome.command_palette_open,
             persistence: dnacalc_skin_ir::PersistenceProjection {
-                can_save: true,
-                can_open: true,
+                can_save: !cfg!(target_arch = "wasm32"),
+                can_open: !cfg!(target_arch = "wasm32"),
                 dirty: matches!(
                     formula_space.live_state(),
                     crate::ui::editor::state::EditorLiveState::EditingLive
